@@ -1057,6 +1057,20 @@ def _read_frame(conn: socket.socket) -> dict[str, Any]:
     return value
 
 
+def _obsidian_startup_facts_sha256(binding: dict[str, Any]) -> str:
+    """Digest stable startup custody facts; binding leases themselves are not durable authority."""
+    facts = {
+        "peer": list(binding["peer"]),
+        "owner_subject_sha256": binding["owner_subject_sha256"],
+        "registration_sha256": binding["registration_sha256"],
+        "core_generation": binding["core_generation"],
+        "core_source_generation": binding["core_source_generation"],
+        "core_pid": binding["core_pid"],
+        "core_start_ticks": binding["core_start_ticks"],
+    }
+    return hashlib.sha256(_canonical(facts)).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class OwnerTurnHandle:
     """Opaque root handle for an accepted owner turn; contains no JWT or prompt."""
@@ -1827,6 +1841,7 @@ class CoreNativeObservationClient:
             "planning-turn-context", "bind-obsidian-native-vault",
             "authorize-obsidian-call-scope", "record-obsidian-draft-origin",
             "resolve-obsidian-draft-origin", "read-obsidian-private-draft",
+            "confirm-obsidian-draft-read-delivery", "reserve-obsidian-draft-completion",
             "resolve-obsidian-review-proposal",
             "complete-obsidian-draft-origin",
             "current-project-context",
@@ -2772,15 +2787,22 @@ class CoreNativeObservationClient:
         except Exception:
             return False
 
-    def request_final_effect(self, *, observed_call_handle: str, review_sha256: str):
+    def request_final_effect(self, *, observed_call_handle: str, review_sha256: str,
+                             startup_binding_id: str | None = None):
         """Request owner approval for one exact observed normal-master tool call."""
         from hermes_installer.remote.jarvis_final_effects import FinalEffectPending, review_digest
         if (not isinstance(observed_call_handle, str) or not _OPAQUE.fullmatch(observed_call_handle)
-                or not isinstance(review_sha256, str) or not _HASH.fullmatch(review_sha256)):
+                or not isinstance(review_sha256, str) or not _HASH.fullmatch(review_sha256)
+                or (startup_binding_id is not None
+                    and (not isinstance(startup_binding_id, str)
+                         or not _OPAQUE.fullmatch(startup_binding_id)))):
             raise CoreNativeObservationUnavailable("observed effect identity is malformed")
-        row = self._rpc("request-final-effect", {
+        payload = {
             "observed_call_handle": observed_call_handle, "review_sha256": review_sha256,
-        })
+        }
+        if startup_binding_id is not None:
+            payload["startup_binding_id"] = startup_binding_id
+        row = self._rpc("request-final-effect", payload)
         required = {"schema", "nonce", "ok", "pending_id", "review_sha256", "expires_monotonic"}
         if (set(row) != required or type(row.get("schema")) is not int or row["schema"] != 1
                 or row["review_sha256"] != review_sha256
@@ -2985,7 +3007,6 @@ class CoreNativeObservationClient:
                 or os.geteuid() != 1000
                 or not isinstance(tool_result, Mapping)
                 or type(tool_result.get("read_delivery")) is not dict
-                or type(tool_result.get("byte_length")) is not int
                 or type(tool_result.get("review_complete")) is not bool):
             raise CoreNativeObservationUnavailable("native draft-review result is required")
         receipt = tool_result["read_delivery"]
@@ -3005,7 +3026,6 @@ class CoreNativeObservationClient:
             "receipt_id": receipt["receipt_id"],
             "receipt_sha256": receipt["receipt_sha256"],
             "tool_result_sha256": output_sha256,
-            "byte_length": tool_result["byte_length"],
         })
         if (set(row) != {"schema", "nonce", "ok", "confirmed", "receipt_sha256"}
                 or type(row.get("schema")) is not int or row["schema"] != 1
@@ -4345,6 +4365,7 @@ class RootCoreNativeObservationRegistry:
             "origin_record_sha256": origin_record_sha256,
             "source_generation_sha256": master_source.generation_sha256,
             "startup_binding_id": startup_binding_id,
+            "startup_binding_facts_sha256": _obsidian_startup_facts_sha256(startup),
             "observed_call_handle": call["handle"],
             "tool_call_id": call["tool_call_id"],
             "arguments_sha256": call["arguments_sha256"],
@@ -4369,7 +4390,8 @@ class RootCoreNativeObservationRegistry:
         return row
 
     def _propose_obsidian_draft_review(self, *, call: dict[str, Any], owner: Any,
-                                       source: Any, peer: tuple[int, int, int]) -> dict[str, Any]:
+                                       source: Any, peer: tuple[int, int, int],
+                                       startup_binding_id: str) -> dict[str, Any]:
         """Bind Jarvis's exact promote invocation to a full same-turn draft delivery."""
         if call["handle"] in self._obsidian_draft_review_proposals:
             raise ValueError("Obsidian promotion review proposal was already recorded")
@@ -4403,6 +4425,9 @@ class RootCoreNativeObservationRegistry:
         origin = self._obsidian_draft_origins.get(key)
         delivery = None
         data_root = registered_owner = registration_sha = startup = None
+        data_root, registered_owner, registration_sha, startup = \
+            self._validate_obsidian_origin_binding(
+                peer=peer, binding_id=startup_binding_id, owner=owner, now=time.monotonic())
         for candidate in self._obsidian_draft_read_deliveries.values():
             if (candidate["owner_subject_sha256"] != owner.owner_subject_sha256
                     or candidate["owner_turn_handle"] != owner.owner_turn_handle
@@ -4414,15 +4439,9 @@ class RootCoreNativeObservationRegistry:
                     or candidate["source_generation_sha256"] != source.generation_sha256
                     or candidate["observed_call_handle"] == call["handle"]):
                 continue
-            try:
-                candidate_binding = self._validate_obsidian_origin_binding(
-                    peer=peer, binding_id=candidate["startup_binding_id"],
-                    owner=owner, now=time.monotonic())
-            except Exception:
-                continue
-            root, owner_identity, registration, binding_row = candidate_binding
             if (candidate["origin_record_sha256"] != (origin or {}).get("origin_record_sha256")
-                    or candidate["startup_binding_id"] != binding_row["binding_id"]
+                    or candidate["startup_binding_facts_sha256"]
+                        != _obsidian_startup_facts_sha256(startup)
                     or hashlib.sha256(_canonical({key: value for key, value in candidate.items()
                         if key not in {"receipt_sha256", "tool_result_sha256",
                                        "native_returned_sha256"})).hexdigest()
@@ -4432,8 +4451,6 @@ class RootCoreNativeObservationRegistry:
                         != candidate.get("tool_result_sha256")):
                 continue
             delivery = candidate
-            data_root, registered_owner, registration_sha, startup = (
-                root, owner_identity, registration, binding_row)
             break
         if (origin is None or origin["state"] != "private-draft"
                 or origin["registration_sha256"] != registration_sha
@@ -4442,7 +4459,6 @@ class RootCoreNativeObservationRegistry:
                 or origin["origin_record_sha256"] != _obsidian_origin_record_digest(origin)
                 or delivery is None
                 or delivery["origin_record_sha256"] != origin["origin_record_sha256"]
-                or delivery["startup_binding_id"] != startup["binding_id"]
                 or registered_owner != owner.owner_subject_sha256):
             raise ValueError("exact complete draft bytes were not delivered in this Jarvis owner turn")
         try:
@@ -5407,28 +5423,28 @@ class RootCoreNativeObservationRegistry:
                 delivery_wire = {key: delivery[key] for key in (
                     "receipt_id", "owner_subject_sha256", "owner_turn_handle", "draft_id",
                     "content_sha256", "origin_record_sha256", "source_generation_sha256",
-                    "startup_binding_id", "observed_call_handle", "tool_call_id",
+                    "startup_binding_id", "startup_binding_facts_sha256",
+                    "observed_call_handle", "tool_call_id",
                     "arguments_sha256", "returned_byte_length", "returned_content_sha256",
                     "complete", "covered_byte_length", "delivered_monotonic",
                     "expires_monotonic", "receipt_sha256")}
-                tool_result = {
-                    "draft_id": draft_id, "title": draft.title,
-                    "markdown": markdown if complete else None,
-                    "content_sha256": content_sha, "byte_length": len(markdown_bytes),
-                    "review_complete": complete,
-                    "next_step": None if complete else
+                from .obsidian_native_scope import obsidian_draft_read_public_result
+                tool_result = obsidian_draft_read_public_result(
+                    draft_id=draft_id, title=draft.title,
+                    markdown=markdown if complete else None,
+                    content_sha256=content_sha, byte_length=len(markdown_bytes),
+                    review_complete=complete, next_step=None if complete else
                         "Use the owner draft review flow to reduce the draft before Jarvis reviews it.",
-                    "base_note_id": draft.base_note_id, "base_sha256": draft.base_sha256,
-                    "origin": {"source_id": record["origin_source_id"],
-                        "source_revision": record["origin_source_revision"],
-                        "execution_id": record["origin_execution_id"],
-                        "mission_sha256": record["mission_sha256"],
-                        "source_generation_sha256": record["source_generation_sha256"]},
-                    "read_delivery": {"receipt_id": delivery["receipt_id"],
-                        "receipt_sha256": delivery["receipt_sha256"],
-                        "complete": delivery["complete"],
-                        "covered_byte_length": delivery["covered_byte_length"]},
-                }
+                    base_note_id=draft.base_note_id, base_sha256=draft.base_sha256,
+                    origin_source_id=record["origin_source_id"],
+                    origin_source_revision=record["origin_source_revision"],
+                    origin_execution_id=record["origin_execution_id"],
+                    mission_sha256=record["mission_sha256"],
+                    source_generation_sha256=record["source_generation_sha256"],
+                    receipt_id=delivery["receipt_id"],
+                    receipt_sha256=delivery["receipt_sha256"],
+                    delivery_complete=delivery["complete"],
+                    covered_byte_length=delivery["covered_byte_length"])
                 delivery["tool_result_sha256"] = hashlib.sha256(
                     _canonical(tool_result)).hexdigest()
                 self._obsidian_draft_read_deliveries[
@@ -5451,7 +5467,7 @@ class RootCoreNativeObservationRegistry:
                     "issued_monotonic": issued, "expires_monotonic": expiry}
             if op == "confirm-obsidian-draft-read-delivery":
                 required = {"schema", "op", "nonce", "observed_call_handle", "startup_binding_id",
-                    "receipt_id", "receipt_sha256", "tool_result_sha256", "byte_length"}
+                    "receipt_id", "receipt_sha256", "tool_result_sha256"}
                 if set(request) != required:
                     raise ValueError("Obsidian returned-result confirmation schema mismatch")
                 handle, binding_id = request["observed_call_handle"], request["startup_binding_id"]
@@ -5460,8 +5476,7 @@ class RootCoreNativeObservationRegistry:
                         or not isinstance(binding_id, str) or not _OPAQUE.fullmatch(binding_id)
                         or not isinstance(receipt_id, str) or not _OPAQUE.fullmatch(receipt_id)
                         or not _HASH.fullmatch(request["receipt_sha256"] or "")
-                        or not _HASH.fullmatch(request["tool_result_sha256"] or "")
-                        or type(request["byte_length"]) is not int or request["byte_length"] < 0):
+                        or not _HASH.fullmatch(request["tool_result_sha256"] or "")):
                     raise ValueError("Obsidian returned-result identity is malformed")
                 call, owner, master_source, mode = self._classify_current_call(
                     handle, peer, now=time.monotonic())
@@ -5473,7 +5488,6 @@ class RootCoreNativeObservationRegistry:
                         or row["owner_subject_sha256"] != owner.owner_subject_sha256
                         or row["receipt_sha256"] != request["receipt_sha256"]
                         or row.get("tool_result_sha256") != request["tool_result_sha256"]
-                        or row["returned_byte_length"] != request["byte_length"]
                         or row["expires_monotonic"] <= time.monotonic()):
                     raise ValueError("native result differs from the exact root-prepared draft output")
                 _data_root, _registered_owner, registration_sha, startup = \
@@ -5599,7 +5613,8 @@ class RootCoreNativeObservationRegistry:
                     "mode": mode, "expires_monotonic": min(
                         call["expiry"], owner.expires_monotonic, time.monotonic() + 30.0)}
             if op == "request-final-effect":
-                if set(request) != {"schema", "op", "nonce", "observed_call_handle", "review_sha256"}:
+                required = {"schema", "op", "nonce", "observed_call_handle", "review_sha256"}
+                if set(request) not in (required, required | {"startup_binding_id"}):
                     raise ValueError("final-effect request schema mismatch")
                 call, owner, source, mode = self._classify_current_call(
                     request["observed_call_handle"], peer, now=time.monotonic())
@@ -5611,8 +5626,13 @@ class RootCoreNativeObservationRegistry:
                     raise ValueError("only a current Jarvis master effect can request approval")
                 proposal_row = None
                 if call["tool_name"] == "obsidian_promote_reviewed_draft":
+                    if "startup_binding_id" not in request:
+                        raise ValueError("current Obsidian promotion binding is required")
                     proposal_row = self._propose_obsidian_draft_review(
-                        call=call, owner=owner, source=source, peer=peer)
+                        call=call, owner=owner, source=source, peer=peer,
+                        startup_binding_id=request["startup_binding_id"])
+                elif "startup_binding_id" in request:
+                    raise ValueError("unexpected Obsidian promotion binding")
                 pending = self._final_effect_ledger().issue_pending(
                     owner_subject_sha256=owner.owner_subject_sha256,
                     gateway_turn_id=owner.gateway_turn_id,

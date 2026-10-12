@@ -609,6 +609,7 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any, *,
             digest = review_digest(name, args_sha)
             pending = client.request_final_effect(
                 observed_call_handle=observed.handle, review_sha256=digest,
+                startup_binding_id=(binding.binding_id if obsidian_effect else None),
             )
             if type(pending) is not FinalEffectPending or pending.review_sha256 != digest:
                 return deny("Final effect blocked: owner review request is unavailable.")

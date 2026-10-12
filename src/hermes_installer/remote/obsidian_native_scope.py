@@ -272,6 +272,7 @@ class RootObsidianDraftReadDelivery:
     origin_record_sha256: str
     source_generation_sha256: str
     startup_binding_id: str
+    startup_binding_facts_sha256: str
     observed_call_handle: str
     tool_call_id: str
     arguments_sha256: str
@@ -290,7 +291,8 @@ class RootObsidianDraftReadDelivery:
                 or not all(_HASH.fullmatch(value or "") for value in (
                     self.owner_subject_sha256, self.content_sha256, self.origin_record_sha256,
                     self.source_generation_sha256, self.arguments_sha256,
-                    self.returned_content_sha256, self.receipt_sha256))
+                    self.returned_content_sha256, self.startup_binding_facts_sha256,
+                    self.receipt_sha256))
                 or not _OPAQUE.fullmatch(self.owner_turn_handle or "")
                 or not _IDENT.fullmatch(self.draft_id or "")
                 or not _OPAQUE.fullmatch(self.startup_binding_id or "")
@@ -307,6 +309,39 @@ class RootObsidianDraftReadDelivery:
                 or not now < self.expires_monotonic <= now + 600.0
                 or self.delivered_monotonic > now or self._seal is not _DRAFT_DELIVERY_SEAL):
             raise ObsidianRootScopeUnavailable("root Obsidian read-delivery receipt is malformed")
+
+
+def obsidian_draft_read_public_result(*, draft_id: str, title: str,
+        markdown: str | None, content_sha256: str, byte_length: int,
+        review_complete: bool, next_step: str | None, base_note_id: str | None,
+        base_sha256: str | None, origin_source_id: str,
+        origin_source_revision: str, origin_execution_id: str,
+        mission_sha256: str | None, source_generation_sha256: str,
+        receipt_id: str, receipt_sha256: str, delivery_complete: bool,
+        covered_byte_length: int) -> dict[str, Any]:
+    """Return the one canonical public tool result for a root draft review.
+
+    Both ROOT's prepared-output digest and the native handler use this projection;
+    transport-only leases, origin-record IDs, and receipt custody fields stay private.
+    """
+    return {
+        "draft_id": draft_id, "title": title, "markdown": markdown,
+        "content_sha256": content_sha256, "byte_length": byte_length,
+        "review_complete": review_complete, "next_step": next_step,
+        "base_note_id": base_note_id, "base_sha256": base_sha256,
+        "origin": {
+            "source_id": origin_source_id,
+            "source_revision": origin_source_revision,
+            "execution_id": origin_execution_id,
+            "mission_sha256": mission_sha256,
+            "source_generation_sha256": source_generation_sha256,
+        },
+        "read_delivery": {
+            "receipt_id": receipt_id, "receipt_sha256": receipt_sha256,
+            "complete": delivery_complete,
+            "covered_byte_length": covered_byte_length,
+        },
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -518,7 +553,8 @@ def _decode_draft_review(row: Mapping[str, Any]) -> RootObsidianDraftReview:
 def _decode_draft_delivery(row: Mapping[str, Any]) -> RootObsidianDraftReadDelivery:
     expected = {"receipt_id", "owner_subject_sha256", "owner_turn_handle", "draft_id",
         "content_sha256", "origin_record_sha256", "source_generation_sha256",
-        "startup_binding_id", "observed_call_handle", "tool_call_id", "arguments_sha256",
+        "startup_binding_id", "startup_binding_facts_sha256", "observed_call_handle",
+        "tool_call_id", "arguments_sha256",
         "returned_byte_length", "returned_content_sha256", "complete", "covered_byte_length",
         "delivered_monotonic", "expires_monotonic", "receipt_sha256"}
     if (type(row) is not dict or set(row) != expected
@@ -538,6 +574,7 @@ def _decode_draft_delivery(row: Mapping[str, Any]) -> RootObsidianDraftReadDeliv
             content_sha256=row["content_sha256"], origin_record_sha256=row["origin_record_sha256"],
             source_generation_sha256=row["source_generation_sha256"],
             startup_binding_id=row["startup_binding_id"],
+            startup_binding_facts_sha256=row["startup_binding_facts_sha256"],
             observed_call_handle=row["observed_call_handle"], tool_call_id=row["tool_call_id"],
             arguments_sha256=row["arguments_sha256"],
             returned_byte_length=row["returned_byte_length"],

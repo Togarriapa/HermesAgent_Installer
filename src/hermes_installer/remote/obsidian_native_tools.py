@@ -22,7 +22,7 @@ from .core_native_observer import ObservedNativeToolCall
 from .jarvis_final_effects import FinalEffectPermit, review_digest
 from .obsidian_native_scope import (
     RootObsidianCallScope, RootObsidianDraftOrigin, RootObsidianDraftReview,
-    RootSelectedObsidianVaultBinding,
+    RootSelectedObsidianVaultBinding, obsidian_draft_read_public_result,
 )
 from .obsidian_second_brain import ObsidianVaultStore
 
@@ -249,27 +249,21 @@ class ObsidianNativeTools:
                         or review.draft_id != values["draft_id"]
                         or review.content_sha256 != values["expected_draft_sha256"]):
                     raise ObsidianNativeToolUnavailable("root draft review differs from requested exact bytes")
-                return {
-                    "draft_id": review.draft_id, "title": review.title,
-                    "markdown": review.markdown, "content_sha256": review.content_sha256,
-                    "byte_length": review.byte_length,
-                    "review_complete": review.review_complete,
-                    "next_step": review.next_step,
-                    "base_note_id": review.base_note_id, "base_sha256": review.base_sha256,
-                    "origin": {
-                        "source_id": review.origin_source_id,
-                        "source_revision": review.origin_source_revision,
-                        "execution_id": review.origin_execution_id,
-                        "mission_sha256": review.mission_sha256,
-                        "source_generation_sha256": review.source_generation_sha256,
-                    },
-                    "read_delivery": {
-                        "receipt_id": review.delivery.receipt_id,
-                        "receipt_sha256": review.delivery.receipt_sha256,
-                        "complete": review.delivery.complete,
-                        "covered_byte_length": review.delivery.covered_byte_length,
-                    },
-                }
+                return obsidian_draft_read_public_result(
+                    draft_id=review.draft_id, title=review.title,
+                    markdown=review.markdown, content_sha256=review.content_sha256,
+                    byte_length=review.byte_length,
+                    review_complete=review.review_complete, next_step=review.next_step,
+                    base_note_id=review.base_note_id, base_sha256=review.base_sha256,
+                    origin_source_id=review.origin_source_id,
+                    origin_source_revision=review.origin_source_revision,
+                    origin_execution_id=review.origin_execution_id,
+                    mission_sha256=review.mission_sha256,
+                    source_generation_sha256=review.source_generation_sha256,
+                    receipt_id=review.delivery.receipt_id,
+                    receipt_sha256=review.delivery.receipt_sha256,
+                    delivery_complete=review.delivery.complete,
+                    covered_byte_length=review.delivery.covered_byte_length)
             if name == "obsidian_create_private_draft":
                 values = _args(args, {"title", "markdown", "base_note_id", "base_sha256", "citations"})
                 if context.scope.mode not in {"master_read", "expert_read"}:

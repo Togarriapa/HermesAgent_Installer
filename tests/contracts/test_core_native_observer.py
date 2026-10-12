@@ -470,6 +470,7 @@ def test_typed_obsidian_origin_is_short_lived_and_exact_owner_registration_diges
 
 def test_root_observed_expert_draft_origin_resolves_only_for_current_master_promotion():
     import hashlib
+    import os
     import threading
     import time
     from types import SimpleNamespace
@@ -492,6 +493,7 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
     )
     owner = SimpleNamespace(
         owner_subject_sha256=owner_sha, owner_turn_handle="T" * 43,
+        gateway_turn_id="gateway-turn",
         core_generation="f" * 64, core_source_generation="1" * 64,
         expires_monotonic=time.monotonic() + 30, mission_binding=mission,
     )
@@ -513,7 +515,7 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
     registry._lock = threading.RLock()
     registry._closed = False
     registry._custody = SimpleNamespace(
-        core_pid=1234, core_start_ticks="5678", core_generation=owner.core_generation,
+        core_pid=os.getpid(), core_start_ticks="5678", core_generation=owner.core_generation,
         core_source_generation=owner.core_source_generation,
     )
     registry._config = SimpleNamespace(core_uid=1000, core_gid=1000)
@@ -527,14 +529,24 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
     registry._ensure_open = lambda: None
     registry._prune = lambda _now: None
     registry._classify_current_call = lambda _handle, _peer, **_kwargs: active["classification"]
-    startup_binding = {"binding_id": "B" * 43, "expiry": time.monotonic() + 20}
-    registry._validate_obsidian_origin_binding = lambda **_kwargs: (
-        Path("/home/admin/.hermes/jarvis-second-brain"), owner_sha,
-        registration_sha, startup_binding,
-    )
+    peer = (os.getpid(), os.geteuid(), os.getegid())
+    startup_binding = {"binding_id": "B" * 43, "expiry": time.monotonic() + 20,
+        "peer": peer, "owner_subject_sha256": owner_sha,
+        "registration_sha256": registration_sha, "core_generation": owner.core_generation,
+        "core_source_generation": owner.core_source_generation,
+        "core_pid": os.getpid(), "core_start_ticks": "5678"}
+    startup_bindings = {startup_binding["binding_id"]: startup_binding}
+
+    def validate_binding(*, binding_id, **_kwargs):
+        row = startup_bindings[binding_id]
+        if row["expiry"] <= time.monotonic():
+            raise ValueError("startup binding expired")
+        return (Path("/home/admin/.hermes/jarvis-second-brain"), owner_sha,
+                registration_sha, row)
+
+    registry._validate_obsidian_origin_binding = validate_binding
     registry._read_obsidian_owner_draft = lambda *_args, **_kwargs: review
     registry._persist_obsidian_origin = lambda records: active.update(persisted=records)
-    peer = (1234, 1000, 1000)
     create_arguments = observer._canonical({"title": draft.title, "markdown": markdown})
     create_call = {"handle": "C" * 43, "tool_name": "obsidian_create_private_draft",
                    "arguments": create_arguments, "expiry": time.monotonic() + 20}
@@ -575,55 +587,124 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
         "review_disposition": "approve"}
     promote_call = {"handle": "P" * 43, "tool_call_id": "promote-draft-call",
         "tool_name": "obsidian_promote_reviewed_draft",
-        "arguments": observer._canonical(promote_arguments), "expiry": time.monotonic() + 20}
+        "arguments": observer._canonical(promote_arguments),
+        "arguments_sha256": hashlib.sha256(observer._canonical(promote_arguments)).hexdigest(),
+        "expiry": time.monotonic() + 20}
     active["classification"] = (promote_call, owner, current_master_source, "master_effect")
     with pytest.raises(ValueError, match="complete draft bytes were not delivered"):
         registry._propose_obsidian_draft_review(
-            call=promote_call, owner=owner, source=current_master_source, peer=peer)
+            call=promote_call, owner=owner, source=current_master_source, peer=peer,
+            startup_binding_id="B" * 43)
 
-    native_result = {
-        "draft_id": draft_id, "title": draft.title, "markdown": markdown,
-        "content_sha256": content_sha, "byte_length": len(markdown.encode()),
-        "review_complete": True, "next_step": None, "base_note_id": None,
-        "base_sha256": None,
-        "origin": {"source_id": child["profile_id"], "source_revision": source.source_revision,
-            "execution_id": child["session_id"], "mission_sha256": hashlib.sha256(
-                observer._canonical(mission.to_wire())).hexdigest(),
-            "source_generation_sha256": generation},
-        "read_delivery": {"receipt_id": read_result["delivery"]["receipt_id"],
-            "receipt_sha256": read_result["delivery"]["receipt_sha256"], "complete": True,
-            "covered_byte_length": len(markdown.encode())},
-    }
+    from unittest.mock import patch
+    from hermes_installer.native_invocations import NativeToolDispatch, canonical_tool_arguments
+    from hermes_installer.remote.obsidian_native_scope import (
+        RootObsidianCallScope, RootSelectedObsidianVaultBinding,
+        _BINDING_SEAL, _SCOPE_SEAL, _decode_draft_review,
+    )
+    from hermes_installer.remote.obsidian_native_tools import (
+        ObsidianNativeTools, _admit_current_obsidian_call,
+    )
+    from hermes_installer.remote.obsidian_second_brain import ObsidianVaultStore
+
+    issued = time.monotonic()
+    binding = RootSelectedObsidianVaultBinding(
+        binding_id="B" * 43, registration_sha256=registration_sha,
+        owner_subject_sha256=owner_sha, core_generation=owner.core_generation,
+        core_source_generation=owner.core_source_generation, core_pid=os.getpid(),
+        core_start_ticks="5678", selected_owner_uid=os.geteuid(),
+        vault_root="/home/admin/.hermes/jarvis-second-brain",
+        issued_monotonic=issued, expires_monotonic=issued + 20,
+        _seal=_BINDING_SEAL)
+    observed_read = ObservedNativeToolCall(
+        handle=read_call["handle"], attempt_handle="A" * 43,
+        owner_turn_handle=owner.owner_turn_handle, tool_call_id=read_call["tool_call_id"],
+        tool_name=read_call["tool_name"],
+        arguments_sha256=hashlib.sha256(read_call["arguments"]).hexdigest(),
+        expires_monotonic=read_call["expiry"])
+    scope = RootObsidianCallScope(
+        observed_call_handle=observed_read.handle, owner_turn_handle=owner.owner_turn_handle,
+        tool_call_id=observed_read.tool_call_id, tool_name=observed_read.tool_name,
+        arguments_sha256=observed_read.arguments_sha256, owner_subject_sha256=owner_sha,
+        registration_sha256=registration_sha, startup_binding_id=binding.binding_id,
+        core_generation=owner.core_generation, core_source_generation=owner.core_source_generation,
+        source_generation_sha256=current_master_source.generation_sha256,
+        mode="master_read", execution_id=owner.owner_turn_handle,
+        source_instance_id="hermes", mission_binding=None, selected_note_ids=None,
+        issued_monotonic=issued, expires_monotonic=issued + 4, _seal=_SCOPE_SEAL)
+
+    native_client = CoreNativeObservationClient()
+    native_client._rpc = lambda operation, payload: registry._handle(peer, {
+        "schema": 1, "op": operation, "nonce": "native-client",
+        **dict(payload),
+    })
+
+    native_dispatch = NativeToolDispatch(
+        object(), observed_read.tool_call_id, observed_read.tool_name,
+        canonical_tool_arguments(read_args))
+    native_handler = ObsidianNativeTools(object.__new__(ObsidianVaultStore)).handler(
+        "obsidian_read_private_draft")
+    with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
+               return_value=native_dispatch):
+        with _admit_current_obsidian_call(
+                observed_call=observed_read, scope=scope, binding=binding,
+                observer_client=native_client):
+            native_result = native_handler(read_args)
+
     active["classification"] = (read_call, owner, current_master_source, "master_read")
-    confirmation_request = {
-        "schema": 1, "op": "confirm-obsidian-draft-read-delivery", "nonce": "confirm",
-        "observed_call_handle": read_call["handle"], "startup_binding_id": "B" * 43,
-        "receipt_id": read_result["delivery"]["receipt_id"],
-        "receipt_sha256": read_result["delivery"]["receipt_sha256"],
-        "tool_result_sha256": hashlib.sha256(observer._canonical(native_result)).hexdigest(),
-        "byte_length": len(markdown.encode()),
-    }
+    altered_result = {**native_result, "markdown": "altered"}
     with pytest.raises(ValueError, match="native result differs"):
-        registry._handle(peer, {**confirmation_request,
-            "tool_result_sha256": "0" * 64})
-    confirmed = registry._handle(peer, confirmation_request)
-    assert confirmed["confirmed"] is True
+        native_client.confirm_obsidian_draft_read_delivery(
+            observed_call=observed_read, binding=binding, tool_result=altered_result)
+    native_client.confirm_obsidian_draft_read_delivery(
+        observed_call=observed_read, binding=binding, tool_result=native_result)
 
+    # The old startup binding has expired, while its receipt remains eligible
+    # as provenance data under a new binding with the same process/custody facts.
+    startup_binding["expiry"] = time.monotonic() - 1
+    fresh_startup = {**startup_binding, "binding_id": "N" * 43,
+                     "expiry": time.monotonic() + 20}
+    startup_bindings[fresh_startup["binding_id"]] = fresh_startup
     active["classification"] = (promote_call, owner, current_master_source, "master_effect")
-    proposal = registry._propose_obsidian_draft_review(
-        call=promote_call, owner=owner, source=current_master_source, peer=peer)
-    assert proposal["read_delivery_receipt_id"] == read_result["delivery"]["receipt_id"]
-    assert proposal["read_delivery_output_sha256"] == confirmation_request["tool_result_sha256"]
+    from hermes_installer.remote.jarvis_final_effects import review_digest
+    registry._final_effect_ledger = lambda: SimpleNamespace(issue_pending=lambda **values:
+        SimpleNamespace(pending_id="P" * 43,
+            review_sha256=values["review_sha256"], expires_monotonic=time.monotonic() + 15))
+    promotion_review_sha = review_digest(
+        promote_call["tool_name"], hashlib.sha256(promote_call["arguments"]).hexdigest())
+    request_result = registry._handle(peer, {
+        "schema": 1, "op": "request-final-effect", "nonce": "proposal-request",
+        "observed_call_handle": promote_call["handle"],
+        "review_sha256": promotion_review_sha, "startup_binding_id": "N" * 43,
+    })
+    assert request_result["ok"] is True
+    proposal = registry._obsidian_draft_review_proposals[promote_call["handle"]]
+    assert proposal["read_delivery_receipt_id"] == native_result["read_delivery"]["receipt_id"]
+    assert proposal["read_delivery_output_sha256"] == hashlib.sha256(
+        observer._canonical(native_result)).hexdigest()
     assert proposal["origin_record_sha256"] == active["persisted"][(owner_sha, draft_id)]["origin_record_sha256"]
     assert proposal["disposition"] == "approve"
 
-    registry._obsidian_draft_read_deliveries[read_result["delivery"]["receipt_id"]]["complete"] = False
-    registry._obsidian_draft_read_deliveries[read_result["delivery"]["receipt_id"]]["covered_byte_length"] = 0
+    changed_facts = {**fresh_startup, "core_start_ticks": "changed-start"}
+    startup_bindings[changed_facts["binding_id"]] = changed_facts
+    changed_fact_call = dict(promote_call, handle="W" * 43)
+    active["classification"] = (
+        changed_fact_call, owner, current_master_source, "master_effect")
+    with pytest.raises(ValueError, match="complete draft bytes were not delivered"):
+        registry._propose_obsidian_draft_review(
+            call=changed_fact_call, owner=owner, source=current_master_source, peer=peer,
+            startup_binding_id="N" * 43)
+    startup_bindings["N" * 43] = fresh_startup
+
+    confirmed_receipt_id = native_result["read_delivery"]["receipt_id"]
+    registry._obsidian_draft_read_deliveries[confirmed_receipt_id]["complete"] = False
+    registry._obsidian_draft_read_deliveries[confirmed_receipt_id]["covered_byte_length"] = 0
     changed_promote = dict(promote_call, handle="Q" * 43)
     active["classification"] = (changed_promote, owner, current_master_source, "master_effect")
     with pytest.raises(ValueError, match="complete draft bytes were not delivered"):
         registry._propose_obsidian_draft_review(
-            call=changed_promote, owner=owner, source=current_master_source, peer=peer)
+            call=changed_promote, owner=owner, source=current_master_source, peer=peer,
+            startup_binding_id="N" * 43)
 
     changed_args = {**read_args, "expected_draft_sha256": "9" * 64}
     changed_call = {**read_call, "handle": "Z" * 43,
@@ -633,7 +714,7 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
         registry._handle(peer, {
             "schema": 1, "op": "read-obsidian-private-draft", "nonce": "digest-denied",
             "observed_call_handle": changed_call["handle"],
-            "startup_binding_id": "B" * 43, "draft_id": draft_id,
+            "startup_binding_id": "N" * 43, "draft_id": draft_id,
             "expected_content_sha256": "9" * 64,
         })
 
@@ -643,9 +724,10 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
         registry._handle(peer, {
             "schema": 1, "op": "read-obsidian-private-draft", "nonce": "expert-read-denied",
             "observed_call_handle": expert_read["handle"],
-            "startup_binding_id": "B" * 43, "draft_id": draft_id,
+            "startup_binding_id": "N" * 43, "draft_id": draft_id,
             "expected_content_sha256": content_sha,
         })
+
 
     promote_args = {"draft_id": draft_id, "expected_draft_sha256": content_sha,
                     "destination": "Notes/Expert.md", "expected_base_sha256": None,
@@ -657,7 +739,7 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
     resolved = registry._handle(peer, {
         "schema": 1, "op": "resolve-obsidian-draft-origin", "nonce": "resolve",
         "observed_call_handle": promote_call["handle"],
-        "startup_binding_id": "B" * 43, "draft_id": draft_id,
+        "startup_binding_id": "N" * 43, "draft_id": draft_id,
         "expected_content_sha256": content_sha,
     })
     assert resolved["ok"] is True
@@ -670,7 +752,7 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
         registry._handle(peer, {
             "schema": 1, "op": "resolve-obsidian-draft-origin", "nonce": "replay",
             "observed_call_handle": promote_call["handle"],
-            "startup_binding_id": "B" * 43, "draft_id": draft_id,
+            "startup_binding_id": "N" * 43, "draft_id": draft_id,
             "expected_content_sha256": content_sha,
         })
 
@@ -680,9 +762,124 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
         registry._handle(peer, {
             "schema": 1, "op": "resolve-obsidian-draft-origin", "nonce": "expert-denied",
             "observed_call_handle": expert_promote["handle"],
-            "startup_binding_id": "B" * 43, "draft_id": draft_id,
+            "startup_binding_id": "N" * 43, "draft_id": draft_id,
             "expected_content_sha256": content_sha,
         })
+
+
+def test_obsidian_read_delivery_client_uses_allowlisted_protocol_transport(monkeypatch):
+    """Exercise the real public client method, framing, allowlist, and response decoder."""
+    import json
+    import os
+    import stat
+    import struct
+    import time
+    from types import SimpleNamespace
+
+    import hermes_installer.remote.core_native_observer as observer
+    from hermes_installer.remote.obsidian_native_scope import (
+        RootSelectedObsidianVaultBinding, _BINDING_SEAL,
+    )
+
+    observed = ObservedNativeToolCall(
+        handle="H" * 43, attempt_handle="A" * 43, owner_turn_handle="T" * 43,
+        tool_call_id="draft-read", tool_name="obsidian_read_private_draft",
+        arguments_sha256="a" * 64, expires_monotonic=time.monotonic() + 20)
+    now = time.monotonic()
+    binding = RootSelectedObsidianVaultBinding(
+        binding_id="B" * 43, registration_sha256="b" * 64,
+        owner_subject_sha256="c" * 64, core_generation="d" * 64,
+        core_source_generation="e" * 64, core_pid=os.getpid(),
+        core_start_ticks="987", selected_owner_uid=os.geteuid(),
+        vault_root="/home/admin/.hermes/jarvis-second-brain",
+        issued_monotonic=now, expires_monotonic=now + 20, _seal=_BINDING_SEAL)
+    returned = {"receipt_id": "R" * 43, "receipt_sha256": "f" * 64,
+                "complete": True, "covered_byte_length": 3}
+    exchange = {}
+
+    class Transport:
+        def __init__(self, *_args):
+            self.incoming = bytearray()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def settimeout(self, _timeout):
+            pass
+
+        def connect(self, _path):
+            pass
+
+        def getsockopt(self, *_args):
+            return struct.pack("3i", 999, 0, 1000)
+
+        def sendall(self, payload):
+            size = struct.unpack("!I", payload[:4])[0]
+            request = json.loads(payload[4:4 + size])
+            exchange.setdefault("requests", []).append(request)
+            if request["op"] == "confirm-obsidian-draft-read-delivery":
+                response = {"schema": 1, "nonce": request["nonce"], "ok": True,
+                            "confirmed": True, "receipt_sha256": returned["receipt_sha256"]}
+            else:
+                response = {"schema": 1, "nonce": request["nonce"], "ok": True,
+                    "pending_id": "P" * 43, "review_sha256": request["review_sha256"],
+                    "expires_monotonic": time.monotonic() + 20}
+            raw = json.dumps(response, separators=(",", ":")).encode()
+            self.incoming.extend(struct.pack("!I", len(raw)) + raw)
+
+        def recv(self, size):
+            result = bytes(self.incoming[:size])
+            del self.incoming[:size]
+            return result
+
+    socket_path = Path("/run/hermes-jarvis-native-observer/native-observer.sock")
+    real_lstat = Path.lstat
+
+    def lstat(path):
+        if path == socket_path.parent:
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o750, st_uid=0, st_gid=1000)
+        if path == socket_path:
+            return SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_uid=0, st_gid=1000)
+        return real_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(observer.socket, "socket", Transport)
+    monkeypatch.setattr(observer.os, "getgroups", lambda: [1000])
+    client = CoreNativeObservationClient(socket_path=socket_path)
+    result = {"draft_id": "D" * 43, "byte_length": 3, "review_complete": True,
+              "read_delivery": returned}
+    client.confirm_obsidian_draft_read_delivery(
+        observed_call=observed, binding=binding, tool_result=result)
+    confirmation = exchange["requests"][0]
+    assert confirmation["op"] == "confirm-obsidian-draft-read-delivery"
+    assert confirmation["receipt_id"] == returned["receipt_id"]
+    import hashlib
+    assert confirmation["tool_result_sha256"] == hashlib.sha256(
+        json.dumps(result, ensure_ascii=False, sort_keys=True,
+                   separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    client.request_final_effect(
+        observed_call_handle=observed.handle, review_sha256="9" * 64,
+        startup_binding_id=binding.binding_id)
+    approval_request = exchange["requests"][1]
+    assert approval_request["op"] == "request-final-effect"
+    assert approval_request["startup_binding_id"] == binding.binding_id
+
+    incomplete = {**result, "title": "Large draft", "markdown": None,
+        "content_sha256": "a" * 64, "byte_length": 32_769,
+        "review_complete": False,
+        "next_step": "Use the owner draft review flow to reduce the draft before Jarvis reviews it.",
+        "read_delivery": {"receipt_id": returned["receipt_id"],
+            "receipt_sha256": returned["receipt_sha256"], "complete": False,
+            "covered_byte_length": 0}}
+    client.confirm_obsidian_draft_read_delivery(
+        observed_call=observed, binding=binding, tool_result=incomplete)
+    assert exchange["requests"][2]["op"] == "confirm-obsidian-draft-read-delivery"
+    assert exchange["requests"][2]["tool_result_sha256"] == hashlib.sha256(
+        json.dumps(incomplete, ensure_ascii=False, sort_keys=True,
+                   separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
 @pytest.mark.parametrize("retry_count", [None, -1, 1, True])
