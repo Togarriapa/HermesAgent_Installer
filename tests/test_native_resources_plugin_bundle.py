@@ -18,6 +18,15 @@ def test_official_register_entrypoint_installs_hooks_before_observer_startup(mon
     bridge.register_native_resources_observer = lambda ctx, runtime: calls.append(
         ("observer", ctx, runtime)) or ("observer-hook",)
     monkeypatch.setitem(sys.modules, bridge.__name__, bridge)
+    lifecycle = types.ModuleType("hermes_installer.remote.core_lifecycle_startup")
+    lifecycle.register_lifecycle_startup_probe = lambda server, *, client: calls.append(
+        ("lifecycle", server, client))
+    monkeypatch.setitem(sys.modules, lifecycle.__name__, lifecycle)
+    gateway = types.ModuleType("tui_gateway.server")
+    tui_gateway = types.ModuleType("tui_gateway")
+    tui_gateway.server = gateway
+    monkeypatch.setitem(sys.modules, "tui_gateway", tui_gateway)
+    monkeypatch.setitem(sys.modules, "tui_gateway.server", gateway)
     effects = importlib.import_module("hermes_installer.remote.jarvis_final_effects")
     projects = importlib.import_module("hermes_installer.remote.jarvis_project_context_engine")
     invocations = importlib.import_module("hermes_installer.native_invocations")
@@ -36,10 +45,11 @@ def test_official_register_entrypoint_installs_hooks_before_observer_startup(mon
 
     ctx = Context()
     registrations = plugin.register(ctx)
-    assert [call[0] for call in calls] == ["gate", "projects", "pin", "observer"]
-    assert calls[0][1] is ctx
-    assert type(calls[0][2]) is Client
-    assert calls[0][3] == {"obsidian_binding": None}
+    assert [call[0] for call in calls] == ["lifecycle", "gate", "projects", "pin", "observer"]
+    assert calls[0][1] is gateway and type(calls[0][2]) is Client
+    assert calls[1][1] is ctx
+    assert type(calls[1][2]) is Client
+    assert calls[1][3] == {"obsidian_binding": None}
     assert calls[-1] == ("observer", ctx, None)
     assert registrations == ("observer-hook", "effect-gate", "projects-hook")
 
@@ -56,6 +66,15 @@ def test_executor_pin_failure_keeps_effect_gate_and_observer_registered(monkeypa
     bridge.register_native_resources_observer = lambda ctx, runtime: calls.append(
         ("observer", ctx, runtime)) or ("observer-hook",)
     monkeypatch.setitem(sys.modules, bridge.__name__, bridge)
+    lifecycle = types.ModuleType("hermes_installer.remote.core_lifecycle_startup")
+    lifecycle.register_lifecycle_startup_probe = lambda server, *, client: calls.append(
+        ("lifecycle", server, client))
+    monkeypatch.setitem(sys.modules, lifecycle.__name__, lifecycle)
+    gateway = types.ModuleType("tui_gateway.server")
+    tui_gateway = types.ModuleType("tui_gateway")
+    tui_gateway.server = gateway
+    monkeypatch.setitem(sys.modules, "tui_gateway", tui_gateway)
+    monkeypatch.setitem(sys.modules, "tui_gateway.server", gateway)
     effects = importlib.import_module("hermes_installer.remote.jarvis_final_effects")
     projects = importlib.import_module("hermes_installer.remote.jarvis_project_context_engine")
     invocations = importlib.import_module("hermes_installer.native_invocations")
@@ -79,10 +98,10 @@ def test_executor_pin_failure_keeps_effect_gate_and_observer_registered(monkeypa
 
     ctx = Context()
     registrations = plugin.register(ctx)
-    assert [call[0] for call in calls] == ["gate", "projects", "pin-failed", "observer"]
-    assert calls[0][1] is ctx
-    assert type(calls[0][2]) is Client
-    assert calls[0][3] == {"obsidian_binding": None}
+    assert [call[0] for call in calls] == ["lifecycle", "gate", "projects", "pin-failed", "observer"]
+    assert calls[1][1] is ctx
+    assert type(calls[1][2]) is Client
+    assert calls[1][3] == {"obsidian_binding": None}
     assert registrations == ("observer-hook", "effect-gate", "projects-hook")
 
 
