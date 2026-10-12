@@ -1359,6 +1359,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const value = Boolean(open);
     ui.panel.dataset.open = String(value);
     ui.toggle.setAttribute("aria-expanded", String(value));
+    ui.toggle.setAttribute("aria-label", value ? "Return to conversation" : "Show conversations");
     ui.scrim.hidden = !value;
   }
   function closeStream() {
@@ -1992,7 +1993,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   for (const button of document.querySelectorAll("[data-view]")) button.addEventListener("click", () => {
     const featureContext = button.classList.contains("chat-model-link") && conversationId
       ? {initialConversationId: conversationId} : {};
-    const openChats = button.dataset.view === "chat"
+    const openChats = button.dataset.view === "chat" && currentView === "chat"
       && window.matchMedia("(max-width: 760px)").matches;
     showView(button.dataset.view, openChats ? "sessions" : button.dataset.view, featureContext);
     focusSelectedViewHeading(button.dataset.view);
