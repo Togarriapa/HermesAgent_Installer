@@ -128,19 +128,20 @@ class JarvisChatAssetTests(unittest.TestCase):
             self.assertLess(markup.index(f'<link rel="stylesheet" href="{css_path}">'),
                             markup.index(features_tag))
         primary_nav = markup.split('<nav class="primary-nav"', 1)[1].split('</nav>', 1)[0]
-        expected_destinations = {"overview", "chat", "projects", "second-brain", "capabilities", "settings"}
-        expected_destinations.update(feature.feature_id for feature in FEATURE_ASSETS
-                                     if feature.feature_id not in {"overview", "projects", "second-brain"})
+        expected_destinations = {"overview", "chat", "capabilities", "settings"}
+        expected_destinations.update(feature.feature_id for feature in FEATURE_ASSETS)
         for destination in expected_destinations:
             with self.subTest(destination=destination):
                 self.assertEqual(primary_nav.count(f'data-view="{destination}"'), 1)
         self.assertEqual(primary_nav.count('<button type="button" class="nav-item'),
                          len(expected_destinations))
-        self.assertEqual(primary_nav.count('class="nav-group'), 1)
-        self.assertIn('data-nav-group="manage"', primary_nav)
-        manage_menu = primary_nav.split('data-nav-group="manage"', 1)[1].split("</details>", 1)[0]
-        for destination in ("capabilities", "settings"):
-            self.assertIn(f'data-view="{destination}"', manage_menu)
+        self.assertEqual(primary_nav.count('class="nav-group'), 3)
+        for group in ("work", "resources", "system"):
+            self.assertIn(f'data-nav-group="{group}"', primary_nav)
+        resources_menu = primary_nav.split('data-nav-group="resources"', 1)[1].split("</details>", 1)[0]
+        system_menu = primary_nav.split('data-nav-group="system"', 1)[1].split("</details>", 1)[0]
+        self.assertIn('data-view="capabilities"', resources_menu)
+        self.assertIn('data-view="settings"', system_menu)
         self.assertIn('Conversation model · session only', markup)
         self.assertEqual(markup.count('data-view="overview"'), 1)
         self.assertEqual(markup.count('data-view="integrations"'), 1)
@@ -157,6 +158,9 @@ class JarvisChatAssetTests(unittest.TestCase):
             with self.subTest(destination=destination):
                 self.assertIn(f'data-view="{destination}"', primary_nav)
                 self.assertIn(label, primary_nav)
+        for label in ("Work", "Resources", "System"):
+            self.assertIn(f"<summary aria-expanded=\"false\">{label}</summary>", primary_nav)
+        self.assertIn('id="voice-entry" type="button" aria-label="Open voice controls"', source)
 
 
         chunk_sources = [reviewed_chat_asset(path)[1].decode("utf-8") for path in FEATURE_CHUNK_PATHS]
@@ -193,11 +197,11 @@ class JarvisChatAssetTests(unittest.TestCase):
         _content_type, app_script = reviewed_chat_asset("/chat/assets/app.js")
         client = app_script.decode("utf-8")
 
-        self.assertEqual(primary_nav.count('class="nav-group'), 1)
-        self.assertIn('data-nav-group="manage"', primary_nav)
-        manage_menu = primary_nav.split('data-nav-group="manage"', 1)[1].split("</details>", 1)[0]
-        for destination in ("capabilities", "settings"):
-            self.assertIn(f'data-view="{destination}"', manage_menu)
+        self.assertEqual(primary_nav.count('class="nav-group'), 3)
+        self.assertIn('data-nav-group="work"', primary_nav)
+        self.assertIn('data-nav-group="resources"', primary_nav)
+        self.assertIn('data-nav-group="system"', primary_nav)
+        self.assertIn('byId("voice-entry").addEventListener("click", () => { void openVoiceControls(); });', client)
 
         _registry_type, registry = reviewed_chat_asset("/chat/assets/features.js")
         chunk_sources = [reviewed_chat_asset(path)[1].decode("utf-8") for path in FEATURE_CHUNK_PATHS]
@@ -830,6 +834,50 @@ assert.equal(byId("chat-speech-consent-row").hidden, false);
 '''.replace("CONFIGURE", configure)
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "chat-voice-unavailable-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                ["node", str(path)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_global_voice_entry_opens_existing_opt_in_or_truthful_unavailable_reason(self):
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        handler = "async function openVoiceControls() {" + client.split(
+            "async function openVoiceControls() {", 1
+        )[1].split("\n  function setPanel(", 1)[0]
+        harness = r'''const assert = require("node:assert/strict");
+function target(tagName = "P") {
+  return {tagName, focused:false, attributes:{}, hasAttribute(name){return name in this.attributes;},
+    setAttribute(name,value){this.attributes[name]=value;}, focus(){this.focused=true;}};
+}
+const preferences = {open:false};
+const consent = target("INPUT"), unavailable = target("P"), voiceInput = target("BUTTON");
+const ui = {voiceInput};
+let voiceSupported = true, consentEnabled = false, view = "overview";
+function byId(id) { return id === "chat-preferences" ? preferences : id === "chat-speech-consent" ? consent : unavailable; }
+function pushToTalkEnabled() { return consentEnabled; }
+async function showView(name) { view = name; }
+HANDLER
+(async () => {
+  await openVoiceControls();
+  assert.equal(view, "chat");
+  assert.equal(preferences.open, true);
+  assert.equal(consent.focused, true, "voice stays opt-in and does not start listening");
+  assert.equal(voiceInput.focused, false);
+  consentEnabled = true;
+  await openVoiceControls();
+  assert.equal(voiceInput.focused, true, "the opted-in path points to push-to-talk without activating it");
+  voiceSupported = false;
+  preferences.open = false;
+  await openVoiceControls();
+  assert.equal(preferences.open, true);
+  assert.equal(unavailable.attributes.tabindex, "-1");
+  assert.equal(unavailable.focused, true, "unsupported state is surfaced instead of claiming voice is ready");
+})().catch((error) => { console.error(error); process.exitCode=1; });
+'''.replace("HANDLER", handler)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "global-voice-entry-harness.js"
             path.write_text(harness, encoding="utf-8")
             result = subprocess.run(
                 ["node", str(path)], capture_output=True, text=True, check=False,
