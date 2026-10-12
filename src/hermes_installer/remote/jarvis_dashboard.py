@@ -21,6 +21,7 @@ from typing import Any
 UTC = timezone.utc
 _ROUTES = {
     "/chat/api/overview": "overview",
+    "/chat/api/calendar": "calendar",
     "/chat/api/capabilities": "capabilities",
     "/chat/api/settings": "settings",
     "/chat/api/resources/learning": "learning",
@@ -328,6 +329,44 @@ def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
         launch = request.app.get("core_gateway_launch")
         if accepted is None or launch is None:
             raise web.HTTPServiceUnavailable(text="current core projection unavailable")
+        if request.path == "/chat/api/calendar":
+            assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])
+            if len(assertions) != 1:
+                raise web.HTTPForbidden(text="current authenticated Calendar ingress is required")
+            from datetime import datetime, timedelta
+            from zoneinfo import ZoneInfo
+            zone_name = "Europe/Lisbon"
+            now = datetime.now(ZoneInfo(zone_name)).replace(second=0, microsecond=0)
+            start = now.isoformat()
+            end = (now + timedelta(days=7)).isoformat()
+            try:
+                inspector = getattr(service, "inspector", None)
+                if inspector is None:
+                    raise ValueError
+                payload = await asyncio.wait_for(asyncio.to_thread(
+                    inspector.read_owner_calendar, assertions[0], accepted,
+                    calendar_ref=None, start_time=start, end_time=end,
+                    timezone_name=zone_name, page_size=100), timeout=5.0)
+                current = service._current(request)
+                if (current.subject != principal.subject
+                        or current.core_generation != principal.core_generation
+                        or accepted.verify_current(launch.config) is not True):
+                    raise ValueError
+                return web.json_response(payload, dumps=lambda value: json.dumps(
+                    value, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
+            except Exception:
+                # A root producer failure is an unavailable state, never a fixture or
+                # a readiness claim. Keep the precise enrollment step actionable.
+                from .jarvis_calendar import project_calendar_page
+                payload = project_calendar_page({"status": "unavailable", "events": [],
+                    "account_label": "Selected connection · identity unknown",
+                    "calendar_label": "", "next_step": (
+                    "Calendar is not enrolled. Resume the root-managed Google Calendar setup "
+                        "with a read-only mcp:google-calendar:read credential, select a calendar, then refresh.")},
+                    timezone_name=zone_name, window_start=start, window_end=end,
+                    observed_at=datetime.now(UTC).isoformat())
+                return web.json_response(payload, status=200, dumps=lambda value: json.dumps(
+                    value, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
         if request.path == "/chat/api/resources/learning":
             try:
                 assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])
