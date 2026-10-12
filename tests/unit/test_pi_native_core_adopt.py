@@ -522,6 +522,17 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
                         lambda *_args: events.append("restore-old-ingress") or True)
     monkeypatch.setattr(adopt, "_backup_value", lambda _sha: ({}, old_gateway,
                                                                  old_inspector, old_config))
+    # The dedicated _refresh_migrated_core_config tests exercise the journal,
+    # protected backup and CAS checks. Keep this effect-order fixture focused on
+    # the main transaction sequencing while modeling its successful config bind.
+    def bind_migrated_core(*_args):
+        events.append("bind-migrated-core-config")
+        bound = json.loads(new_config)
+        bound["core_unit_sha256"] = "3" * 64
+        bound["core_launcher_sha256"] = "4" * 64
+        return json.dumps(bound, sort_keys=True).encode() + b"\n"
+
+    monkeypatch.setattr(adopt, "_refresh_migrated_core_config", bind_migrated_core)
 
     result = adopt.main()
     gateway_tunnel_starts = [index for index, event in enumerate(events)
