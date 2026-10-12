@@ -856,6 +856,8 @@ class RootObservedExpertCompletion:
     response_text: str
     expires_monotonic: float
     _seal: object
+    team_message_handle: str | None = None
+    team_lineage: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
         if (self._seal is not _EXPERT_COMPLETION_SEAL
@@ -876,9 +878,143 @@ class RootObservedExpertCompletion:
                 or type(self.expires_monotonic) not in (int, float)
                 or not time.monotonic() < self.expires_monotonic <= time.monotonic() + 30.0):
             raise CoreNativeObservationUnavailable("root Expert completion is malformed")
+        if self.team_message_handle is not None and not _OPAQUE.fullmatch(self.team_message_handle):
+            raise CoreNativeObservationUnavailable("root Team response lineage is malformed")
+        if (self.team_message_handle is None) != (self.team_lineage is None):
+            raise CoreNativeObservationUnavailable("root Team message and completion must arrive together")
+        if self.team_lineage is not None:
+            fields = {"sender_completion_handle", "sender_profile_id", "recipient_profile_id",
+                "excerpt_sha256", "recipient_request_sha256", "recipient_response_sha256",
+                "recipient_text_sha256", "recipient_completion_handle"}
+            if (type(self.team_lineage) is not dict or set(self.team_lineage) != fields
+                    or not all(_OPAQUE.fullmatch(self.team_lineage[key] or "") for key in (
+                        "sender_completion_handle", "recipient_completion_handle"))
+                    or not all(_ID.fullmatch(self.team_lineage[key] or "") for key in (
+                        "sender_profile_id", "recipient_profile_id"))
+                    or self.team_lineage["sender_profile_id"] == self.team_lineage["recipient_profile_id"]
+                    or not all(_HASH.fullmatch(self.team_lineage[key] or "") for key in (
+                        "excerpt_sha256", "recipient_request_sha256", "recipient_response_sha256",
+                        "recipient_text_sha256"))
+                    or self.team_message_handle is None):
+                raise CoreNativeObservationUnavailable("root Team discussion edge is malformed")
 
 
 _EXPERT_COMPLETION_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedTeamBinding:
+    """Short root-retained Team selection joined to one sealed mission decision."""
+
+    schema: int
+    binding_id: str
+    owner_subject_sha256: str
+    mission_id: str
+    revision: int
+    goal_sha256: str
+    plan_sha256: str
+    catalog_sha256: str
+    team_id: str
+    source_revision: str
+    bundle_generation_sha256: str
+    bundle_member_sha256: str
+    ordered_member_ids: tuple[str, ...]
+    selected_expert_ids: tuple[str, ...]
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object
+
+    def __post_init__(self) -> None:
+        if (type(self.schema) is not int or self.schema != 1
+                or not _OPAQUE.fullmatch(self.binding_id or "")
+                or not _HASH.fullmatch(self.owner_subject_sha256 or "")
+                or not _ID.fullmatch(self.mission_id or "")
+                or type(self.revision) is not int or self.revision < 1
+                or not all(_HASH.fullmatch(item or "") for item in (
+                    self.goal_sha256, self.plan_sha256, self.catalog_sha256,
+                    self.bundle_generation_sha256, self.bundle_member_sha256))
+                or not _ID.fullmatch(self.team_id or "")
+                or not isinstance(self.source_revision, str) or not 1 <= len(self.source_revision) <= 128
+                or not isinstance(self.ordered_member_ids, tuple) or not 1 <= len(self.ordered_member_ids) <= 32
+                or any(not _ID.fullmatch(item or "") for item in self.ordered_member_ids)
+                or len(set(self.ordered_member_ids)) != len(self.ordered_member_ids)
+                or not isinstance(self.selected_expert_ids, tuple) or len(self.selected_expert_ids) != 2
+                or len(set(self.selected_expert_ids)) != 2
+                or any(item not in self.ordered_member_ids for item in self.selected_expert_ids)
+                or type(self.issued_monotonic) not in (int, float)
+                or type(self.expires_monotonic) not in (int, float)
+                or not math.isfinite(self.issued_monotonic) or not math.isfinite(self.expires_monotonic)
+                or not self.issued_monotonic < self.expires_monotonic <= self.issued_monotonic + 600.0
+                or self._seal is not _TEAM_BINDING_SEAL):
+            raise CoreNativeObservationUnavailable("root Team selection binding is malformed")
+
+    def to_wire(self) -> dict[str, Any]:
+        return {"schema": self.schema, "binding_id": self.binding_id,
+            "owner_subject_sha256": self.owner_subject_sha256, "mission_id": self.mission_id,
+            "revision": self.revision, "goal_sha256": self.goal_sha256,
+            "plan_sha256": self.plan_sha256, "catalog_sha256": self.catalog_sha256,
+            "team_id": self.team_id, "source_revision": self.source_revision,
+            "bundle_generation_sha256": self.bundle_generation_sha256,
+            "bundle_member_sha256": self.bundle_member_sha256,
+            "ordered_member_ids": list(self.ordered_member_ids),
+            "selected_expert_ids": list(self.selected_expert_ids),
+            "issued_monotonic": self.issued_monotonic, "expires_monotonic": self.expires_monotonic}
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "RootSelectedTeamBinding":
+        fields = {"schema", "binding_id", "owner_subject_sha256", "mission_id", "revision",
+            "goal_sha256", "plan_sha256", "catalog_sha256", "team_id", "source_revision",
+            "bundle_generation_sha256", "bundle_member_sha256", "ordered_member_ids",
+            "selected_expert_ids", "issued_monotonic", "expires_monotonic"}
+        if type(value) is not dict or set(value) != fields:
+            raise CoreNativeObservationUnavailable("root Team binding fields differ")
+        try:
+            binding = cls(**{**value, "ordered_member_ids": tuple(value["ordered_member_ids"]),
+                "selected_expert_ids": tuple(value["selected_expert_ids"]),
+                "_seal": _TEAM_BINDING_SEAL})
+            if binding.expires_monotonic > time.monotonic() + 600.0:
+                raise ValueError
+            return binding
+        except Exception:
+            raise CoreNativeObservationUnavailable("root Team binding is malformed or stale") from None
+
+
+@dataclass(frozen=True, slots=True)
+class RootTeamMessageDelivery:
+    """One-use exact sender excerpt admitted to a distinct recipient child."""
+
+    message_handle: str
+    binding_id: str
+    sender_completion_handle: str
+    sender_profile_id: str
+    recipient_profile_id: str
+    excerpt_sha256: str
+    excerpt: str
+    recipient_goal_sha256: str
+    recipient_goal: str
+    expires_monotonic: float
+    _seal: object
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _TEAM_MESSAGE_SEAL
+                or not all(_OPAQUE.fullmatch(item or "") for item in (
+                    self.message_handle, self.binding_id, self.sender_completion_handle))
+                or not _ID.fullmatch(self.sender_profile_id or "")
+                or not _ID.fullmatch(self.recipient_profile_id or "")
+                or self.sender_profile_id == self.recipient_profile_id
+                or not all(_HASH.fullmatch(item or "") for item in (
+                    self.excerpt_sha256, self.recipient_goal_sha256))
+                or not isinstance(self.excerpt, str) or not 1 <= len(self.excerpt.encode("utf-8")) <= 8192
+                or hashlib.sha256(self.excerpt.encode("utf-8")).hexdigest() != self.excerpt_sha256
+                or not isinstance(self.recipient_goal, str)
+                or hashlib.sha256(self.recipient_goal.encode("utf-8")).hexdigest() != self.recipient_goal_sha256
+                or type(self.expires_monotonic) not in (int, float)
+                or not time.monotonic() < self.expires_monotonic <= time.monotonic() + 30.0):
+            raise CoreNativeObservationUnavailable("root Team message delivery is malformed")
+
+
+_TEAM_BINDING_SEAL = object()
+_TEAM_MESSAGE_SEAL = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1240,6 +1376,7 @@ class RootNativeSelectedSourceDelivery:
     effective_prompt_sha256: str
     expires_monotonic: float
     _seal: object
+    team_binding: RootSelectedTeamBinding | None = None
 
     @property
     def source_member_manifest_sha256(self) -> str:
@@ -1256,6 +1393,11 @@ class RootNativeSelectedSourceDelivery:
                 or not isinstance(self.effective_prompt, bytes) or not self.effective_prompt
                 or len(self.effective_prompt) > 128 * 1024
                 or hashlib.sha256(self.effective_prompt).hexdigest() != self.effective_prompt_sha256
+                or (self.team_binding is not None and (
+                    type(self.team_binding) is not RootSelectedTeamBinding
+                    or self._seal is not _SELECTED_SOURCE_DELIVERY_SEAL
+                    or self.profile_id not in self.team_binding.selected_expert_ids
+                    or self.generation_sha256 != self.team_binding.bundle_generation_sha256))
                 or type(self.expires_monotonic) not in (int, float)
                 or not time.monotonic() < self.expires_monotonic <= time.monotonic() + 30.0
                 or self._seal is not _SELECTED_SOURCE_DELIVERY_SEAL):
@@ -1412,7 +1554,7 @@ class CoreNativeObservationClient:
             "complete-native-child", "verify-planning-completion",
             "request-final-effect", "poll-final-effect", "authorize-master-read-call",
             "read-selected-expert-source", "admit-selected-expert-child",
-            "complete-selected-expert-child",
+            "complete-selected-expert-child", "prepare-team-message",
             "planning-turn-context", "bind-obsidian-native-vault",
             "authorize-obsidian-call-scope", "record-obsidian-draft-origin",
             "resolve-obsidian-draft-origin",
@@ -1612,7 +1754,8 @@ class CoreNativeObservationClient:
                     "child_session_id", "profile_id", "source_revision",
                     "source_generation_sha256", "source_manifest_sha256", "goal_sha256",
                     "provider_attempt_handle", "request_sha256", "response_sha256",
-                    "response_text_sha256", "response_text", "expires_monotonic"}
+                    "response_text_sha256", "response_text", "team_message_handle",
+                    "team_lineage", "expires_monotonic"}
         if (set(row) != required or row.get("schema") != 1 or row.get("ok") is not True
                 or row["owner_turn_handle"] != authorization.owner_turn_handle
                 or row["child_session_id"] != authorization.child_session_id
@@ -1633,9 +1776,66 @@ class CoreNativeObservationClient:
                 response_sha256=row["response_sha256"],
                 response_text_sha256=row["response_text_sha256"], response_text=row["response_text"],
                 expires_monotonic=float(row["expires_monotonic"]), _seal=_EXPERT_COMPLETION_SEAL,
+                team_message_handle=row["team_message_handle"],
+                team_lineage=row["team_lineage"],
             )
         except (KeyError, TypeError, ValueError):
             raise CoreNativeObservationUnavailable("root Expert completion is malformed") from None
+
+    def prepare_team_message(self, *, native_claim: RootSelectedInternalProfileDispatchClaim,
+                             binding: RootSelectedTeamBinding,
+                             sender: RootObservedExpertCompletion,
+                             recipient: RootNativeSelectedSourceDelivery,
+                             original_goal: str, excerpt: str) -> RootTeamMessageDelivery:
+        if (type(native_claim) is not RootSelectedInternalProfileDispatchClaim
+                or type(binding) is not RootSelectedTeamBinding
+                or type(sender) is not RootObservedExpertCompletion
+                or type(recipient) is not RootNativeSelectedSourceDelivery
+                or recipient.team_binding is None
+                or recipient.team_binding.binding_id != binding.binding_id
+                or sender.profile_id not in binding.selected_expert_ids
+                or recipient.profile_id not in binding.selected_expert_ids
+                or sender.profile_id == recipient.profile_id
+                or hashlib.sha256(original_goal.encode("utf-8", "strict")).hexdigest() != binding.goal_sha256
+                or not isinstance(excerpt, str) or not excerpt
+                or not sender.response_text.startswith(excerpt)
+                or len(excerpt.encode("utf-8", "strict")) > 8192):
+            raise CoreNativeObservationUnavailable("root Team sender, recipient and exact excerpt are required")
+        row = self._rpc("prepare-team-message", {
+            "claim_handle": native_claim.claim_handle,
+            "owner_turn_handle": native_claim.owner_turn_handle,
+            "team_binding_id": binding.binding_id,
+            "sender_completion_handle": sender.completion_handle,
+            "recipient_source_handle": recipient.source_handle,
+            "original_goal_sha256": binding.goal_sha256,
+            "original_goal": original_goal,
+            "excerpt": excerpt,
+        })
+        required = {"schema", "nonce", "ok", "message_handle", "binding_id",
+            "sender_completion_handle", "sender_profile_id", "recipient_profile_id",
+            "excerpt_sha256", "excerpt", "recipient_goal_sha256", "recipient_goal",
+            "expires_monotonic"}
+        if (set(row) != required or row.get("schema") != 1 or row.get("ok") is not True
+                or row["binding_id"] != binding.binding_id
+                or row["sender_completion_handle"] != sender.completion_handle
+                or row["sender_profile_id"] != sender.profile_id
+                or row["recipient_profile_id"] != recipient.profile_id
+                or row["excerpt"] != excerpt):
+            raise CoreNativeObservationUnavailable("root Team message does not match the actual completion")
+        try:
+            delivery = RootTeamMessageDelivery(
+                message_handle=row["message_handle"], binding_id=row["binding_id"],
+                sender_completion_handle=row["sender_completion_handle"],
+                sender_profile_id=row["sender_profile_id"], recipient_profile_id=row["recipient_profile_id"],
+                excerpt_sha256=row["excerpt_sha256"], excerpt=row["excerpt"],
+                recipient_goal_sha256=row["recipient_goal_sha256"], recipient_goal=row["recipient_goal"],
+                expires_monotonic=float(row["expires_monotonic"]), _seal=_TEAM_MESSAGE_SEAL)
+            if not time.monotonic() < delivery.expires_monotonic <= min(
+                    binding.expires_monotonic, native_claim.expires_monotonic):
+                raise ValueError
+            return delivery
+        except Exception:
+            raise CoreNativeObservationUnavailable("root Team message delivery is stale or malformed") from None
 
     def register_tool_call(self, *, attempt: ObservedProviderAttempt,
                            tool_call_id: str, canonical_arguments: bytes) -> ObservedNativeToolCall:
@@ -2120,12 +2320,14 @@ class CoreNativeObservationClient:
         })
         required = {"schema", "nonce", "ok", "source_handle", "profile_id", "source_revision",
                     "generation_sha256", "source_manifest_sha256", "profile_manifest_sha256",
-                    "prompt_b64", "prompt_sha256", "expires_monotonic"}
+                    "prompt_b64", "prompt_sha256", "team_binding", "expires_monotonic"}
         if (set(row) != required or type(row.get("schema")) is not int or row["schema"] != 1
                 or row["profile_id"] != source_id or not _OPAQUE.fullmatch(row["source_handle"] or "")):
             raise CoreNativeObservationUnavailable("root selected source response is malformed")
         try:
             prompt = base64.b64decode(row["prompt_b64"], validate=True)
+            team_binding = (RootSelectedTeamBinding.from_wire(row["team_binding"])
+                            if row["team_binding"] is not None else None)
             delivery = RootNativeSelectedSourceDelivery(
                 source_handle=row["source_handle"], profile_id=row["profile_id"],
                 source_revision=row["source_revision"], generation_sha256=row["generation_sha256"],
@@ -2134,6 +2336,7 @@ class CoreNativeObservationClient:
                 effective_prompt=prompt, effective_prompt_sha256=row["prompt_sha256"],
                 expires_monotonic=float(row["expires_monotonic"]),
                 _seal=_SELECTED_SOURCE_DELIVERY_SEAL,
+                team_binding=team_binding,
             )
             if not time.monotonic() < float(row["expires_monotonic"]) <= min(
                     native_claim.expires_monotonic, time.monotonic() + 30.0):
@@ -2144,11 +2347,19 @@ class CoreNativeObservationClient:
 
     def admit_selected_expert_child(self, *, native_claim: RootSelectedInternalProfileDispatchClaim,
                                     child: Any, source: RootNativeSelectedSourceDelivery,
-                                    goal: str) -> RootVerifiedNativeChildAuthorization:
+                                    goal: str,
+                                    team_message: RootTeamMessageDelivery | None = None
+                                    ) -> RootVerifiedNativeChildAuthorization:
         from hermes_installer.remote.native_child_adapter import NativeChildMode
         if (type(native_claim) is not RootSelectedInternalProfileDispatchClaim
                 or type(source) is not RootNativeSelectedSourceDelivery
                 or source._seal is not _SELECTED_SOURCE_DELIVERY_SEAL
+                or (team_message is not None and type(team_message) is not RootTeamMessageDelivery)
+                or (team_message is not None and (
+                    source.team_binding is None
+                    or team_message.binding_id != source.team_binding.binding_id
+                    or team_message.recipient_profile_id != source.profile_id
+                    or team_message.recipient_goal != goal))
                 or not isinstance(goal, str) or not goal or len(goal.encode("utf-8", "strict")) > 32 * 1024):
             raise CoreNativeObservationUnavailable("typed Resources claim/source and bounded goal are required")
         try:
@@ -2172,6 +2383,8 @@ class CoreNativeObservationClient:
             "source_handle": source.source_handle, "source_id": source.profile_id,
             "child_session_id": child_session, "child_turn_id": child_turn,
             "goal_sha256": hashlib.sha256(goal.encode("utf-8", "strict")).hexdigest(),
+            "team_message_handle": (team_message.message_handle
+                                    if type(team_message) is RootTeamMessageDelivery else None),
             "tool_names": list(tool_names), "tool_closure_sha256": _hash(list(tool_names)),
             "provider": provider, "api_mode": api_mode, "base_url": base_url, "model": model,
         })
@@ -2509,6 +2722,10 @@ class RootCoreNativeObservationRegistry:
         self._child_sessions: dict[str, dict[str, Any]] = {}
         self._planning_completions: dict[str, dict[str, Any]] = {}
         self._expert_completions: dict[str, dict[str, Any]] = {}
+        self._team_bindings: dict[str, RootSelectedTeamBinding] = {}
+        self._team_messages: dict[str, dict[str, Any]] = {}
+        self._team_completion_counts: dict[str, int] = {}
+        self._team_edge_issued: set[str] = set()
         # Unlike the gateway-owned mission SQLite rows, these records are retained
         # only after this root process observed and validated the native completion.
         self._master_plan_records: dict[tuple[str, str, int], RootObservedMasterPlanRecord] = {}
@@ -2795,6 +3012,7 @@ class RootCoreNativeObservationRegistry:
                        or item.is_current_sealed(self._custody, now=time.monotonic()) is not True
                        for item in sources)):
             raise CoreNativeObservationUnavailable("selected Resources sources are not current")
+        team_binding = self._issue_team_binding(decision)
         enrollment_handle = secrets.token_urlsafe(32)
         # The source's short monotonic expiry is a readback freshness window,
         # not a child-authority lease. Every use re-reads that source; the
@@ -2805,11 +3023,52 @@ class RootCoreNativeObservationRegistry:
             self._master_selections[enrollment_handle] = {
                 "decision": decision, "owner": owner,
                 "sources": {item.profile_id: item for item in sources},
-                "expiry": expiry,
+                "expiry": expiry, "team_binding": team_binding,
             }
             while len(self._master_selections) > 128:
                 self._master_selections.pop(next(iter(self._master_selections)))
         return enrollment_handle
+
+    def _issue_team_binding(self, decision: Any) -> RootSelectedTeamBinding | None:
+        """Mint Team authority only from the sealed plan and current protected Bundle projection."""
+        selection = decision.plan.get("team_selection") if isinstance(decision.plan, Mapping) else None
+        if selection is None:
+            return None
+        from hermes_installer.remote.core_gateway_inspector import _read_root_planning_catalog
+        try:
+            catalog, catalog_sha = _read_root_planning_catalog(decision.core_source_generation)
+            team = catalog["teams"][selection["team_id"]]
+            experts = tuple(selection["selected_expert_ids"])
+            if (set(selection) != {"schema", "team_id", "bundle_generation_sha256",
+                    "bundle_member_sha256", "ordered_member_ids", "selected_expert_ids"}
+                    or type(selection["schema"]) is not int or selection["schema"] != 1
+                    or selection["bundle_generation_sha256"] != team["bundle_generation_sha256"]
+                    or selection["bundle_member_sha256"] != team["bundle_member_sha256"]
+                    or selection["ordered_member_ids"] != team["ordered_member_ids"]
+                    or len(experts) != 2 or experts != tuple(decision.selected_source_ids)
+                    or any(item not in team["ordered_member_ids"] for item in experts)
+                    or decision.core_source_generation != self._custody.core_source_generation):
+                raise ValueError
+            now = time.monotonic()
+            binding = RootSelectedTeamBinding(
+                schema=1, binding_id=secrets.token_urlsafe(32),
+                owner_subject_sha256=decision.owner_subject_sha256,
+                mission_id=decision.mission_id, revision=decision.revision,
+                goal_sha256=decision.goal_sha256, plan_sha256=decision.plan_sha256,
+                catalog_sha256=catalog_sha, team_id=selection["team_id"],
+                source_revision=team["source_revision"],
+                bundle_generation_sha256=team["bundle_generation_sha256"],
+                bundle_member_sha256=team["bundle_member_sha256"],
+                ordered_member_ids=tuple(team["ordered_member_ids"]),
+                selected_expert_ids=experts, issued_monotonic=now,
+                expires_monotonic=min(float(decision.expires_monotonic), now + 600.0),
+                _seal=_TEAM_BINDING_SEAL,
+            )
+            self._team_bindings[binding.binding_id] = binding
+            return binding
+        except Exception:
+            # A stale or incomplete current CAS join keeps Team dispatch unavailable.
+            raise CoreNativeObservationUnavailable("current protected Team selection is unavailable") from None
 
     def enroll_current_orchestrator_policy(self, owner_turn_observation: Any,
                                            current_tool_configuration: Any
@@ -3152,6 +3411,14 @@ class RootCoreNativeObservationRegistry:
         for handle, row in list(self._expert_completions.items()):
             if row["expiry"] <= now:
                 self._expert_completions.pop(handle, None)
+        for handle, row in list(self._team_messages.items()):
+            if row["expiry"] <= now:
+                self._team_messages.pop(handle, None)
+        for handle, row in list(self._team_bindings.items()):
+            if row.expires_monotonic <= now:
+                self._team_bindings.pop(handle, None)
+                self._team_completion_counts.pop(handle, None)
+                self._team_edge_issued.discard(handle)
         for handle, row in list(self._master_selections.items()):
             if row["expiry"] <= now:
                 self._master_selections.pop(handle, None)
@@ -3411,7 +3678,37 @@ class RootCoreNativeObservationRegistry:
         for row in self._master_selections.values():
             decision = row.get("decision")
             source = row.get("sources", {}).get(source_id)
+            team_selection = (decision.plan.get("team_selection")
+                              if isinstance(getattr(decision, "plan", None), Mapping) else None)
+            team_binding = row.get("team_binding")
+            if team_selection is None:
+                team_current = team_binding is None
+            else:
+                try:
+                    from hermes_installer.remote.core_gateway_inspector import _read_root_planning_catalog
+                    catalog, current_catalog_sha = _read_root_planning_catalog(
+                        decision.core_source_generation)
+                    team_row = catalog["teams"][team_selection["team_id"]]
+                    team_current = bool(
+                        type(team_binding) is RootSelectedTeamBinding
+                        and team_binding._seal is _TEAM_BINDING_SEAL
+                        and self._team_bindings.get(team_binding.binding_id) is team_binding
+                        and team_binding.owner_subject_sha256 == owner.owner_subject_sha256
+                        and team_binding.mission_id == decision.mission_id
+                        and team_binding.revision == decision.revision
+                        and team_binding.plan_sha256 == decision.plan_sha256
+                        and team_binding.catalog_sha256 == current_catalog_sha
+                        and team_binding.team_id == team_selection["team_id"]
+                        and team_binding.bundle_generation_sha256 == team_row["bundle_generation_sha256"]
+                        and team_binding.bundle_member_sha256 == team_row["bundle_member_sha256"]
+                        and team_binding.source_revision == team_row["source_revision"]
+                        and list(team_binding.ordered_member_ids) == team_row["ordered_member_ids"]
+                        and list(team_binding.selected_expert_ids) == team_selection["selected_expert_ids"]
+                        and time.monotonic() < team_binding.expires_monotonic)
+                except Exception:
+                    team_current = False
             if (row["expiry"] <= now or source is None
+                    or not team_current
                     or decision.is_current_sealed(self._config, custody=self._custody, now=now) is not True
                     or decision.owner_subject_sha256 != owner.owner_subject_sha256
                     or decision.core_generation != owner.core_generation
@@ -4004,6 +4301,7 @@ class RootCoreNativeObservationRegistry:
                     "source": source, "selection": selection, "claim": claim,
                     "owner": owner, "peer": peer, "expiry": expiry, "consumed": False,
                 }
+                team_binding = selection.get("team_binding")
                 return {"schema": 1, "nonce": nonce, "ok": True,
                     "source_handle": handle, "profile_id": source.profile_id,
                     "source_revision": source.source_revision,
@@ -4012,11 +4310,95 @@ class RootCoreNativeObservationRegistry:
                     "profile_manifest_sha256": source.profile_manifest_sha256,
                     "prompt_b64": base64.b64encode(source.effective_prompt).decode("ascii"),
                     "prompt_sha256": source.effective_prompt_sha256,
+                    "team_binding": team_binding.to_wire() if team_binding is not None else None,
+                    "expires_monotonic": expiry}
+            if op == "prepare-team-message":
+                required = {"schema", "op", "nonce", "claim_handle", "owner_turn_handle",
+                    "team_binding_id", "sender_completion_handle", "recipient_source_handle",
+                    "original_goal_sha256", "original_goal", "excerpt"}
+                if set(request) != required:
+                    raise ValueError("Team message schema mismatch")
+                claim = self._consumed_dispatches.get(request["claim_handle"])
+                owner = claim.get("owner") if claim is not None else None
+                binding = self._team_bindings.get(request["team_binding_id"])
+                sender = self._expert_completions.get(request["sender_completion_handle"])
+                recipient = self._selected_source_deliveries.get(request["recipient_source_handle"])
+                now = time.monotonic()
+                completed_round_zero_profiles = {
+                    row.get("child", {}).get("profile_id")
+                    for row in self._expert_completions.values()
+                    if row.get("team_binding_id") == request["team_binding_id"]
+                    and row.get("team_message_handle") is None
+                }
+                if (claim is None or owner is None or binding is None or sender is None or recipient is None
+                        or claim["expiry"] <= now or claim["call"]["peer"] != peer
+                        or owner.owner_turn_handle != request["owner_turn_handle"]
+                        or recipient["consumed"] or recipient["expiry"] <= now
+                        or recipient["peer"] != peer or recipient["claim"] is not claim
+                        or recipient["owner"] is not owner
+                        or recipient["selection"].get("team_binding") is not binding
+                        or sender["expiry"] <= now or sender["peer"] != peer or sender["consumed"]
+                        or sender.get("team_binding_id") != binding.binding_id
+                        or sender["child"].get("owner") is not owner
+                        or sender["child"].get("profile_id") not in binding.selected_expert_ids
+                        or completed_round_zero_profiles != set(binding.selected_expert_ids)
+                        or recipient["source"].profile_id not in binding.selected_expert_ids
+                        or sender["child"].get("profile_id") == recipient["source"].profile_id
+                        or not _HASH.fullmatch(request["original_goal_sha256"] or "")
+                        or request["original_goal_sha256"] != binding.goal_sha256
+                        or not isinstance(request["original_goal"], str)
+                        or hashlib.sha256(request["original_goal"].encode("utf-8", "strict")).hexdigest()
+                            != binding.goal_sha256
+                        or not isinstance(request["excerpt"], str)
+                        or not 1 <= len(request["excerpt"].encode("utf-8", "strict")) <= 8192
+                        or not sender["response_text"].startswith(request["excerpt"])
+                        or hashlib.sha256(sender["response_text"].encode("utf-8", "strict")).hexdigest()
+                            != sender["response_text_sha256"]
+                        or binding.expires_monotonic <= now
+                        or owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True):
+                    raise ValueError("Team message sender/recipient lineage is stale or mismatched")
+                if binding.binding_id in self._team_edge_issued:
+                    raise ValueError("Team binding already has its one permitted discussion edge")
+                excerpt = request["excerpt"]
+                recipient_goal = (request["original_goal"] + "\n\nExact excerpt from Team member "
+                    + sender["child"]["profile_id"] + " (root-observed completion "
+                    + request["sender_completion_handle"] + "):\n" + excerpt)
+                if (len(recipient_goal) > 1200
+                        or len(recipient_goal.encode("utf-8", "strict")) > 32 * 1024):
+                    raise ValueError("Team recipient request exceeds its bound")
+                message_handle = secrets.token_urlsafe(32)
+                self._team_edge_issued.add(binding.binding_id)
+                expiry = min(binding.expires_monotonic, sender["expiry"], recipient["expiry"],
+                    claim["expiry"], owner.expires_monotonic, now + 30.0)
+                self._team_messages[message_handle] = {
+                    "binding_id": binding.binding_id, "binding": binding, "owner": owner,
+                    "claim": claim, "sender": sender,
+                    "sender_completion_handle": request["sender_completion_handle"],
+                    "sender_profile_id": sender["child"]["profile_id"],
+                    "recipient_source": recipient["source"],
+                    "recipient_source_handle": request["recipient_source_handle"],
+                    "recipient_profile_id": recipient["source"].profile_id,
+                    "original_goal_sha256": binding.goal_sha256,
+                    "excerpt": excerpt,
+                    "excerpt_sha256": hashlib.sha256(excerpt.encode("utf-8", "strict")).hexdigest(),
+                    "recipient_goal": recipient_goal,
+                    "recipient_goal_sha256": hashlib.sha256(recipient_goal.encode("utf-8", "strict")).hexdigest(),
+                    "expiry": expiry, "consumed": False, "recipient_completion_handle": None,
+                }
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "message_handle": message_handle, "binding_id": binding.binding_id,
+                    "sender_completion_handle": request["sender_completion_handle"],
+                    "sender_profile_id": sender["child"]["profile_id"],
+                    "recipient_profile_id": recipient["source"].profile_id,
+                    "excerpt": excerpt,
+                    "excerpt_sha256": hashlib.sha256(excerpt.encode("utf-8", "strict")).hexdigest(),
+                    "recipient_goal": recipient_goal,
+                    "recipient_goal_sha256": hashlib.sha256(recipient_goal.encode("utf-8", "strict")).hexdigest(),
                     "expires_monotonic": expiry}
             if op == "admit-selected-expert-child":
                 required = {"schema", "op", "nonce", "claim_handle", "owner_turn_handle",
                             "source_handle", "source_id", "child_session_id", "child_turn_id",
-                            "goal_sha256", "tool_names", "tool_closure_sha256", "provider",
+                            "goal_sha256", "team_message_handle", "tool_names", "tool_closure_sha256", "provider",
                             "api_mode", "base_url", "model"}
                 if set(request) != required:
                     raise ValueError("selected child admission schema mismatch")
@@ -4026,6 +4408,9 @@ class RootCoreNativeObservationRegistry:
                 owner = claim.get("owner") if claim is not None else None
                 call = claim.get("call") if claim is not None else None
                 source = delivered.get("source") if delivered is not None else None
+                team_binding = delivered.get("selection", {}).get("team_binding") if delivered is not None else None
+                message = (self._team_messages.get(request["team_message_handle"])
+                           if request["team_message_handle"] is not None else None)
                 if (delivered is None or delivered["consumed"] or delivered["expiry"] <= now
                         or delivered["peer"] != peer or claim is None or owner is None or call is None
                         or delivered["claim"] is not claim or delivered["owner"] is not owner
@@ -4045,9 +4430,49 @@ class RootCoreNativeObservationRegistry:
                 if (not isinstance(args, dict) or set(args) != {"goal"}
                         or not isinstance(args["goal"], str)
                         or _hash({"goal": args["goal"]}) != owner.mission_binding.task_sha256
-                        or call["arguments_sha256"] != owner.mission_binding.task_sha256
-                        or request["goal_sha256"] != hashlib.sha256(args["goal"].encode("utf-8", "strict")).hexdigest()):
-                    raise ValueError("selected child goal does not match the approved task")
+                        or call["arguments_sha256"] != owner.mission_binding.task_sha256):
+                    raise ValueError("selected child task does not match the approved mission")
+                if team_binding is None:
+                    if (message is not None
+                            or request["goal_sha256"] != hashlib.sha256(
+                                args["goal"].encode("utf-8", "strict")).hexdigest()):
+                        raise ValueError("individual child cannot claim Team message lineage")
+                elif message is None:
+                    prior_round_zero_profiles = {
+                        row.get("child", {}).get("profile_id")
+                        for row in self._expert_completions.values()
+                        if row.get("team_binding_id") == team_binding.binding_id
+                        and row.get("team_message_handle") is None
+                    }
+                    open_round_zero_profiles = {
+                        child_row.get("profile_id")
+                        for child_row in self._child_sessions.values()
+                        if child_row.get("team_binding_id") == team_binding.binding_id
+                        and not child_row.get("complete")
+                        and child_row.get("team_message_handle") is None
+                    }
+                    if (request["team_message_handle"] is not None
+                            or request["goal_sha256"] != hashlib.sha256(
+                                args["goal"].encode("utf-8", "strict")).hexdigest()
+                            or team_binding.goal_sha256 != owner.mission_binding.task_sha256
+                            or source.profile_id not in team_binding.selected_expert_ids
+                            or source.profile_id in prior_round_zero_profiles
+                            or source.profile_id in open_round_zero_profiles
+                            or self._team_completion_counts.get(team_binding.binding_id, 0)
+                                + sum(1 for child_row in self._child_sessions.values()
+                                    if child_row.get("team_binding_id") == team_binding.binding_id
+                                    and not child_row.get("complete")
+                                    and child_row.get("team_message_handle") is None) >= 2):
+                        raise ValueError("Team round-zero admission is stale or exceeds two Experts")
+                else:
+                    if (message.get("consumed") or message.get("expiry", 0) <= now
+                            or message.get("binding") is not team_binding
+                            or message.get("owner") is not owner or message.get("claim") is not claim
+                            or message.get("recipient_source") is not source
+                            or message.get("recipient_profile_id") != source.profile_id
+                            or message.get("recipient_goal_sha256") != request["goal_sha256"]
+                            or message.get("original_goal_sha256") != owner.mission_binding.task_sha256):
+                        raise ValueError("Team recipient message is stale, spent or mismatched")
                 allowed = {"web_search", "web_extract", "skills_list", "skill_view"} | _OBSIDIAN_READ_TOOL_NAMES
                 names = request["tool_names"]
                 if (not isinstance(names, list) or len(names) > len(allowed)
@@ -4070,6 +4495,8 @@ class RootCoreNativeObservationRegistry:
                 if child_turn and not _ID.fullmatch(child_turn):
                     raise ValueError("selected child turn ID is malformed")
                 delivered["consumed"] = True
+                if message is not None:
+                    message["consumed"] = True
                 admission = secrets.token_urlsafe(32)
                 expiry = min(float(delivered["expiry"]), float(owner.expires_monotonic),
                              float(claim["policy"].expires_monotonic), now + 30.0)
@@ -4085,7 +4512,10 @@ class RootCoreNativeObservationRegistry:
                     "tool_closure_sha256": _hash(names), "provider": _CODEX_PROVIDER,
                     "api_mode": _CODEX_MODE, "base_url": _CODEX_ENDPOINT, "model": attempt["model"],
                     "source": source, "attempts": [], "peer": peer, "expiry": expiry,
-                    "complete": False, "response_text_sha256": None}
+                    "complete": False, "response_text_sha256": None,
+                    "team_binding_id": team_binding.binding_id if team_binding is not None else None,
+                    "team_message_handle": request["team_message_handle"],
+                    "team_message": message}
                 self._child_sessions[child_session] = child
                 self._record_child_activity(child, kind="admitted", status="accepted",
                     event_id=hashlib.sha256(("admitted\0" + child["admission_handle"]).encode()).hexdigest())
@@ -4384,17 +4814,62 @@ class RootCoreNativeObservationRegistry:
                             != response[2]
                         or not 1 <= len(raw_text.encode("utf-8", errors="strict")) <= 32 * 1024):
                     raise ValueError("Expert completion lacks current root-observed provider output")
+                team_binding_id = child.get("team_binding_id")
+                team_message = child.get("team_message")
+                team_lineage = None
+                prior_team_completions = 0
+                if team_binding_id is not None:
+                    binding = self._team_bindings.get(team_binding_id)
+                    prior_team_completions = self._team_completion_counts.get(team_binding_id, 0)
+                    if (binding is None or binding.expires_monotonic <= now
+                            or binding.owner_subject_sha256 != owner.owner_subject_sha256
+                            or binding.mission_id != owner.mission_binding.mission_id
+                            or binding.goal_sha256 != owner.mission_binding.task_sha256
+                            or child["profile_id"] not in binding.selected_expert_ids
+                            or prior_team_completions >= 4):
+                        raise ValueError("Team completion exceeds current bound")
+                    if team_message is not None and (
+                            team_message.get("recipient_completion_handle") is not None
+                            or team_message.get("recipient_profile_id") != child["profile_id"]
+                            or team_message.get("recipient_goal_sha256") != child["goal_sha256"]
+                            or team_message.get("consumed") is not True
+                            or team_message.get("sender_completion_handle") not in self._expert_completions
+                            or team_message.get("expiry", 0) <= now):
+                        raise ValueError("Team recipient is detached from its sender message")
+                    if team_message is None and any(
+                            prior.get("team_binding_id") == team_binding_id
+                            and prior.get("team_message_handle") is not None
+                            for prior in self._expert_completions.values()):
+                        raise ValueError("Team discussion result lacks its admitted recipient message")
                 child["complete"] = True
                 child["response_text_sha256"] = response[2]
                 self._record_child_activity(child, kind="completed", status="completed",
                     event_id=hashlib.sha256(("completed\0" + child["admission_handle"]).encode()).hexdigest())
                 completion_handle = secrets.token_urlsafe(32)
                 completion_expiry = min(child["expiry"], owner.expires_monotonic, now + 30.0)
+                if team_binding_id is not None:
+                    self._team_completion_counts[team_binding_id] = prior_team_completions + 1
+                if team_message is not None:
+                    team_message["recipient_completion_handle"] = completion_handle
+                    team_lineage = {
+                        "sender_completion_handle": team_message["sender_completion_handle"],
+                        "sender_profile_id": team_message["sender_profile_id"],
+                        "recipient_profile_id": child["profile_id"],
+                        "excerpt_sha256": team_message["excerpt_sha256"],
+                        "recipient_request_sha256": final["request_sha256"],
+                        "recipient_response_sha256": response[0],
+                        "recipient_text_sha256": response[2],
+                        "recipient_completion_handle": completion_handle,
+                    }
                 self._expert_completions[completion_handle] = {
                     "child": child, "final_attempt": final, "response_sha256": response[0],
                     "response_text_sha256": response[2], "response_text": raw_text,
                     "expiry": completion_expiry, "peer": peer, "consumed": False,
+                    "team_binding_id": team_binding_id,
+                    "team_message_handle": child.get("team_message_handle"),
                 }
+                if team_message is not None:
+                    team_message["recipient_completion_handle"] = completion_handle
                 return {"schema": 1, "nonce": nonce, "ok": True,
                     "completion_handle": completion_handle,
                     "owner_turn_handle": owner.owner_turn_handle,
@@ -4406,7 +4881,9 @@ class RootCoreNativeObservationRegistry:
                     "provider_attempt_handle": final["attempt_handle"],
                     "request_sha256": final["request_sha256"],
                     "response_sha256": response[0], "response_text_sha256": response[2],
-                    "response_text": raw_text, "expires_monotonic": completion_expiry}
+                    "response_text": raw_text,
+                    "team_message_handle": child.get("team_message_handle"),
+                    "team_lineage": team_lineage, "expires_monotonic": completion_expiry}
             if op == "verify-planning-completion":
                 fields = {"schema", "op", "nonce", "completion_handle", "owner_turn_handle",
                           "gateway_turn_id", "owner_subject_sha256", "core_generation",
@@ -4836,6 +5313,10 @@ class RootCoreNativeObservationRegistry:
             self._child_sessions.clear()
             self._planning_completions.clear()
             self._expert_completions.clear()
+            self._team_messages.clear()
+            self._team_bindings.clear()
+            self._team_completion_counts.clear()
+            self._team_edge_issued.clear()
             self._master_selections.clear()
             self._selected_source_deliveries.clear()
             self._obsidian_bindings.clear()
@@ -5279,7 +5760,8 @@ class RootInternalProfileClaimSource:
 
     def admit_selected_expert_child(
             self, *, resources_claim: object, child: Any,
-            source: RootNativeSelectedSourceDelivery, goal: str
+            source: RootNativeSelectedSourceDelivery, goal: str,
+            team_message: RootTeamMessageDelivery | None = None
             ) -> RootVerifiedNativeChildAuthorization:
         """Forward the exact consumed claim/source to root admission."""
         from hermes_installer.components.resources_internal_dispatch import (
@@ -5292,7 +5774,26 @@ class RootInternalProfileClaimSource:
                 or resources_claim.claim_id not in self._authorized_mission_claims):
             raise CoreNativeObservationUnavailable("typed consumed Resources claim is required")
         return self._client.admit_selected_expert_child(
-            native_claim=retained[1], child=child, source=source, goal=goal)
+            native_claim=retained[1], child=child, source=source, goal=goal,
+            team_message=team_message)
+
+    def prepare_team_message(self, *, resources_claim: object,
+                             binding: RootSelectedTeamBinding,
+                             sender: RootObservedExpertCompletion,
+                             recipient: RootNativeSelectedSourceDelivery,
+                             original_goal: str, excerpt: str) -> RootTeamMessageDelivery:
+        from hermes_installer.components.resources_internal_dispatch import (
+            RootSelectedInternalProfileDispatchClaim as ResourcesDispatchClaim,
+        )
+        with self._lock:
+            retained = self._mission_claims.get(getattr(resources_claim, "claim_id", ""))
+        if (type(resources_claim) is not ResourcesDispatchClaim or retained is None
+                or retained[0] is not resources_claim
+                or resources_claim.claim_id not in self._authorized_mission_claims):
+            raise CoreNativeObservationUnavailable("typed current Resources claim is required")
+        return self._client.prepare_team_message(
+            native_claim=retained[1], binding=binding, sender=sender,
+            recipient=recipient, original_goal=original_goal, excerpt=excerpt)
 
     def complete_selected_expert_child(self, *, resources_claim: object,
                                        authorization: RootVerifiedNativeChildAuthorization

@@ -599,6 +599,12 @@ def _read_root_planning_catalog(core_source_generation: str) -> tuple[dict[str, 
                 raise ValueError("Bundle declaration identity differs")
             imports = effective.get("spec", {}).get("imports", {})
             roster = imports.get("profiles") if isinstance(imports, dict) else None
+            spec = effective.get("spec", {})
+            topology = spec.get("topology") if isinstance(spec, dict) else None
+            policy = spec.get("policy") if isinstance(spec, dict) else None
+            if ((isinstance(topology, dict) and topology.get("userEntryPoint"))
+                    or (isinstance(policy, dict) and policy.get("userFacing") is True)):
+                continue
             if (type(roster) is not list or not roster or len(roster) > 32
                     or any(not isinstance(profile_id, str) or profile_id not in profiles for profile_id in roster)
                     or len(set(roster)) != len(roster)):

@@ -459,6 +459,7 @@ def issue_master_plan_decision(*, completion: Any, config: Any, custody: Any,
                                raw_output: str, mission_id: str, revision: int,
                                title: str, goal: str,
                                allowed_source_ids: Iterable[str],
+                               verified_teams: Mapping[str, Any] | None = None,
                                now: float | None = None) -> CoreVerifiedJarvisMasterPlanDecision:
     """Root-side only mint: exact no-effect completion receipt + byte-matched model output."""
     current = time.monotonic() if now is None else now
@@ -473,7 +474,8 @@ def issue_master_plan_decision(*, completion: Any, config: Any, custody: Any,
             or type(revision) is not int or revision < 1
             or _HASH.fullmatch(goal_sha256_value or "") is None):
         raise JarvisMasterPlanningDenied("current root planning completion is unavailable")
-    parsed = parse_master_plan_output(raw_output, allowed_source_ids=allowed_source_ids)
+    parsed = parse_master_plan_output(raw_output, allowed_source_ids=allowed_source_ids,
+                                      verified_teams=verified_teams)
     if _sha256(raw_output.encode("utf-8", errors="strict")) != completion.response_sha256:
         raise JarvisMasterPlanningDenied("planning output does not match the root completion")
     expiry = _original_owner_deadline(completion)

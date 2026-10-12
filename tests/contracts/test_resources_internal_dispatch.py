@@ -96,6 +96,7 @@ class FakeDelivery:
         self.source_member_manifest_sha256 = digest("source-manifest-" + source_id)
         self.effective_prompt = ("Verified prompt for " + source_id).encode()
         self.effective_prompt_sha256 = digest(self.effective_prompt)
+        self.team_binding = None
 
 
 class FakeAuthorization:
@@ -104,7 +105,7 @@ class FakeAuthorization:
 
 
 class FakeObservedCompletion:
-    def __init__(self, source, goal):
+    def __init__(self, source, goal, *, team_message=None, lineage=None):
         self.profile_id = source.profile_id
         self.source_revision = source.source_revision
         self.source_generation_sha256 = source.generation_sha256
@@ -114,6 +115,28 @@ class FakeObservedCompletion:
         self.completion_handle = "completion_0123456789abcdef"
         self.response_sha256 = digest("provider-response")
         self.response_text_sha256 = digest(self.response_text)
+        self.team_message_handle = getattr(team_message, "message_handle", None)
+        self.team_lineage = lineage
+
+
+class FakeTeamBinding:
+    binding_id = "team-binding-0123456789abcdef"
+    team_id = "review-team"
+    selected_expert_ids = ("researcher", "analyst")
+
+
+class FakeTeamMessage:
+    def __init__(self, sender, recipient, original_goal, excerpt):
+        self.message_handle = "team-message-0123456789abcdef"
+        self.binding_id = FakeTeamBinding.binding_id
+        self.sender_completion_handle = sender.completion_handle
+        self.sender_profile_id = sender.profile_id
+        self.recipient_profile_id = recipient.profile_id
+        self.excerpt = excerpt
+        self.excerpt_sha256 = digest(excerpt)
+        self.recipient_goal = (original_goal + "\n\nExact excerpt from Team member "
+            + sender.profile_id + " (root-observed completion " + sender.completion_handle + "):\n" + excerpt)
+        self.recipient_goal_sha256 = digest(self.recipient_goal)
 
 
 class FakeMissionAuthorization:
@@ -138,6 +161,9 @@ class FakeRootClaimSource(OneShotIssuer):
         self.events = []
         self.completions = []
         self.fail_completion = False
+        self.omit_team_lineage = False
+        self.team_binding = None
+        self.team_messages = []
 
     def authorize_mission_claim(self, claim, *, task_sha256):
         self.events.append("authorize")
@@ -149,25 +175,48 @@ class FakeRootClaimSource(OneShotIssuer):
         if source_id.startswith("team-"):
             raise PermissionError("team expansion is not part of the retained profile catalog")
         self.source_reads.append(source_id)
-        return FakeDelivery(source_id)
+        delivery = FakeDelivery(source_id)
+        delivery.team_binding = self.team_binding
+        return delivery
 
-    def admit_selected_expert_child(self, *, resources_claim, child, source, goal):
+    def admit_selected_expert_child(self, *, resources_claim, child, source, goal, team_message=None):
         assert resources_claim is self.claim
         self.events.append("admit:" + source.profile_id)
         assert child.valid_tool_names == {"web_search", "web_extract", "skills_list", "skill_view"}
         assert "delegate_task" not in child.valid_tool_names
-        self.admissions.append((source.profile_id, goal, child))
+        self.admissions.append((source.profile_id, goal, child, team_message))
         return FakeAuthorization(goal)
+
+    def prepare_team_message(self, *, resources_claim, binding, sender, recipient,
+                             original_goal, excerpt):
+        assert resources_claim is self.claim and binding is self.team_binding
+        message = FakeTeamMessage(sender, recipient, original_goal, excerpt)
+        self.team_messages.append(message)
+        return message
 
     def complete_selected_expert_child(self, *, resources_claim, authorization):
         assert resources_claim is self.claim
         if self.fail_completion:
             raise PermissionError("root has no observed final provider response")
-        profile_id, goal, _child = self.admissions[-1]
+        profile_id, goal, _child, team_message = self.admissions[-1]
         source = FakeDelivery(profile_id)
         self.events.append("complete:" + profile_id)
         self.completions.append(profile_id)
-        return FakeObservedCompletion(source, goal)
+        lineage = None
+        if team_message is not None:
+            lineage = {
+                "sender_completion_handle": team_message.sender_completion_handle,
+                "sender_profile_id": team_message.sender_profile_id,
+                "recipient_profile_id": team_message.recipient_profile_id,
+                "excerpt_sha256": team_message.excerpt_sha256,
+                "recipient_request_sha256": digest(goal),
+                "recipient_response_sha256": digest("provider-response"),
+                "recipient_text_sha256": digest("root observed answer"),
+                "recipient_completion_handle": "recipient-completion-0123456789",
+            }
+            if self.omit_team_lineage:
+                lineage = None
+        return FakeObservedCompletion(source, goal, team_message=team_message, lineage=lineage)
 
 
 def install_native_child_fakes(monkeypatch):
@@ -177,6 +226,8 @@ def install_native_child_fakes(monkeypatch):
     observer.RootVerifiedMissionDispatchAuthorization = FakeMissionAuthorization
     observer.RootVerifiedNativeChildAuthorization = FakeAuthorization
     observer.RootObservedExpertCompletion = FakeObservedCompletion
+    observer.RootSelectedTeamBinding = FakeTeamBinding
+    observer.RootTeamMessageDelivery = FakeTeamMessage
     adapter = types.ModuleType("hermes_installer.remote.native_child_adapter")
 
     class Mode(Enum):
@@ -312,6 +363,71 @@ def test_exact_plan_selection_fans_out_in_order_with_separate_reviewable_drafts(
         "root observed answer", "root observed answer"]
     assert all(item["completion_handle"] and item["completion_text_sha256"] ==
                digest("root observed answer") for item in response["drafts"])
+    assert context.dispatches == []
+
+
+def test_root_selected_team_runs_two_drafts_then_one_observed_recipient_response(native_registry, monkeypatch):
+    parent = Parent()
+    binding = MissionBinding(
+        schema=2, mission_id="mission_0123456789abcdef01234567", revision=3,
+        plan_sha256=digest("team-plan"), task_sha256=digest('{"goal":"bounded task"}'),
+        source_profile_id="hermes", execution_mode="kanban",
+        autonomy_mode="approval_required", selected_source_ids=("researcher", "analyst"),
+        scope_sha256=digest("team-scope"), authorization_sha256=None,
+    )
+    claim = current_claim(parent, mission_binding=binding)
+    issuer = FakeRootClaimSource(claim)
+    issuer.team_binding = FakeTeamBinding()
+    children, calls, _ = install_native_child_fakes(monkeypatch)
+    context = NativeContext(native_registry)
+    register_resources_delegate(context, issuer)
+
+    response = json.loads(context.registration[3]({"goal": "bounded task"}, parent_agent=parent,
+        tool_call_id="call-root-team", turn_id="turn-root-team"))
+
+    assert response["success"] is True
+    assert response["state"] == "team-discussion-ready"
+    assert [item["round"] for item in response["drafts"]] == [0, 0, 1]
+    assert [item["source_id"] for item in response["drafts"]] == [
+        "researcher", "analyst", "analyst"]
+    assert len(issuer.team_messages) == 1
+    assert issuer.team_messages[0].excerpt == "root observed answer"
+    assert issuer.admissions[2][1] == issuer.team_messages[0].recipient_goal
+    assert issuer.admissions[2][3] is issuer.team_messages[0]
+    assert [item["recipient_profile_id"] for item in [response["team_discussion"]]] == ["analyst"]
+    edge = response["team_discussion"]
+    assert edge["completions"] == 3 and edge["rounds"] == 2
+    assert edge["sender_profile_id"] == "researcher"
+    assert edge["recipient_profile_id"] == "analyst"
+    assert edge["excerpt_sha256"] == digest("root observed answer")
+    assert edge["recipient_request_sha256"] == digest(issuer.team_messages[0].recipient_goal)
+    assert len(children) == len(calls) == 3
+
+
+def test_team_recipient_without_root_completion_edge_stays_pending(native_registry, monkeypatch):
+    parent = Parent()
+    binding = MissionBinding(
+        schema=2, mission_id="mission_0123456789abcdef01234567", revision=3,
+        plan_sha256=digest("team-plan"), task_sha256=digest('{"goal":"bounded task"}'),
+        source_profile_id="hermes", execution_mode="kanban",
+        autonomy_mode="approval_required", selected_source_ids=("researcher", "analyst"),
+        scope_sha256=digest("team-scope"), authorization_sha256=None,
+    )
+    claim = current_claim(parent, mission_binding=binding)
+    issuer = FakeRootClaimSource(claim)
+    issuer.team_binding = FakeTeamBinding()
+    issuer.omit_team_lineage = True
+    install_native_child_fakes(monkeypatch)
+    context = NativeContext(native_registry)
+    register_resources_delegate(context, issuer)
+
+    response = json.loads(context.registration[3]({"goal": "bounded task"}, parent_agent=parent,
+        tool_call_id="call-unjoined-team", turn_id="turn-unjoined-team"))
+
+    assert response["success"] is False
+    assert response["state"] == "expert-dispatch-partial"
+    assert [item["source_id"] for item in response["completed_drafts"]] == ["researcher", "analyst"]
+    assert response["final_effect_authority"] is False
     assert context.dispatches == []
 
 
