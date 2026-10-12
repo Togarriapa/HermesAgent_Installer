@@ -400,19 +400,18 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
             if (enabled["value"] and "Restart=on-failure" in core.UNIT.read_text()
                     and core.LAUNCHER.read_bytes() == core._launcher()):
                 enabled["value"] = False
-                try:
-                    status = _exec_start_pre(core.UNIT.read_bytes())
-                    if status:
-                        guard_denials.append(status)
-                    else:
-                        enabled["value"] = True
-                        journal = json.loads(core.JOURNAL.read_text())
-                        automatic_restarts.append({
-                            "state": journal["state"],
-                            "adapter_source": journal["adapter_source"],
-                            "update_state": journal["adapter_update_state"],
-                            "launcher_sha256": hashlib.sha256(core.LAUNCHER.read_bytes()).hexdigest(),
-                        })
+                status = _exec_start_pre(core.UNIT.read_bytes())
+                if status:
+                    guard_denials.append(status)
+                else:
+                    enabled["value"] = True
+                    journal = json.loads(core.JOURNAL.read_text())
+                    automatic_restarts.append({
+                        "state": journal["state"],
+                        "adapter_source": journal["adapter_source"],
+                        "update_state": journal["adapter_update_state"],
+                        "launcher_sha256": hashlib.sha256(core.LAUNCHER.read_bytes()).hexdigest(),
+                    })
         return result
     monkeypatch.setattr(core, "_run", model_restart_on_failure)
 
