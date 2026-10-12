@@ -168,10 +168,13 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('<script defer src="/chat/assets/features.js"></script>', source)
         self.assertIn('<section class="data-main" id="overview-view"', source)
         primary_nav = source.split('<nav class="primary-nav"', 1)[1].split("</nav>", 1)[0]
-        for destination, label in (("overview", "Overview"), ("chat", "Chats"), ("projects", "Projects"), ("second-brain", "Knowledge")):
+        for destination, label in (("overview", "Overview"), ("chat", "Chats"), ("projects", "Projects")):
             with self.subTest(destination=destination):
                 self.assertIn(f'data-view="{destination}"', primary_nav)
                 self.assertIn(label, primary_nav)
+        resources_menu = primary_nav.split('data-nav-group="resources"', 1)[1].split("</details>", 1)[0]
+        self.assertEqual(resources_menu.count('data-view="second-brain"'), 1)
+        self.assertEqual(resources_menu.count(">Second brain</button>"), 1)
         for label in ("Work", "Resources", "System"):
             self.assertIn(f"<summary aria-expanded=\"false\">{label}</summary>", primary_nav)
         self.assertIn('id="voice-entry" type="button" aria-label="Open voice controls"', source)
