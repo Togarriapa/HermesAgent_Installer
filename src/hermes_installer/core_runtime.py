@@ -4726,6 +4726,44 @@ def verify_starting_lifecycle_observer_custody(custody):
  except Exception:
   return False
 
+def _root_codex_account_fingerprint():
+ """Read only the selected owner's Codex account digest in its pinned PM runtime."""
+ if os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get():
+  raise CoreRuntimeError("Root Codex account readback requires the locked source update")
+ context=_ADAPTER_STARTUP_COHORT_CONTEXT.get()
+ if (type(context) is not dict or context.get("cohort",{}).get("phase")!="source-starting"
+     or context.get("adapter")!=context.get("cohort",{}).get("new_adapter_generation")):
+  raise CoreRuntimeError("Root Codex account readback has no selected starting cohort")
+ _validate_adapter_source_path()
+ if _core_source_generation()!=context.get("core"):
+  raise CoreRuntimeError("fixed Hermes source changed before the account readback")
+ from .remote import core_gateway_inspector as inspector
+ if inspector._current_native_adapter_generation(deadline=time.monotonic()+8.0)!=context["adapter"]:
+  raise CoreRuntimeError("fixed installer source changed before the account readback")
+ runuser=_validated_executable(RUNUSER,{ROOT_UID})
+ interpreter=_validated_executable(PYTHON,{1000})
+ if runuser!=RUNUSER or interpreter!=PYTHON:
+  raise CoreRuntimeError("fixed Hermes account-readback executables differ")
+ code=("from hermes_cli.auth_codex import resolve_codex_runtime_credentials; "
+  "from hermes_installer.remote.core_native_observer import _codex_account_fingerprint; "
+  "print(_codex_account_fingerprint(lambda: resolve_codex_runtime_credentials(read_only=True)))")
+ argv=[str(runuser),"-u","admin","--",str(interpreter),"-P","-c",code]
+ env={"PATH":"/usr/sbin:/usr/bin:/sbin:/bin","HOME":str(HOME),
+  "HERMES_HOME":str(HERMES_HOME),"LANG":"C.UTF-8",
+  "PYTHONPATH":f"{SOURCE}:{ADAPTER_SOURCE}","PYTHONNOUSERSITE":"1",
+  "PYTHONDONTWRITEBYTECODE":"1"}
+ try:
+  result=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
+   stderr=subprocess.PIPE,timeout=15,env=env,check=False,close_fds=True,cwd=WORKSPACE)
+ except (OSError,subprocess.TimeoutExpired,ValueError):
+  raise CoreRuntimeError("fixed Hermes Codex account readback is unavailable") from None
+ output=result.stdout
+ if (result.returncode!=0 or not isinstance(output,bytes) or len(output)!=65
+     or not output.endswith(b"\n")
+     or re.fullmatch(rb"[0-9a-f]{64}\n",output) is None):
+  raise CoreRuntimeError("fixed Hermes Codex account readback did not return one bounded digest")
+ return output[:-1].decode("ascii")
+
 @contextmanager
 def _starting_lifecycle_observer():
  """Run the exact purpose-only Root observer for this guarded starting tuple."""
@@ -4757,9 +4795,7 @@ def _starting_lifecycle_observer():
      or status.get("codex_credential_configured") is not True
      or not isinstance(status.get("model"),str)):
   raise CoreRuntimeError("new Core does not expose the selected Codex subscription route")
- from hermes_cli.auth_codex import resolve_codex_runtime_credentials
- from .remote.core_native_observer import _codex_account_fingerprint
- account=_codex_account_fingerprint(lambda:resolve_codex_runtime_credentials(read_only=True))
+ account=_root_codex_account_fingerprint()
  if not re.fullmatch(r"[0-9a-f]{64}",account):
   raise CoreRuntimeError("current Codex account fingerprint is unavailable")
  now=time.monotonic(); deadline=min(now+110.0,float(context["cohort"].get("deadline_monotonic",now+110.0)))
@@ -4843,9 +4879,7 @@ def _prove_new_cohort_startup_chat():
       or any(getattr(proof,key,None)!=getattr(cohort,key,None) for key in expected)
       or not verify_starting_lifecycle_observer_custody(custody)):
    raise CoreRuntimeError("new Core lifecycle completion does not join its selected source cohort")
-  from hermes_cli.auth_codex import resolve_codex_runtime_credentials
-  from .remote.core_native_observer import _codex_account_fingerprint
-  account=_codex_account_fingerprint(lambda:resolve_codex_runtime_credentials(read_only=True))
+  account=_root_codex_account_fingerprint()
   status=_run_root_coro(rpc.get_model_provider_status())
   if (account!=cohort.account_fingerprint or type(status) is not dict
       or status.get("provider_hint")!=cohort.provider
