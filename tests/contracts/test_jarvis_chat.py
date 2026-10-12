@@ -328,8 +328,11 @@ def test_per_message_isolated_session_denies_stale_owner_before_rebind_or_submit
     assert unchanged["backend_id"] == original["backend_id"]
     assert unchanged["session_key"] == original["session_key"]
     with store._connect() as db:
-        assert db.execute("SELECT 1 FROM turn_events WHERE turn_id=? LIMIT 1",
-                          (failed_turn_ids[0],)).fetchone() is None
+        events = db.execute("SELECT name,data FROM turn_events WHERE turn_id=? ORDER BY sequence",
+                            (failed_turn_ids[0],)).fetchall()
+        # Revocation denies all native configuration/activity/output before submit,
+        # while the owned local turn still records its terminal failure.
+        assert [(row["name"], row["data"]) for row in events] == [("turn.failed", "{}")]
     assert service.owner_turn_handle_for(principal("subject-a"), failed_turn_ids[0]) is None
 
 
