@@ -6,13 +6,48 @@ performed separately on the enrolled Pi.
 import hashlib
 import json
 import os
+import pwd
+import shlex
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from hermes_installer import core_runtime as core
+
+
+def _exec_start_pre(unit_bytes):
+    """Run the generated ExecStartPre with systemd-like credential files."""
+    if os.geteuid() != 0:
+        raise AssertionError("the Pi startup-guard fixture requires root to model admin")
+    line = next((row for row in unit_bytes.decode().splitlines()
+                 if row.startswith("ExecStartPre=")), None)
+    if line is None:
+        return None
+    cred_dir = Path(tempfile.mkdtemp(prefix="core-start-guard-", dir="/tmp"))
+    cred_dir.chmod(0o700)
+    admin = pwd.getpwnam("admin")
+    try:
+        for name, source in (("core-ownership-journal", core.JOURNAL),
+                             ("hermes-session-token", core.TOKEN)):
+            target = cred_dir / name
+            target.write_bytes(source.read_bytes())
+            target.chmod(0o400)
+            os.chown(target, admin.pw_uid, admin.pw_gid)
+        argv = shlex.split(line.partition("=")[2])
+        env = {"CREDENTIALS_DIRECTORY": str(cred_dir), "PATH": "/usr/bin:/bin"}
+        result = subprocess.run(
+            argv, cwd="/", env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=False,
+        )
+        return result.returncode
+    finally:
+        for child in cred_dir.iterdir():
+            child.unlink()
+        cred_dir.rmdir()
 
 
 def _resource_receipt(*, prompt_matches=False):
@@ -301,6 +336,229 @@ def test_post_migration_recovery_refuses_changed_current_launcher_before_touchin
     assert core.JOURNAL.read_bytes() == before_journal
     assert core.UNIT.read_bytes() == before_unit
     assert not any(call[0] == ("systemctl", "stop", core.SERVICE) for call in calls)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
+def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_launcher(tmp_path, monkeypatch):
+    calls, enabled, _old_launcher, selection = _install_legacy_service_fixture(
+        tmp_path, monkeypatch, journal_state="installed")
+    memory = core.HERMES_HOME / "memories" / "owner.md"
+    memory.parent.mkdir(parents=True)
+    memory.write_text("existing owner memory")
+    core.migrate_owned_core_to_adapter_path()
+    prior = json.loads(core.JOURNAL.read_text())
+    assert prior["state"] == "installed"
+    prior_launcher = core.LAUNCHER.read_bytes()
+    prior_unit = core.UNIT.read_bytes()
+    token = core.TOKEN.read_bytes()
+    old_source = core.ADAPTER_SOURCE
+    monkeypatch.setattr(core, "ADAPTER_SOURCE", old_source.parent.parent / "hermes-installer-core-bbbbbbbbb" / "src")
+    monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
+    monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
+    monkeypatch.setattr(core, "_validate_adapter_generation_path", lambda _path: None)
+    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
+    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
+    _fake_update_pidfd(monkeypatch, enabled)
+    real_run = core._run
+    reload_service_states = []
+    automatic_restarts = []
+    guard_denials = []
+    def model_restart_on_failure(argv, check=True):
+        result = real_run(argv, check)
+        if argv == ["systemctl", "daemon-reload"]:
+            reload_service_states.append(enabled["value"])
+            # Model an old process failing in the ExecStart replacement window.
+            # Restart=on-failure tries the just-read launcher, subject to the
+            # actual generated root-side guard and still-prior preparing journal.
+            if (enabled["value"] and "Restart=on-failure" in core.UNIT.read_text()
+                    and core.LAUNCHER.read_bytes() == core._launcher()):
+                enabled["value"] = False
+                try:
+                    status = _exec_start_pre(core.UNIT.read_bytes())
+                    if status:
+                        guard_denials.append(status)
+                    else:
+                        enabled["value"] = True
+                        journal = json.loads(core.JOURNAL.read_text())
+                        automatic_restarts.append({
+                            "state": journal["state"],
+                            "adapter_source": journal["adapter_source"],
+                            "update_state": journal["adapter_update_state"],
+                            "launcher_sha256": hashlib.sha256(core.LAUNCHER.read_bytes()).hexdigest(),
+                        })
+        return result
+    monkeypatch.setattr(core, "_run", model_restart_on_failure)
+
+    result = core.install_or_resume()
+
+    updated = json.loads(core.JOURNAL.read_text())
+    assert "updated to the verified immutable installer adapter generation" in result
+    assert updated["adapter_source"] == str(core.ADAPTER_SOURCE)
+    assert updated["state"] == "installed"
+    assert updated["adapter_generation"] == "a" * 64
+    assert updated["plugin_selection_sha256"] == prior["plugin_selection_sha256"]
+    assert core.LAUNCHER.read_bytes() != prior_launcher
+    assert core.UNIT.read_bytes() == prior_unit
+    assert core.TOKEN.read_bytes() == token
+    assert memory.read_text() == "existing owner memory"
+    backup = core.ADAPTER_UPDATE_BACKUPS / prior["adapter_generation"]
+    assert (backup / "launcher").read_bytes() == prior_launcher
+    assert json.loads((backup / "journal.json").read_bytes()) == prior
+    assert selection["value"] == prior["plugin_selection_sha256"]
+    assert reload_service_states == [False]
+    assert automatic_restarts == []
+    assert guard_denials == []
+    ordered = [call[0] for call in calls]
+    assert ordered.index(("systemctl", "stop", core.SERVICE)) < ordered.index(
+        ("systemctl", "start", core.SERVICE))
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
+def test_native_adapter_update_restart_failure_restores_exact_prior_generation(tmp_path, monkeypatch):
+    _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
+        tmp_path, monkeypatch, journal_state="installed")
+    core.migrate_owned_core_to_adapter_path()
+    migrated_raw = core.JOURNAL.read_bytes()
+    migrated_record = json.loads(migrated_raw)
+    prior_unguarded_unit = core._unit(startup_guard=False)
+    core._atomic_replace(core.UNIT, prior_unguarded_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
+    migrated_record["unit_sha256"] = hashlib.sha256(prior_unguarded_unit).hexdigest()
+    core._replace_journal(migrated_record, expected_raw=migrated_raw)
+    prior = core.JOURNAL.read_bytes()
+    launcher = core.LAUNCHER.read_bytes()
+    unit = core.UNIT.read_bytes()
+    token = core.TOKEN.read_bytes()
+    old_source = core.ADAPTER_SOURCE
+    monkeypatch.setattr(core, "ADAPTER_SOURCE", old_source.parent.parent / "hermes-installer-core-ccccccccc" / "src")
+    monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
+    monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
+    monkeypatch.setattr(core, "_validate_adapter_generation_path", lambda _path: None)
+    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
+    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
+    _fake_update_pidfd(monkeypatch, enabled)
+    attempts = {"wait": 0}
+    def fail_first_restart():
+        attempts["wait"] += 1
+        if attempts["wait"] == 1:
+            raise core.CoreRuntimeError("injected adapter update restart failure")
+    monkeypatch.setattr(core, "_wait_for_listener", fail_first_restart)
+
+    with pytest.raises(core.CoreRuntimeError, match="injected adapter update restart failure"):
+        core.update_owned_core_adapter()
+
+    assert core.JOURNAL.read_bytes() == prior
+    assert core.LAUNCHER.read_bytes() == launcher
+    assert core.UNIT.read_bytes() == unit
+    assert core.TOKEN.read_bytes() == token
+    assert enabled["value"]
+    assert attempts["wait"] == 2
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
+def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tmp_path, monkeypatch):
+    _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
+        tmp_path, monkeypatch, journal_state="installed")
+    core.migrate_owned_core_to_adapter_path()
+    migrated_raw = core.JOURNAL.read_bytes()
+    migrated_record = json.loads(migrated_raw)
+    prior_unguarded_unit = core._unit(startup_guard=False)
+    core._atomic_replace(core.UNIT, prior_unguarded_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
+    migrated_record["unit_sha256"] = hashlib.sha256(prior_unguarded_unit).hexdigest()
+    core._replace_journal(migrated_record, expected_raw=migrated_raw)
+    prior = core.JOURNAL.read_bytes()
+    launcher = core.LAUNCHER.read_bytes()
+    unit = core.UNIT.read_bytes()
+    old_source = core.ADAPTER_SOURCE
+    monkeypatch.setattr(core, "ADAPTER_SOURCE", old_source.parent.parent / "hermes-installer-core-ddddddddd" / "src")
+    monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
+    monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
+    monkeypatch.setattr(core, "_validate_adapter_generation_path", lambda _path: None)
+    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
+    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
+    _fake_update_pidfd(monkeypatch, enabled)
+    replace_journal = core._replace_journal
+    interrupted = {"done": False}
+    def interrupt_before_new_journal(record, *, expected_raw=None):
+        if (record.get("adapter_source")==str(core.ADAPTER_SOURCE)
+                and record.get("adapter_update_state")=="preparing"
+                and not interrupted["done"]):
+            interrupted["done"] = True
+            raise KeyboardInterrupt()
+        return replace_journal(record, expected_raw=expected_raw)
+    monkeypatch.setattr(core, "_replace_journal", interrupt_before_new_journal)
+
+    with pytest.raises(KeyboardInterrupt):
+        core.update_owned_core_adapter()
+    interrupted_record = json.loads(core.JOURNAL.read_text())
+    assert interrupted_record["adapter_update_state"] == "preparing"
+    assert interrupted_record["adapter_source"] == str(old_source)
+    assert core.LAUNCHER.read_bytes() != launcher
+    assert core.UNIT.read_bytes() != unit
+    assert _exec_start_pre(core.UNIT.read_bytes()) != 0
+
+    monkeypatch.setattr(core, "_replace_journal", replace_journal)
+    core._recover_interrupted_adapter_update()
+
+    assert core.JOURNAL.read_bytes() == prior
+    assert core.LAUNCHER.read_bytes() == launcher
+    assert core.UNIT.read_bytes() == unit
+    assert enabled["value"]
+    assert _exec_start_pre(core.UNIT.read_bytes()) is None  # exact prior unit is guardless
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="adapter update recovery needs the real root actor")
+def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pre(tmp_path, monkeypatch):
+    _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
+        tmp_path, monkeypatch, journal_state="installed")
+    core.migrate_owned_core_to_adapter_path()
+    migrated_raw = core.JOURNAL.read_bytes()
+    migrated = json.loads(migrated_raw)
+    prior_unit = core._unit(startup_guard=False)
+    core._atomic_replace(core.UNIT, prior_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
+    migrated["unit_sha256"] = hashlib.sha256(prior_unit).hexdigest()
+    core._replace_journal(migrated, expected_raw=migrated_raw)
+    prior = core.JOURNAL.read_bytes()
+    prior_launcher = core.LAUNCHER.read_bytes()
+    old_source = core.ADAPTER_SOURCE
+    monkeypatch.setattr(core, "ADAPTER_SOURCE", old_source.parent.parent / "hermes-installer-core-eeeeeeeee" / "src")
+    monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
+    monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
+    monkeypatch.setattr(core, "_validate_adapter_generation_path", lambda _path: None)
+    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
+    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
+    _fake_update_pidfd(monkeypatch, enabled)
+
+    real_run = core._run
+    def interrupt_after_starting_recipe(argv, check=True):
+        if argv == ["systemctl", "start", core.SERVICE]:
+            assert _exec_start_pre(core.UNIT.read_bytes()) == 0
+            raise KeyboardInterrupt()
+        return real_run(argv, check)
+    monkeypatch.setattr(core, "_run", interrupt_after_starting_recipe)
+    with pytest.raises(KeyboardInterrupt):
+        core.update_owned_core_adapter()
+    starting = json.loads(core.JOURNAL.read_bytes())
+    assert starting["adapter_update_state"] == "starting"
+    assert starting["adapter_source"] == str(core.ADAPTER_SOURCE)
+
+    atomic_replace = core._atomic_replace
+    def interrupt_after_prior_launcher(path, *args, **kwargs):
+        if Path(path) == core.JOURNAL:
+            raise KeyboardInterrupt()
+        return atomic_replace(path, *args, **kwargs)
+    monkeypatch.setattr(core, "_atomic_replace", interrupt_after_prior_launcher)
+    with pytest.raises(KeyboardInterrupt):
+        core._recover_interrupted_adapter_update()
+    assert core.LAUNCHER.read_bytes() == prior_launcher
+    assert _exec_start_pre(core.UNIT.read_bytes()) != 0
+
+    monkeypatch.setattr(core, "_atomic_replace", atomic_replace)
+    monkeypatch.setattr(core, "_run", real_run)
+    core._recover_interrupted_adapter_update()
+    assert core.JOURNAL.read_bytes() == prior
+    assert core.LAUNCHER.read_bytes() == prior_launcher
+    assert core.UNIT.read_bytes() == prior_unit
+    assert enabled["value"]
 
 
 def test_failed_start_is_resumable_without_rotating_session_credential(tmp_path, monkeypatch):
@@ -641,4 +899,7 @@ def test_unit_binds_service_identity_and_protected_credential(monkeypatch):
     assert "Group=1000" in unit
     assert "ExecStart=" + str(core.LAUNCHER) in unit
     assert "LoadCredential=hermes-session-token:" + str(core.TOKEN) in unit
+    assert f"ExecStartPre={core.PYTHON} -I -S -c" in unit
+    assert "ExecStartPre=+" not in unit
+    assert "LoadCredential=core-ownership-journal:" + str(core.JOURNAL) in unit
     assert "127.0.0.1" not in unit  # listener is fixed in the verified launcher argv

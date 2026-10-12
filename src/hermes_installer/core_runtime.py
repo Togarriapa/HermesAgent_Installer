@@ -1584,9 +1584,37 @@ export PYTHONPATH={pythonpath}
 cd /home/admin/.hermes/workspaces/jarvis-core
 exec /home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python -P -m hermes_cli.main serve --isolated --host 127.0.0.1 --port 8766
 """.encode("ascii")
-def _unit():
+def _core_start_guard_code(adapter_source=None):
+ """Validate systemd's journal snapshot and the exact fixed service recipe."""
+ expected_source=str(adapter_source or ADAPTER_SOURCE)
+ return ("import hashlib,json,os,stat; "
+         f"service={SERVICE!r}; source={expected_source!r}; "
+         "base=os.environ.get('CREDENTIALS_DIRECTORY',''); "
+         "jp=os.path.join(base,'core-ownership-journal'); tp=os.path.join(base,'hermes-session-token'); "
+         "js=os.stat(jp,follow_symlinks=False); ts=os.stat(tp,follow_symlinks=False); "
+         "ok=(stat.S_ISREG(js.st_mode) and js.st_nlink==1 and not stat.S_IMODE(js.st_mode)&0o222 and 0<js.st_size<=65536 "
+         "and stat.S_ISREG(ts.st_mode) and ts.st_nlink==1 and not stat.S_IMODE(ts.st_mode)&0o222 and 0<ts.st_size<=65536); "
+         "raw=open(jp,'rb').read(65537) if ok else b''; token=open(tp,'rb').read(65537) if ok else b''; "
+         "d=json.loads(raw) if len(raw)==js.st_size else {}; "
+         "valid=lambda p,uid,gid,mode,digest: (lambda s,b: stat.S_ISREG(s.st_mode) and (s.st_uid,s.st_gid,stat.S_IMODE(s.st_mode),s.st_nlink)==(uid,gid,mode,1) and 0<s.st_size<=262144 and len(b)==s.st_size and hashlib.sha256(b).hexdigest()==digest)(os.stat(p,follow_symlinks=False),open(p,'rb').read(262145)); "
+         "state=d.get('adapter_update_state'); starting=(state=='starting'); "
+         "source_ok=(d.get('adapter_migration_state')=='active' and d.get('adapter_source')==source); "
+         "hex64=lambda x: isinstance(x,str) and len(x)==64 and all(c in '0123456789abcdef' for c in x); "
+         "backup=d.get('adapter_update_backup'); backup_ok=(isinstance(backup,dict) and hex64(backup.get('source_generation')) and backup.get('path')=="+repr(str(ADAPTER_UPDATE_BACKUPS))+"+'/'+backup.get('source_generation','')); "
+         "native_ok=(d.get('adapter_migration_state') is None or (source_ok and hex64(d.get('adapter_generation')) and hex64(d.get('core_source_generation')) and hex64(d.get('plugin_selection_sha256')))); "
+         "starting_ok=(source_ok and d.get('adapter_update_target_source')==source and d.get('adapter_generation')==d.get('adapter_update_target_generation') and hex64(d.get('adapter_update_staged_plugin_sha256')) and d.get('adapter_update_previous_source')!=source and backup_ok); "
+         "active_update_ok=(backup_ok and d.get('adapter_update_previous_source')!=source); "
+         "phase_ok=(native_ok and (state is None or (state=='starting' and starting_ok) or (state=='active' and active_update_ok))); "
+         "files=(("+repr(str(UNIT))+",0,0,0o644,d.get('unit_sha256')),("+repr(str(LAUNCHER))+",0,0,0o755,d.get('launcher_sha256'))); "
+         "ok=(ok and len(raw)==js.st_size and token and hashlib.sha256(token).hexdigest()==d.get('token_sha256') and d.get('schema')==1 and d.get('service')==service and d.get('state') in ('installed','active') and d.get('adapter_migration_state') in (None,'active') and phase_ok and all(valid(p,u,g,m,h) for p,u,g,m,h in files)); "
+         "raise SystemExit(0 if ok else 1)")
+def _unit(*,startup_guard=True,adapter_source=None):
  a=pwd.getpwnam("admin")
  if a.pw_uid!=1000 or a.pw_gid!=1000 or a.pw_dir!="/home/admin": raise CoreRuntimeError("admin identity mismatch")
+ guard=""
+ if startup_guard:
+  guard=(f'ExecStartPre={PYTHON} -I -S -c "{_core_start_guard_code(adapter_source)}"\n'
+         f'LoadCredential=core-ownership-journal:{JOURNAL}\n')
  return f"""[Unit]
 Description=Jarvis isolated Hermes core
 After=network-online.target
@@ -1602,7 +1630,7 @@ Environment=PATH=/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/
 Environment=HERMES_DISABLE_LAZY_INSTALLS=1
 Environment=PYTHONNOUSERSITE=1
 Environment=PYTHONDONTWRITEBYTECODE=1
-LoadCredential=hermes-session-token:{TOKEN}
+{guard}LoadCredential=hermes-session-token:{TOKEN}
 ExecStart={LAUNCHER}
 Restart=on-failure
 RestartSec=3
@@ -1632,13 +1660,24 @@ def _journal():
     raise CoreRuntimeError("owned service file changed")
   if d.get("adapter_migration_state") == "preparing":
    raise CoreRuntimeError("adapter source migration recovery is required")
+  if d.get("adapter_update_state") in {"preparing", "starting"}:
+   raise CoreRuntimeError("adapter source update recovery is required")
   if d.get("adapter_migration_state") == "active":
-   if (d.get("adapter_source")!=str(ADAPTER_SOURCE)
+   adapter_source=d.get("adapter_source")
+   if (not isinstance(adapter_source,str)
        or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("adapter_generation","")))
        or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("core_source_generation","")))
        or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("plugin_selection_sha256","")))):
     raise CoreRuntimeError("adapter migration custody record is incomplete")
-  if d["state"]!="retiring" and (hashlib.sha256(_unit()).hexdigest()!=d["unit_sha256"] or hashlib.sha256(_launcher()).hexdigest()!=d["launcher_sha256"]):
+   _validate_adapter_generation_path(Path(adapter_source))
+   if d.get("adapter_update_state")=="active":
+    _validate_adapter_update_history(d)
+  else:
+   adapter_source=None
+  if d["state"]!="retiring" and (d["unit_sha256"] not in {
+      hashlib.sha256(_unit(adapter_source=adapter_source)).hexdigest(),
+      hashlib.sha256(_unit(startup_guard=False,adapter_source=adapter_source)).hexdigest()} or
+      hashlib.sha256(_launcher(adapter_source=adapter_source)).hexdigest()!=d["launcher_sha256"]):
    raise CoreRuntimeError("owned service recipe differs from the reviewed source")
  return d
 def status():
@@ -1799,10 +1838,9 @@ def _restore_adapter_migration_backup():
   if manifest.get(name)!=hashlib.sha256(data).hexdigest():
    raise CoreRuntimeError("adapter migration backup bytes changed")
   contents[name]=data
- for name,path in (("unit",UNIT),("launcher",LAUNCHER)):
-  mode=0o644 if path==UNIT else 0o755
-  _atomic_replace(path,contents[name],mode,ROOT_UID,ROOT_UID)
+ _atomic_replace(LAUNCHER,contents["launcher"],0o755,ROOT_UID,ROOT_UID)
  _atomic_replace(JOURNAL,contents["journal.json"],0o600,ROOT_UID,ROOT_UID)
+ _atomic_replace(UNIT,contents["unit"],0o644,ROOT_UID,ROOT_UID)
  return contents["journal.json"]
 
 def _restore_migration_plugin_selection(record):
@@ -2084,6 +2122,319 @@ def recover_owned_core_from_adapter_migration():
    pass
   raise CoreRuntimeError("bounded migration recovery failed; protected backup retained and ingress remains stopped") from None
  return "exact prior Hermes core and plugin selection restored; gateway/BFF may be resumed"
+
+def _validate_adapter_generation_path(path):
+ """Validate a fixed root-owned immutable adapter generation path."""
+ path=Path(path)
+ if (not path.is_absolute() or path.parent.parent!=Path("/opt")
+     or not re.fullmatch(r"hermes-installer-core-[0-9a-f]{9,64}",path.parent.name)):
+  raise CoreRuntimeError("journaled installer adapter generation path is unsupported")
+ fd=os.open("/",os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0))
+ try:
+  for component in path.parts[1:]:
+   child=os.open(component,os.O_RDONLY|getattr(os,"O_DIRECTORY",0)
+                 |getattr(os,"O_NOFOLLOW",0),dir_fd=fd)
+   info=os.fstat(child)
+   if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=ROOT_UID
+       or stat.S_IMODE(info.st_mode)&0o022):
+    os.close(child); raise CoreRuntimeError("journaled adapter generation custody differs")
+   os.close(fd); fd=child
+ finally: os.close(fd)
+
+def _read_active_adapter_runtime():
+ """Read the complete active journaled cohort, including its process identity."""
+ raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ try: record=json.loads(raw)
+ except (ValueError,TypeError): raise CoreRuntimeError("core ownership journal invalid") from None
+ if (type(record) is not dict or record.get("schema")!=1 or record.get("state") not in {"installed","active"}
+     or record.get("service")!=SERVICE or record.get("adapter_migration_state")!="active"
+     or not re.fullmatch(r"[0-9a-f]{64}",str(record.get("adapter_generation","")))
+     or not re.fullmatch(r"[0-9a-f]{64}",str(record.get("core_source_generation","")))
+     or not re.fullmatch(r"[0-9a-f]{64}",str(record.get("plugin_selection_sha256","")))):
+  raise CoreRuntimeError("no complete journaled native adapter runtime is eligible for update")
+ old_source=Path(record.get("adapter_source",""))
+ _validate_adapter_generation_path(old_source)
+ if record.get("adapter_update_state")=="active":
+  _validate_adapter_update_history(record)
+ identity=_identity()
+ for key,source_key in (("source_commit","commit"),("lock_sha256","lock_sha256"),
+                        ("python_sha256","python_sha256"),("python_link","python_link"),
+                        ("python_uid","python_uid"),("python_gid","python_gid"),
+                        ("python_mode","python_mode")):
+  if record.get(key)!=identity.get(source_key):
+   raise CoreRuntimeError("pinned Hermes core identity changed; adapter-only update is not eligible")
+ if _core_source_generation()!=record["core_source_generation"]:
+  raise CoreRuntimeError("current Hermes core source receipt differs from the journal")
+ files={}
+ for path,key,uid,gid,mode in FILE_CONTRACT:
+  content=_projection_file(path,owner=uid,group=gid,mode=mode,maximum=256*1024)
+  if record.get(key)!=hashlib.sha256(content).hexdigest():
+   raise CoreRuntimeError("journal-owned core file or credential changed")
+  files[path]=content
+ if files[UNIT] not in {_unit(adapter_source=old_source),_unit(startup_guard=False,adapter_source=old_source)} or files[LAUNCHER]!=_launcher(adapter_source=old_source):
+  raise CoreRuntimeError("journal-owned native core recipe differs")
+ if not _owned_unit_loaded() or not _owned_listener_pidfd(adapter_source=old_source):
+  raise CoreRuntimeError("journal-owned native core process or listener is not current")
+ return record,raw,files
+
+def _save_adapter_update_backup(record,raw_journal,files,selection_digest):
+ """Persist a root-only, immutable per-source recovery cohort before switching."""
+ old_generation=record["adapter_generation"]
+ _ensure_dir(ADAPTER_UPDATE_BACKUPS,ROOT_UID,ROOT_UID,0o700)
+ backup=ADAPTER_UPDATE_BACKUPS/old_generation
+ _ensure_dir(backup,ROOT_UID,ROOT_UID,0o700)
+ if not re.fullmatch(r"[0-9a-f]{64}",str(selection_digest or "")):
+  raise CoreRuntimeError("current native plugin selection receipt is unavailable")
+ selection_json=(json.dumps({"schema":1,"selection_sha256":selection_digest},
+                            sort_keys=True,separators=(",",":"))+"\n").encode("ascii")
+ names={"journal.json":raw_journal,"unit":files[UNIT],"launcher":files[LAUNCHER],
+        "plugin-selection.json":selection_json}
+ manifest={name:hashlib.sha256(content).hexdigest() for name,content in names.items()}
+ manifest_bytes=(json.dumps(manifest,sort_keys=True,separators=(",",":"))+"\n").encode("ascii")
+ allowed=set(names)|{"manifest.json"}
+ if not set(os.listdir(backup))<=allowed:
+  raise CoreRuntimeError("adapter update backup contains unowned entries")
+ for name,content in names.items():
+  path=backup/name
+  if path.exists() or path.is_symlink():
+   existing=_projection_file(path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
+   if existing!=content: raise CoreRuntimeError("prior adapter update backup differs")
+  else: _atomic(path,content,0o600,ROOT_UID,ROOT_UID)
+ manifest_path=backup/"manifest.json"
+ if manifest_path.exists() or manifest_path.is_symlink():
+  if _projection_file(manifest_path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=4096)!=manifest_bytes:
+   raise CoreRuntimeError("adapter update backup manifest differs")
+ else: _atomic(manifest_path,manifest_bytes,0o600,ROOT_UID,ROOT_UID)
+ return {"path":str(backup),"source_generation":old_generation,"files":manifest}
+
+def _read_adapter_update_backup(reference):
+ if (type(reference) is not dict or set(reference)!={"path","source_generation","files"}
+     or not re.fullmatch(r"[0-9a-f]{64}",str(reference.get("source_generation","")))
+     or reference.get("path")!=str(ADAPTER_UPDATE_BACKUPS/reference["source_generation"])):
+  raise CoreRuntimeError("journaled adapter update backup reference is invalid")
+ backup=Path(reference["path"]); info=backup.lstat()
+ if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=ROOT_UID or info.st_gid!=ROOT_UID
+     or stat.S_IMODE(info.st_mode)!=0o700
+     or set(os.listdir(backup))!={"journal.json","unit","launcher","plugin-selection.json","manifest.json"}):
+  raise CoreRuntimeError("journaled adapter update backup custody differs")
+ manifest_raw=_projection_file(backup/"manifest.json",owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=4096)
+ try: manifest=json.loads(manifest_raw)
+ except (ValueError,TypeError): raise CoreRuntimeError("adapter update backup manifest is invalid") from None
+ if type(manifest) is not dict or manifest!=reference["files"] or set(manifest)!={
+     "journal.json","unit","launcher","plugin-selection.json"}:
+  raise CoreRuntimeError("adapter update backup manifest is not journal-bound")
+ contents={}
+ for name,digest in manifest.items():
+  data=_projection_file(backup/name,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
+  if hashlib.sha256(data).hexdigest()!=digest: raise CoreRuntimeError("adapter update backup bytes changed")
+  contents[name]=data
+ try: prior=json.loads(contents["journal.json"])
+ except (ValueError,TypeError): raise CoreRuntimeError("prior adapter update journal is invalid") from None
+ if (type(prior) is not dict or prior.get("adapter_generation")!=reference["source_generation"]
+     or prior.get("adapter_migration_state")!="active"
+     or prior.get("state") not in {"installed","active"}):
+  raise CoreRuntimeError("adapter update backup does not bind the prior native generation")
+ try: selection=json.loads(contents["plugin-selection.json"])
+ except (ValueError,TypeError): raise CoreRuntimeError("adapter update selection receipt is invalid") from None
+ if selection!={"schema":1,"selection_sha256":prior.get("plugin_selection_sha256")}:
+  raise CoreRuntimeError("adapter update backup does not bind the prior plugin selection")
+ old_source=Path(prior.get("adapter_source",""))
+ _validate_adapter_generation_path(old_source)
+ if contents["unit"] not in {_unit(adapter_source=old_source),_unit(startup_guard=False,adapter_source=old_source)} or contents["launcher"]!=_launcher(adapter_source=old_source):
+  raise CoreRuntimeError("prior adapter update backup is not the fixed service recipe")
+ return prior,contents
+
+def _validate_adapter_update_history(record):
+ if (type(record) is not dict or record.get("adapter_update_state")!="active"
+     or not isinstance(record.get("adapter_update_backup"),dict)):
+  raise CoreRuntimeError("active adapter update history is incomplete")
+ prior,_contents=_read_adapter_update_backup(record["adapter_update_backup"])
+ reference=record["adapter_update_backup"]
+ if (reference.get("source_generation")==record.get("adapter_generation")
+     or record.get("adapter_update_previous_source")!=prior.get("adapter_source")
+     or record.get("plugin_selection_sha256")!=prior.get("plugin_selection_sha256")):
+  raise CoreRuntimeError("active adapter update history does not bind its prior generation and selection")
+
+def _stop_owned_core_for_adapter_update(allowed_sources):
+ active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
+ if active not in {"active","inactive","failed"}:
+  raise CoreRuntimeError("owned service state is ambiguous; refusing adapter update")
+ pidfd=None
+ try:
+  if active=="active":
+   pid_text=_run(["systemctl","show","--property=MainPID","--value",SERVICE]).stdout.strip()
+   pid=int(pid_text)
+   if pid<=1 or not hasattr(os,"pidfd_open"):
+    raise CoreRuntimeError("active core PIDFD is unavailable; refusing update stop")
+   pidfd=os.pidfd_open(pid,0)
+   poller=select.poll(); poller.register(pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+   if poller.poll(0): raise CoreRuntimeError("active core PIDFD is already exited")
+   source=next((source for source in allowed_sources if _owned_listener(adapter_source=source)),None)
+   if (source is None
+       or _run(["systemctl","show","--property=MainPID","--value",SERVICE]).stdout.strip()!=str(pid)
+       or poller.poll(0)):
+    raise CoreRuntimeError("active process is not the journal-owned adapter core; refusing update stop")
+  _run(["systemctl","stop",SERVICE])
+  if ((pidfd is not None and not poller.poll(0))
+      or _run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active"
+      or _run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip() not in {"","0"}
+      or any(_owned_listener(adapter_source=source) for source in allowed_sources)):
+   raise CoreRuntimeError("owned core did not stop cleanly; adapter update halted")
+ finally:
+  if pidfd is not None: os.close(pidfd)
+
+def _restore_adapter_update_backup(reference,*,allowed_sources):
+ prior,contents=_read_adapter_update_backup(reference)
+ _stop_owned_core_for_adapter_update(allowed_sources)
+ _atomic_replace(LAUNCHER,contents["launcher"],0o755,ROOT_UID,ROOT_UID)
+ _atomic_replace(JOURNAL,contents["journal.json"],0o600,ROOT_UID,ROOT_UID)
+ _atomic_replace(UNIT,contents["unit"],0o644,ROOT_UID,ROOT_UID)
+ _run(["systemctl","daemon-reload"])
+ if not _owned_unit_loaded(): raise CoreRuntimeError("restored prior adapter unit is not journal-owned")
+ _run(["systemctl","start",SERVICE]); _wait_for_listener()
+ if not _owned_listener_pidfd(adapter_source=prior["adapter_source"]):
+  raise CoreRuntimeError("prior journal-owned adapter process did not recover")
+ from hermes_installer.remote.native_plugin_bootstrap import verify_native_resources_plugin_selection
+ if getattr(verify_native_resources_plugin_selection(),"selection_sha256",None)!=prior["plugin_selection_sha256"]:
+  raise CoreRuntimeError("native plugin selection changed during adapter update recovery")
+ return prior
+
+def _recover_interrupted_adapter_update():
+ if not JOURNAL.is_file() or JOURNAL.is_symlink(): return
+ raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ try: record=json.loads(raw)
+ except (ValueError,TypeError): return
+ if type(record) is not dict or record.get("adapter_update_state") not in {"preparing","starting"}: return
+ target=Path(record.get("adapter_update_target_source",""))
+ prior_source=Path(record.get("adapter_update_previous_source",""))
+ reference=record.get("adapter_update_backup")
+ _validate_adapter_generation_path(target); _validate_adapter_generation_path(prior_source)
+ try:
+  _restore_adapter_update_backup(reference,allowed_sources=(prior_source,target))
+ except Exception:
+  raise CoreRuntimeError("interrupted adapter update retained its protected recovery backup") from None
+
+def update_owned_core_adapter():
+ with _adapter_update_lock():
+  return _update_owned_core_adapter_locked()
+
+def _update_owned_core_adapter_locked():
+ """Switch one verified journal-owned native core to this immutable adapter release."""
+ if os.geteuid()!=ROOT_UID or not Path("/proc").is_dir():
+  raise CoreRuntimeError("requires installed Linux root actor")
+ _validate_adapter_source_path(); _recover_interrupted_adapter_update()
+ record,raw_journal,files=_read_active_adapter_runtime()
+ old_source=Path(record["adapter_source"])
+ if old_source==ADAPTER_SOURCE:
+  raise CoreRuntimeError("current native adapter source is already installed")
+ try:
+  from hermes_installer.remote.core_gateway_inspector import (
+   _current_native_adapter_generation,verify_staged_native_resources_plugin,
+  )
+  from hermes_installer.remote.native_plugin_bootstrap import (
+   verify_native_resources_plugin_selection,
+  )
+  deadline=time.monotonic()+35.0
+  incoming_generation=_current_native_adapter_generation(deadline=deadline)
+  staged_digest=verify_staged_native_resources_plugin(deadline=deadline)
+  selection=verify_native_resources_plugin_selection()
+  selection_digest=getattr(selection,"selection_sha256",None)
+  if (not re.fullmatch(r"[0-9a-f]{64}",str(incoming_generation or ""))
+      or not re.fullmatch(r"[0-9a-f]{64}",str(staged_digest or ""))
+      or getattr(selection,"plugin_key",None)!="hermes-installer-resources-delegation"
+      or selection_digest!=record["plugin_selection_sha256"]):
+   raise CoreRuntimeError("incoming immutable adapter or current native plugin selection is not verified")
+  backup_reference=_save_adapter_update_backup(record,raw_journal,files,selection_digest)
+ except CoreRuntimeError:
+  raise
+ except Exception:
+  raise CoreRuntimeError("incoming native adapter proof or recovery snapshot is unavailable") from None
+ marker={**record,"adapter_update_state":"preparing",
+         "adapter_update_backup":backup_reference,
+         "adapter_update_previous_source":str(old_source),
+         "adapter_update_target_source":str(ADAPTER_SOURCE),
+         "adapter_update_target_generation":incoming_generation,
+         "adapter_update_staged_plugin_sha256":staged_digest}
+ marker_raw=(json.dumps(marker,sort_keys=True)+"\n").encode()
+ _replace_journal(marker,expected_raw=raw_journal)
+ try:
+  # Recheck the complete prior cohort immediately before the fixed-file CAS.
+  check_record,check_raw,check_files=_read_active_adapter_runtime()
+  if check_record!=marker or check_raw!=marker_raw or check_files!=files:
+   raise CoreRuntimeError("journal-owned core changed before adapter update")
+  deadline=time.monotonic()+35.0
+  if (_current_native_adapter_generation(deadline=deadline)!=incoming_generation
+      or verify_staged_native_resources_plugin(deadline=deadline)!=staged_digest
+      or getattr(verify_native_resources_plugin_selection(),"selection_sha256",None)!=selection_digest):
+   raise CoreRuntimeError("incoming adapter or selected plugin changed before update")
+  # Stop the verified old PID before replacing anything ExecStart can use.
+  # Otherwise a failing old process could be relaunched by Restart=on-failure
+  # against the new launcher while the journal still names the prior cohort.
+  _stop_owned_core_for_adapter_update((old_source,ADAPTER_SOURCE))
+  new_launcher=_launcher()
+  new_unit=_unit()
+  # Install and load the unprivileged journal gate before changing ExecStart's
+  # launcher bytes. A reboot or process failure cannot start a mixed cohort.
+  _atomic_replace(UNIT,new_unit,0o644,ROOT_UID,ROOT_UID)
+  _run(["systemctl","daemon-reload"])
+  if (not _owned_unit_loaded()
+      or _projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)!=new_unit):
+   raise CoreRuntimeError("updated startup guard unit readback differs")
+  _atomic_replace(LAUNCHER,new_launcher,0o755,ROOT_UID,ROOT_UID)
+  if _projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)!=new_launcher:
+   raise CoreRuntimeError("updated launcher readback differs")
+  deadline=time.monotonic()+35.0
+  if (_current_native_adapter_generation(deadline=deadline)!=incoming_generation
+      or verify_staged_native_resources_plugin(deadline=deadline)!=staged_digest
+      or getattr(verify_native_resources_plugin_selection(),"selection_sha256",None)!=selection_digest
+      or _core_source_generation()!=record["core_source_generation"]):
+   raise CoreRuntimeError("incoming adapter source or selection changed before activation")
+  if (_run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active"
+      or _run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip() not in {"","0"}
+      or any(_owned_listener(adapter_source=source) for source in (old_source,ADAPTER_SOURCE))):
+   raise CoreRuntimeError("owned core restarted while adapter files were switching")
+  updated={key:value for key,value in record.items() if not key.startswith("adapter_update_")}
+  updated.update({"adapter_source":str(ADAPTER_SOURCE),"adapter_generation":incoming_generation,
+                  "unit_sha256":hashlib.sha256(new_unit).hexdigest(),
+                  "launcher_sha256":hashlib.sha256(new_launcher).hexdigest(),
+                  "adapter_update_state":"starting",
+                  "adapter_update_backup":backup_reference,
+                  "adapter_update_previous_source":str(old_source),
+                  "adapter_update_target_source":str(ADAPTER_SOURCE),
+                  "adapter_update_target_generation":incoming_generation,
+                  "adapter_update_staged_plugin_sha256":staged_digest})
+  updated_raw=(json.dumps(updated,sort_keys=True)+"\n").encode()
+  _replace_journal(updated,expected_raw=marker_raw)
+  _run(["systemctl","start",SERVICE]); _wait_for_listener()
+  deadline=time.monotonic()+35.0
+  if (not _owned_listener_pidfd(adapter_source=ADAPTER_SOURCE)
+      or _current_native_adapter_generation(deadline=deadline)!=incoming_generation
+      or verify_staged_native_resources_plugin(deadline=deadline)!=staged_digest
+      or getattr(verify_native_resources_plugin_selection(),"selection_sha256",None)!=selection_digest
+      or _core_source_generation()!=record["core_source_generation"]):
+   raise CoreRuntimeError("updated native adapter process or source receipt is not current")
+  committed={key:value for key,value in updated.items() if key not in {
+   "adapter_update_state","adapter_update_target_source","adapter_update_target_generation",
+   "adapter_update_staged_plugin_sha256"}}
+  committed["adapter_update_state"]="active"
+  _replace_journal(committed,expected_raw=updated_raw)
+  final=_journal()
+  if (final.get("adapter_source")!=str(ADAPTER_SOURCE)
+      or final.get("adapter_generation")!=incoming_generation
+      or final.get("plugin_selection_sha256")!=selection_digest):
+   raise CoreRuntimeError("updated adapter journal readback differs")
+  return "journal-owned Hermes core updated to the verified immutable installer adapter generation"
+ except Exception as exc:
+  try:
+   active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
+   if active=="active" and not any(_owned_listener_pidfd(adapter_source=source)
+                                    for source in (old_source,ADAPTER_SOURCE)):
+    raise CoreRuntimeError("active process is not either journaled update generation")
+   _restore_adapter_update_backup(backup_reference,allowed_sources=(old_source,ADAPTER_SOURCE))
+  except Exception:
+   raise CoreRuntimeError("adapter update failed; protected recovery backup retained") from None
+  if isinstance(exc,CoreRuntimeError): raise
+  raise CoreRuntimeError("adapter update failed; prior owned core generation restored") from None
 
 def install_or_resume():
  if os.geteuid()!=0 or not Path("/proc").is_dir(): raise CoreRuntimeError("requires installed Linux root actor")
