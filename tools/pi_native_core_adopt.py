@@ -908,7 +908,7 @@ def _recover_installed_adapter_to_legacy(core_runtime, expected_source: Path) ->
             or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("core_source_generation", "")))
             or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("plugin_selection_sha256", "")))):
         raise RuntimeError("installed Core migration journal is not the exact recoverable candidate")
-    if (not core_runtime._owned_unit_loaded() or not core_runtime._owned_listener()
+    if (not core_runtime._owned_unit_loaded()
             or core_runtime._core_source_generation() != record["core_source_generation"]):
         raise RuntimeError("installed adapter Core identity is not verified")
 
