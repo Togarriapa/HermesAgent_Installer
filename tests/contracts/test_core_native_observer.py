@@ -247,7 +247,7 @@ def test_team_completion_excerpt_survives_child_lease_expiry_only_until_owner_bo
         "_team_messages", "_team_bindings", "_team_completion_counts",
         "_master_selections", "_selected_source_deliveries", "_master_source_deliveries",
         "_obsidian_draft_read_deliveries", "_obsidian_draft_review_proposals",
-        "_lifecycle_startup_probes",
+        "_lifecycle_startup_probes", "_lifecycle_startup_attempts",
     ):
         setattr(registry, name, {})
     registry._obsidian_scoped_calls = set()
@@ -329,6 +329,7 @@ def test_root_master_review_receipt_joins_exact_live_owner_result_response_and_p
     registry._attempts = {attempt["attempt_handle"]: attempt}
     registry._master_review_completions = {}
     registry._lifecycle_startup_probes = {}
+    registry._lifecycle_startup_attempts = {}
     registry._current_master_source = lambda: SimpleNamespace(generation_sha256="6" * 64)
     monkeypatch.setattr(
         "hermes_installer.remote.core_gateway_inspector._verify_master_review_context",
@@ -411,6 +412,7 @@ def test_root_master_review_completion_denies_provider_result_not_yet_completed(
                                      "response": None}}
     registry._master_review_completions = {}
     registry._lifecycle_startup_probes = {}
+    registry._lifecycle_startup_attempts = {}
     monkeypatch.setattr(
         "hermes_installer.remote.core_gateway_inspector._verify_master_review_context",
         lambda value, **_kwargs: value)
@@ -449,6 +451,12 @@ def test_native_client_rechecks_review_receipt_through_closed_root_rpc(tmp_path,
     class Transport:
         def __init__(self, *_args, **_kwargs):
             self.incoming = bytearray()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
 
         def settimeout(self, _timeout):
             pass
