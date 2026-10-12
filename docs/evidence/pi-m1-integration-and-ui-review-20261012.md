@@ -29,6 +29,11 @@ Logs and status JSON are under
 reported `spec-driven`, `ready`, eight total/zero complete/eight remaining;
 no archive or canonical runtime acceptance was performed.
 
+Remote inspection found only `main` and `codex/luna-installer-development`;
+parallel work uses private local clones rather than additional remote branches.
+Publication checkpoints skip automatically triggered off-Pi CI. The executed
+checks in this record run through the authorized Pi browser terminal.
+
 Concrete production corrections include plan/review response verification,
 the closed review RPC, preservation of composed owner skill edits during
 helper replacement, and restoration of displaced activity recording. Fixture
