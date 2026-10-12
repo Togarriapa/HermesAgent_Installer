@@ -76,8 +76,9 @@ def test_calendar_selection_cannot_escape_registered_opaque_reference() -> None:
 
 def test_read_window_is_bounded_and_requires_explicit_timezone_offsets() -> None:
     first, last = calendar._bounds("2026-10-12T10:00:00+01:00",
-        "2026-11-12T10:00:00+00:00", "Europe/Lisbon", 100)
+        "2026-11-12T09:00:00+00:00", "Europe/Lisbon", 100)
     assert last > first
+    assert last - first == calendar.MAX_WINDOW
     with pytest.raises(calendar.OwnerCalendarUnavailable):
         calendar._bounds("2026-10-12T10:00:00", "2026-10-13T10:00:00+01:00",
                          "Europe/Lisbon", 100)
