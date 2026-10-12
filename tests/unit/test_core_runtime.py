@@ -794,7 +794,7 @@ def test_owned_adapter_update_recovery_derives_exact_committed_join(
 
 
 @pytest.mark.parametrize("change", ["partial-join", "old-generation", "old-core-source",
-                                    "wrong-candidate", "public-ingress"])
+                                    "wrong-candidate", "bad-cohort-digest", "public-ingress"])
 def test_owned_adapter_update_recovery_denies_unjoined_state_before_restore(
         committed_adapter_update_recovery, monkeypatch, change):
     fixture = committed_adapter_update_recovery
@@ -806,6 +806,8 @@ def test_owned_adapter_update_recovery_denies_unjoined_state_before_restore(
         fixture.refresh["old_core_source_generation"] = "f" * 64
     elif change == "wrong-candidate":
         fixture.ingress["candidate_sha"] = "f" * 40
+    elif change == "bad-cohort-digest":
+        fixture.refresh["core_update_cohort_sha256"] = "not-a-digest"
     else:
         monkeypatch.setattr(core, "_run", lambda argv, check=True:
             SimpleNamespace(stdout="active" if "tunnel" in argv[-1] else "inactive"))

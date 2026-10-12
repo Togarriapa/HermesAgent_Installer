@@ -5137,8 +5137,7 @@ def restore_owned_core_adapter_update():
       or refresh.get("schema")!=1 or refresh.get("purpose")!="adapter-refresh"):
    raise CoreRuntimeError("no exact recovery-required native adapter refresh is retained")
   for key in ("old_core_journal_sha256","old_core_adapter_generation",
-              "old_core_source_generation","old_inspector_process_identity_sha256",
-              "core_update_cohort_sha256"):
+              "old_core_source_generation","old_inspector_process_identity_sha256"):
    if not isinstance(refresh.get(key),str) or re.fullmatch(r"[0-9a-f]{64}",refresh[key]) is None:
     raise CoreRuntimeError("retained adapter refresh digest is malformed")
   if (not isinstance(refresh.get("old_core_adapter_source"),str)
@@ -5197,6 +5196,8 @@ def restore_owned_core_adapter_update():
   elif (any(value is None for value in joins)
         or retained_reference!=reference
         or transaction!=cohort["cohort_transaction_id"]
+        or not isinstance(cohort_sha,str)
+        or re.fullmatch(r"[0-9a-f]{64}",cohort_sha) is None
         or cohort_sha!=hashlib.sha256(cohort_raw).hexdigest()):
    raise CoreRuntimeError("retained adapter refresh does not join the current protected Core update")
 
