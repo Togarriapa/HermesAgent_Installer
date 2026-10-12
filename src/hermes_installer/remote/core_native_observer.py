@@ -3879,12 +3879,15 @@ class RootCoreNativeObservationRegistry:
 
             team_instances = []
             team_state_by_key: dict[str, str] = {}
-            binding_by_digest = {
-                hashlib.sha256(b"jarvis-team-binding-lineage-v1\0"
-                    + binding.binding_id.encode("ascii")).hexdigest(): binding
-                for binding in self._team_bindings.values()
-                if type(binding) is RootSelectedTeamBinding
-            }
+            retained_bindings = getattr(self, "_team_bindings", None)
+            binding_by_digest = {}
+            if isinstance(retained_bindings, dict):
+                binding_by_digest = {
+                    hashlib.sha256(b"jarvis-team-binding-lineage-v1\0"
+                        + binding.binding_id.encode("ascii")).hexdigest(): binding
+                    for binding in retained_bindings.values()
+                    if type(binding) is RootSelectedTeamBinding
+                }
             for key, group in sorted(grouped.items(),
                     key=lambda item: item[1]["created_at"], reverse=True):
                 lineage = group["lineage"]
@@ -3922,7 +3925,7 @@ class RootCoreNativeObservationRegistry:
                     and child.get("complete") is not True
                     and getattr(child.get("owner"), "owner_subject_sha256", None)
                         == owner_subject_sha256
-                    for child in self._child_sessions.values()))
+                    for child in getattr(self, "_child_sessions", {}).values()))
                 if key in partial_team_keys:
                     state = "partial"
                 elif stale_member or lineage["binding_deadline_at"] <= observed_at:

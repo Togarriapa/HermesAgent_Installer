@@ -230,6 +230,42 @@ def test_activity_projection_filters_owner_and_source_and_never_exposes_private_
     assert stale_source["instances"][0]["source_generation_sha256"] == "8" * 64
 
 
+def test_retained_team_lineage_without_live_binding_is_historical(monkeypatch):
+    row = _row(status="completed")
+    row.update(mission_id="mission_3", mission_revision=1)
+    catalog_sha = "7" * 64
+    row["team_lineage"] = {
+        "team_execution_key": "K" * 32, "binding_id_sha256": "8" * 64,
+        "team_id": "team_3", "team_source_revision": "team-rev-5",
+        "catalog_sha256": catalog_sha, "bundle_generation_sha256": "9" * 64,
+        "bundle_member_sha256": "a" * 64,
+        "selected_expert_ids": ["developer", "researcher"],
+        "binding_deadline_at": time.time() + 60,
+        "admission_deadline_at": time.time() + 30,
+    }
+    row["team_relation"] = None
+    row["history_partial"] = False
+    registry = _registry([row])
+    # The root activity snapshot survived restart, while volatile admission and
+    # binding registries did not. Current catalog alone cannot attest a live child.
+    monkeypatch.setattr(
+        "hermes_installer.remote.core_gateway_inspector._read_root_planning_catalog",
+        lambda _generation: ({"teams": {"team_3": {
+            "source_revision": "team-rev-5",
+            "bundle_generation_sha256": "9" * 64,
+            "bundle_member_sha256": "a" * 64,
+        }}}, catalog_sha))
+
+    result = registry.read_native_activity(owner_subject_sha256="a" * 64,
+        core_generation="d" * 64, core_source_generation="f" * 64)
+    assert result["team_instances"] == [{
+        "team_execution_key": "K" * 32, "team_id": "team_3",
+        "source_revision": "team-rev-5", "mission_id": "mission_3",
+        "mission_revision": 1, "members": [row["execution_key"]],
+        "state": "historical", "coverage": "observed-callbacks",
+    }]
+
+
 def test_activity_journal_failure_and_unknown_owner_fail_closed():
     registry = _registry([_row()])
     registry._activity_store_ok = False
