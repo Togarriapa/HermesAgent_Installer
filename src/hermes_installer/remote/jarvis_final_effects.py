@@ -580,7 +580,8 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any, *,
                             return deny("Obsidian tool blocked: root scope differs from the current call.")
                         if scope.mode in {"master_read", "expert_read"}:
                             with _admit_current_obsidian_call(
-                                    observed_call=observed, scope=scope, binding=binding):
+                                    observed_call=observed, scope=scope, binding=binding,
+                                    observer_client=client):
                                 return next_call(args)
                         return deny("Obsidian tool blocked: only owner-reviewed promotion can request a final effect.")
                 except BaseException:
@@ -643,7 +644,7 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any, *,
                                     return deny("Obsidian promotion blocked: fresh root scope does not match the approved call.")
                             with _admit_current_obsidian_call(
                                     observed_call=observed, scope=scope, binding=binding,
-                                    permit=permit):
+                                    permit=permit, observer_client=client):
                                 return next_call(args)
                         return next_call(args)
                     except BaseException:

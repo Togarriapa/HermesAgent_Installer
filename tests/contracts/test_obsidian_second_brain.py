@@ -19,6 +19,7 @@ from hermes_installer.remote.obsidian_second_brain import (
     ObsidianVaultStore,
     prepare_obsidian_vault,
 )
+from hermes_installer.remote.obsidian_native_scope import _decode_draft_origin
 
 
 OWNER = "a" * 64
@@ -151,16 +152,17 @@ def test_stale_external_edit_keeps_owner_bytes_and_reviewed_draft(tmp_path):
     _write_fixture(target, "# Target\nConcurrent Obsidian edit.\n")
 
     args = {
-        "execution_id": "mission_run_456", "draft_id": draft.draft_id,
+        "draft_id": draft.draft_id,
         "expected_draft_sha256": draft.content_sha256, "destination": "Notes/Target.md",
         "expected_base_sha256": base_sha,
     }
     observed, permit = _root_effect_proof(args, OWNER)
+    args["origin"] = _origin_proof(draft, OWNER)
     from unittest.mock import patch
     from hermes_installer.native_invocations import NativeToolDispatch, canonical_tool_arguments
 
     canonical = canonical_tool_arguments({key: value for key, value in args.items()
-                                          if key != "execution_id"})
+                                          if key != "origin"})
     dispatch = NativeToolDispatch(object(), observed.tool_call_id,
                                   "obsidian_promote_reviewed_draft", canonical)
     with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
@@ -180,16 +182,17 @@ def test_promotion_requires_exact_typed_root_permit_and_current_dispatch(tmp_pat
         title="Reviewed", markdown="# Reviewed\nExact bytes.\n",
     )
     args = {
-        "execution_id": "mission_run_789", "draft_id": draft.draft_id,
+        "draft_id": draft.draft_id,
         "expected_draft_sha256": draft.content_sha256, "destination": "Notes/Reviewed.md",
         "expected_base_sha256": None,
     }
     observed, permit = _root_effect_proof(args, OWNER)
+    args["origin"] = _origin_proof(draft, OWNER)
     from unittest.mock import patch
     from hermes_installer.native_invocations import NativeToolDispatch, canonical_tool_arguments
 
     canonical = canonical_tool_arguments({key: value for key, value in args.items()
-                                          if key != "execution_id"})
+                                          if key != "origin"})
     dispatch = NativeToolDispatch(object(), observed.tool_call_id,
                                   "obsidian_promote_reviewed_draft", canonical)
     with pytest.raises(ObsidianVaultError, match="exact current root owner permit"):
@@ -312,3 +315,18 @@ def _root_effect_proof(arguments, owner):
         expires_monotonic=time.monotonic() + 10,
     )
     return observed, permit
+
+
+def _origin_proof(draft, owner):
+    issued = time.monotonic()
+    return _decode_draft_origin({
+        "schema": 1, "nonce": "fixture", "ok": True, "draft_id": draft.draft_id,
+        "owner_subject_sha256": owner, "registration_sha256": "b" * 64,
+        "origin_execution_id": draft.execution_id,
+        "origin_source_id": draft.source_instance_id,
+        "origin_source_revision": "source-revision",
+        "source_generation_sha256": "c" * 64, "mission_sha256": None,
+        "content_sha256": draft.content_sha256, "base_sha256": draft.base_sha256,
+        "origin_record_sha256": "d" * 64, "state": "private-draft",
+        "issued_monotonic": issued, "expires_monotonic": issued + 4,
+    })

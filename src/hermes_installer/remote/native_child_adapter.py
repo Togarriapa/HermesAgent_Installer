@@ -22,11 +22,13 @@ _CLOSURES = {
     NativeChildMode.PLANNER: frozenset(),
     NativeChildMode.EXPERT_READ_RESEARCH: frozenset({
         "web_search", "web_extract", "skills_list", "skill_view",
+        "obsidian_list_notes", "obsidian_search_notes", "obsidian_read_note",
+        "obsidian_note_links", "obsidian_graph_snapshot", "obsidian_create_private_draft",
     }),
 }
 _TOOLSETS = {
     NativeChildMode.PLANNER: (),
-    NativeChildMode.EXPERT_READ_RESEARCH: ("web", "skills"),
+    NativeChildMode.EXPERT_READ_RESEARCH: ("web", "skills", "obsidian_second_brain"),
 }
 
 

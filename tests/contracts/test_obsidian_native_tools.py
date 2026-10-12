@@ -19,8 +19,8 @@ from hermes_installer.remote.obsidian_native_tools import (
     ObsidianNativeToolUnavailable, ObsidianNativeTools, _admit_current_obsidian_call,
 )
 from hermes_installer.remote.obsidian_native_scope import (
-    RootObsidianCallScope, RootSelectedObsidianVaultBinding,
-    _BINDING_SEAL, _SCOPE_SEAL,
+    RootObsidianCallScope, RootObsidianDraftOrigin, RootSelectedObsidianVaultBinding,
+    _BINDING_SEAL, _SCOPE_SEAL, _decode_draft_origin,
 )
 from hermes_installer.remote.obsidian_second_brain import (
     ObsidianVaultConfig, prepare_obsidian_vault,
@@ -93,6 +93,34 @@ def _mission():
     )
 
 
+class _OriginObserver:
+    def __init__(self, store):
+        self.store = store
+
+    def record_obsidian_draft_origin(self, *, observed_call, binding, draft_id):
+        assert observed_call.tool_name == "obsidian_create_private_draft"
+        assert binding.owner_subject_sha256 == OWNER
+        review = self.store.read_owner_draft(draft_id=draft_id)
+        return hashlib.sha256(review.markdown.encode("utf-8")).hexdigest()
+
+    def resolve_obsidian_draft_origin(self, *, observed_call, binding, draft_id,
+                                      expected_content_sha256):
+        assert observed_call.tool_name == "obsidian_promote_reviewed_draft"
+        draft = self.store.read_owner_draft(draft_id=draft_id).draft
+        assert draft.content_sha256 == expected_content_sha256
+        issued = time.monotonic()
+        return _decode_draft_origin({
+            "schema": 1, "nonce": "fixture", "ok": True, "draft_id": draft_id,
+            "owner_subject_sha256": OWNER, "registration_sha256": binding.registration_sha256,
+            "origin_execution_id": draft.execution_id, "origin_source_id": draft.source_instance_id,
+            "origin_source_revision": "source-revision",
+            "source_generation_sha256": "f" * 64, "mission_sha256": None,
+            "content_sha256": draft.content_sha256, "base_sha256": draft.base_sha256,
+            "origin_record_sha256": "e" * 64, "state": "private-draft",
+            "issued_monotonic": issued, "expires_monotonic": issued + 4,
+        })
+
+
 def test_registers_finite_tools_without_identity_or_path_arguments(tmp_path):
     root = tmp_path / "managed"
     root.mkdir(mode=0o700)
@@ -146,7 +174,8 @@ def test_master_read_uses_exact_current_call_and_fixed_owner_store(tmp_path):
 
     with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
                return_value=dispatch), _admit_current_obsidian_call(
-            observed_call=observed, scope=scope, binding=binding):
+            observed_call=observed, scope=scope, binding=binding,
+            observer_client=_OriginObserver(store)):
         result = tool(args)
 
     assert [note["title"] for note in result["notes"]] == ["Owner"]
@@ -215,7 +244,8 @@ def test_promotion_requires_master_effect_permit_and_expert_cannot_write_owner_n
                return_value=dispatch), \
             patch("hermes_installer.native_invocations.current_native_tool_dispatch",
                   return_value=dispatch), _admit_current_obsidian_call(
-            observed_call=observed, scope=scope, binding=binding, permit=permit):
+            observed_call=observed, scope=scope, binding=binding, permit=permit,
+            observer_client=_OriginObserver(store)):
         saved = tool(args)
     assert saved["contentSha256"] == draft.content_sha256
     assert (store._root / "Notes" / "Final.md").read_text(encoding="utf-8") == "# Final\nReviewed.\n"

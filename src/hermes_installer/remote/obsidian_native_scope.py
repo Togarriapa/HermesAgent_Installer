@@ -15,6 +15,7 @@ _IDENT = re.compile(r"[A-Za-z0-9_-]{1,96}\Z", re.ASCII)
 _VAULT_ROOT = "/home/admin/.hermes/jarvis-second-brain"
 _BINDING_SEAL = object()
 _SCOPE_SEAL = object()
+_DRAFT_ORIGIN_SEAL = object()
 
 
 class ObsidianRootScopeUnavailable(PermissionError):
@@ -136,6 +137,60 @@ class RootObsidianCallScope:
             and getattr(observed_call, "arguments_sha256", None) == self.arguments_sha256)
 
 
+@dataclass(frozen=True, slots=True)
+class RootObsidianDraftOrigin:
+    """Short-lived proof that ROOT resolved this owner's draft to retained native lineage."""
+
+    draft_id: str
+    owner_subject_sha256: str
+    registration_sha256: str
+    origin_execution_id: str
+    origin_source_id: str
+    origin_source_revision: str
+    source_generation_sha256: str
+    mission_sha256: str | None
+    content_sha256: str
+    base_sha256: str | None
+    origin_record_sha256: str
+    state: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object
+
+    def __post_init__(self) -> None:
+        now = time.monotonic()
+        if (not _IDENT.fullmatch(self.draft_id or "")
+                or not all(_HASH.fullmatch(value or "") for value in (
+                    self.owner_subject_sha256, self.registration_sha256,
+                    self.source_generation_sha256, self.content_sha256,
+                    self.origin_record_sha256))
+                or not _IDENT.fullmatch(self.origin_execution_id or "")
+                or not _IDENT.fullmatch(self.origin_source_id or "")
+                or not isinstance(self.origin_source_revision, str)
+                or not 1 <= len(self.origin_source_revision) <= 128
+                or any(ord(char) < 0x20 for char in self.origin_source_revision)
+                or (self.mission_sha256 is not None and not _HASH.fullmatch(self.mission_sha256 or ""))
+                or (self.base_sha256 is not None and not _HASH.fullmatch(self.base_sha256 or ""))
+                or self.state != "private-draft"
+                or any(type(value) not in (int, float) or not math.isfinite(value)
+                       for value in (self.issued_monotonic, self.expires_monotonic))
+                or not now < self.expires_monotonic <= min(self.issued_monotonic + 5.0, now + 5.0)
+                or self.issued_monotonic > now
+                or self._seal is not _DRAFT_ORIGIN_SEAL):
+            raise ObsidianRootScopeUnavailable("root Obsidian draft origin is malformed or stale")
+
+    def matches(self, *, draft_id: str, owner_subject_sha256: str,
+                registration_sha256: str, content_sha256: str,
+                base_sha256: str | None, now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        return bool(self._seal is _DRAFT_ORIGIN_SEAL and current < self.expires_monotonic
+            and self.draft_id == draft_id
+            and self.owner_subject_sha256 == owner_subject_sha256
+            and self.registration_sha256 == registration_sha256
+            and self.content_sha256 == content_sha256
+            and self.base_sha256 == base_sha256 and self.state == "private-draft")
+
+
 def _decode_startup_binding(row: Mapping[str, Any]) -> RootSelectedObsidianVaultBinding:
     expected = {"schema", "nonce", "ok", "binding_id", "registration_sha256",
         "owner_subject_sha256", "core_generation", "core_source_generation", "core_pid",
@@ -198,5 +253,32 @@ def _decode_call_scope(row: Mapping[str, Any], *, binding: RootSelectedObsidianV
     return scope
 
 
+def _decode_draft_origin(row: Mapping[str, Any]) -> RootObsidianDraftOrigin:
+    expected = {"schema", "nonce", "ok", "draft_id", "owner_subject_sha256",
+        "registration_sha256", "origin_execution_id", "origin_source_id",
+        "origin_source_revision", "source_generation_sha256", "mission_sha256",
+        "content_sha256", "base_sha256", "origin_record_sha256", "state",
+        "issued_monotonic", "expires_monotonic"}
+    if (type(row) is not dict or set(row) != expected or type(row["schema"]) is not int
+            or row["schema"] != 1 or row["ok"] is not True
+            or not isinstance(row.get("nonce"), str)
+            or any(type(row[key]) not in (int, float) or isinstance(row[key], bool)
+                   for key in ("issued_monotonic", "expires_monotonic"))):
+        raise ObsidianRootScopeUnavailable("root Obsidian draft-origin response schema differs")
+    try:
+        return RootObsidianDraftOrigin(
+            draft_id=row["draft_id"], owner_subject_sha256=row["owner_subject_sha256"],
+            registration_sha256=row["registration_sha256"],
+            origin_execution_id=row["origin_execution_id"], origin_source_id=row["origin_source_id"],
+            origin_source_revision=row["origin_source_revision"],
+            source_generation_sha256=row["source_generation_sha256"],
+            mission_sha256=row["mission_sha256"], content_sha256=row["content_sha256"],
+            base_sha256=row["base_sha256"], origin_record_sha256=row["origin_record_sha256"],
+            state=row["state"], issued_monotonic=float(row["issued_monotonic"]),
+            expires_monotonic=float(row["expires_monotonic"]), _seal=_DRAFT_ORIGIN_SEAL)
+    except Exception:
+        raise ObsidianRootScopeUnavailable("root Obsidian draft origin is invalid or stale") from None
+
+
 __all__ = ["ObsidianRootScopeUnavailable", "RootObsidianCallScope",
-           "RootSelectedObsidianVaultBinding"]
+           "RootObsidianDraftOrigin", "RootSelectedObsidianVaultBinding"]

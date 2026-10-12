@@ -49,6 +49,9 @@ _NATIVE_ACTIVITY_MAX_INSTANCES = 100
 _NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE = 8
 _NATIVE_ACTIVITY_MAX_DEDUP_IDS_PER_INSTANCE = 32
 _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ = 200
+_OBSIDIAN_ORIGIN_STORE_NAME = "obsidian-draft-origins.json"
+_OBSIDIAN_ORIGIN_MAX_RECORDS = 4096
+_OBSIDIAN_ORIGIN_MAX_BYTES = 512 * 1024
 _NATIVE_INHERITANCE_POLICY_SEAL = object()
 _MASTER_PLAN_RECORD_SEAL = object()
 
@@ -453,6 +456,153 @@ def _publish_root_native_activity_bytes(raw: bytes) -> None:
             except FileNotFoundError:
                 pass
         os.close(directory_fd)
+
+
+def _read_root_obsidian_origin_bytes() -> bytes | None:
+    """Read the bounded Obsidian provenance journal under existing root custody."""
+    directory_fd = _open_root_master_plan_store()
+    try:
+        try:
+            fd = os.open(_OBSIDIAN_ORIGIN_STORE_NAME,
+                         os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        except FileNotFoundError:
+            return None
+        try:
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
+                    or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                    or not 1 <= before.st_size <= _OBSIDIAN_ORIGIN_MAX_BYTES):
+                raise PermissionError("Obsidian origin journal custody changed")
+            chunks: list[bytes] = []
+            remaining = _OBSIDIAN_ORIGIN_MAX_BYTES + 1
+            while remaining:
+                chunk = os.read(fd, min(8192, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+            after = os.fstat(fd)
+            named = os.stat(_OBSIDIAN_ORIGIN_STORE_NAME, dir_fd=directory_fd,
+                            follow_symlinks=False)
+            if (len(raw) != before.st_size or len(raw) > _OBSIDIAN_ORIGIN_MAX_BYTES
+                    or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+                        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+                    or (after.st_dev, after.st_ino) != (named.st_dev, named.st_ino)):
+                raise PermissionError("Obsidian origin journal changed during read")
+            return raw
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _publish_root_obsidian_origin_bytes(raw: bytes) -> None:
+    """Atomically publish a bounded root-only Obsidian origin snapshot."""
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= _OBSIDIAN_ORIGIN_MAX_BYTES:
+        raise ValueError("Obsidian origin snapshot exceeds its fixed bound")
+    directory_fd = _open_root_master_plan_store()
+    temp = ".obsidian-origin-" + secrets.token_hex(16) + ".tmp"
+    created = False
+    try:
+        try:
+            existing = os.stat(_OBSIDIAN_ORIGIN_STORE_NAME, dir_fd=directory_fd,
+                               follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and (not stat.S_ISREG(existing.st_mode) or existing.st_uid != 0
+                or existing.st_gid != 0 or stat.S_IMODE(existing.st_mode) != 0o600
+                or existing.st_nlink != 1):
+            raise PermissionError("Obsidian origin journal custody changed")
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory_fd)
+        created = True
+        try:
+            os.fchown(fd, 0, 0)
+            os.fchmod(fd, 0o600)
+            offset = 0
+            while offset < len(raw):
+                written = os.write(fd, raw[offset:])
+                if written <= 0:
+                    raise OSError("short Obsidian origin journal write")
+                offset += written
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temp, _OBSIDIAN_ORIGIN_STORE_NAME,
+                   src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        created = False
+        os.fsync(directory_fd)
+        if _read_root_obsidian_origin_bytes() != raw:
+            raise OSError("published Obsidian origin journal failed readback")
+    finally:
+        if created:
+            try:
+                os.unlink(temp, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        os.close(directory_fd)
+
+
+def _obsidian_origin_record_digest(row: Mapping[str, Any]) -> str:
+    fields = {key: row[key] for key in (
+        "draft_id", "owner_subject_sha256", "registration_sha256", "origin_execution_id",
+        "origin_source_id", "origin_source_revision", "source_generation_sha256",
+        "mission_sha256", "content_sha256", "base_sha256", "state")}
+    return hashlib.sha256(_canonical(fields)).hexdigest()
+
+
+def _obsidian_origin_snapshot_from_bytes(raw: bytes) -> dict[tuple[str, str], dict[str, Any]] | None:
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= _OBSIDIAN_ORIGIN_MAX_BYTES:
+        return None
+    fields = {"draft_id", "owner_subject_sha256", "registration_sha256", "origin_execution_id",
+        "origin_source_id", "origin_source_revision", "source_generation_sha256",
+        "mission_sha256", "content_sha256", "base_sha256", "origin_record_sha256", "state"}
+    try:
+        value = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_unique_json_pairs)
+        if (type(value) is not dict or set(value) != {"schema", "records"}
+                or type(value["schema"]) is not int or value["schema"] != 1
+                or type(value["records"]) is not list
+                or len(value["records"]) > _OBSIDIAN_ORIGIN_MAX_RECORDS
+                or _canonical(value) != raw):
+            return None
+        result: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in value["records"]:
+            if (type(row) is not dict or set(row) != fields
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", row.get("draft_id", ""))
+                    or not all(_HASH.fullmatch(row.get(key, "") or "") for key in (
+                        "owner_subject_sha256", "registration_sha256", "source_generation_sha256",
+                        "content_sha256", "origin_record_sha256"))
+                    or not _ID.fullmatch(row.get("origin_execution_id", ""))
+                    or not _ID.fullmatch(row.get("origin_source_id", ""))
+                    or not isinstance(row.get("origin_source_revision"), str)
+                    or not 1 <= len(row["origin_source_revision"]) <= 128
+                    or any(ord(char) < 0x20 for char in row["origin_source_revision"])
+                    or (row["mission_sha256"] is not None
+                        and not _HASH.fullmatch(row["mission_sha256"] or ""))
+                    or (row["base_sha256"] is not None
+                        and not _HASH.fullmatch(row["base_sha256"] or ""))
+                    or row.get("state") != "private-draft"
+                    or row["origin_record_sha256"] != _obsidian_origin_record_digest(row)):
+                return None
+            key = (row["owner_subject_sha256"], row["draft_id"])
+            if key in result:
+                return None
+            result[key] = dict(row)
+        return result
+    except Exception:
+        return None
+
+
+def _load_root_obsidian_origin_snapshot() -> dict[tuple[str, str], dict[str, Any]]:
+    """Load retained provenance as data; this never restores a live call grant."""
+    raw = _read_root_obsidian_origin_bytes()
+    if raw is None:
+        return {}
+    origins = _obsidian_origin_snapshot_from_bytes(raw)
+    if origins is None:
+        raise ValueError("root Obsidian origin journal is malformed")
+    return origins
 
 
 def _native_activity_snapshot_from_bytes(raw: bytes) -> list[dict[str, Any]] | None:
@@ -1217,7 +1367,8 @@ class CoreNativeObservationClient:
             "request-final-effect", "poll-final-effect", "authorize-master-read-call",
             "read-selected-expert-source", "admit-selected-expert-child",
             "planning-turn-context", "bind-obsidian-native-vault",
-            "authorize-obsidian-call-scope",
+            "authorize-obsidian-call-scope", "record-obsidian-draft-origin",
+            "resolve-obsidian-draft-origin",
             "current-project-context",
         }:
             raise CoreNativeObservationUnavailable("observer operation is not supported")
@@ -2174,6 +2325,55 @@ class CoreNativeObservationClient:
         })
         return _decode_call_scope(row, binding=binding, observed_call=observed_call)
 
+    def record_obsidian_draft_origin(self, *, observed_call: ObservedNativeToolCall,
+                                    binding: Any, draft_id: str) -> str:
+        """Ask ROOT to join a just-created private draft to this exact native call."""
+        from .obsidian_native_scope import RootSelectedObsidianVaultBinding
+        if (type(observed_call) is not ObservedNativeToolCall
+                or type(binding) is not RootSelectedObsidianVaultBinding
+                or binding.core_pid != os.getpid() or binding.selected_owner_uid != os.geteuid()
+                or os.geteuid() != 1000
+                or not isinstance(draft_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)):
+            raise CoreNativeObservationUnavailable("current Core draft call and binding are required")
+        row = self._rpc("record-obsidian-draft-origin", {
+            "observed_call_handle": observed_call.handle,
+            "startup_binding_id": binding.binding_id, "draft_id": draft_id,
+        })
+        if (set(row) != {"schema", "nonce", "ok", "origin_record_sha256"}
+                or type(row.get("schema")) is not int or row["schema"] != 1
+                or not _HASH.fullmatch(row.get("origin_record_sha256", ""))):
+            raise CoreNativeObservationUnavailable("root Obsidian draft origin receipt is malformed")
+        return row["origin_record_sha256"]
+
+    def resolve_obsidian_draft_origin(self, *, observed_call: ObservedNativeToolCall,
+                                      binding: Any, draft_id: str,
+                                      expected_content_sha256: str):
+        """Resolve only an opaque existing draft under an exact current owner call."""
+        from .obsidian_native_scope import (
+            RootObsidianDraftOrigin, RootSelectedObsidianVaultBinding,
+            _decode_draft_origin,
+        )
+        if (type(observed_call) is not ObservedNativeToolCall
+                or type(binding) is not RootSelectedObsidianVaultBinding
+                or binding.core_pid != os.getpid() or binding.selected_owner_uid != os.geteuid()
+                or os.geteuid() != 1000
+                or not isinstance(draft_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
+                or not _HASH.fullmatch(expected_content_sha256 or "")):
+            raise CoreNativeObservationUnavailable("current Core promotion and binding are required")
+        row = self._rpc("resolve-obsidian-draft-origin", {
+            "observed_call_handle": observed_call.handle,
+            "startup_binding_id": binding.binding_id, "draft_id": draft_id,
+            "expected_content_sha256": expected_content_sha256,
+        })
+        origin = _decode_draft_origin(row)
+        if (type(origin) is not RootObsidianDraftOrigin
+                or origin.draft_id != draft_id
+                or origin.owner_subject_sha256 != binding.owner_subject_sha256
+                or origin.registration_sha256 != binding.registration_sha256
+                or origin.content_sha256 != expected_content_sha256):
+            raise CoreNativeObservationUnavailable("root Obsidian draft origin differs from the reviewed call")
+        return origin
+
 
 class RootCoreNativeObservationRegistry:
     """Root-memory issuer joining real owner turns to protected native observations.
@@ -2226,6 +2426,13 @@ class RootCoreNativeObservationRegistry:
         self._master_source_deliveries: dict[str, dict[str, Any]] = {}
         self._obsidian_bindings: dict[str, dict[str, Any]] = {}
         self._obsidian_scoped_calls: set[str] = set()
+        self._obsidian_draft_origins: dict[tuple[str, str], dict[str, Any]] = {}
+        self._obsidian_resolved_origin_calls: set[str] = set()
+        self._obsidian_origin_store_ok = True
+        try:
+            self._obsidian_draft_origins = _load_root_obsidian_origin_snapshot()
+        except Exception:
+            self._obsidian_origin_store_ok = False
         self._master_source: Any = None
         self._final_effect_store: Any = None
         try:
@@ -3141,6 +3348,52 @@ class RootCoreNativeObservationRegistry:
                 return False
             return True
 
+    def _persist_obsidian_origin(self, records: dict[tuple[str, str], dict[str, Any]]) -> None:
+        if not self._obsidian_origin_store_ok or len(records) > _OBSIDIAN_ORIGIN_MAX_RECORDS:
+            raise ValueError("root Obsidian origin journal is unavailable or full")
+        ordered = [records[key] for key in sorted(records)]
+        raw = _canonical({"schema": 1, "records": ordered})
+        if len(raw) > _OBSIDIAN_ORIGIN_MAX_BYTES:
+            self._obsidian_origin_store_ok = False
+            raise ValueError("root Obsidian origin journal reached its fixed size bound")
+        try:
+            _publish_root_obsidian_origin_bytes(raw)
+            verified = _obsidian_origin_snapshot_from_bytes(_read_root_obsidian_origin_bytes() or b"")
+            if verified != records:
+                raise OSError("root Obsidian origin journal readback differs")
+        except Exception:
+            self._obsidian_origin_store_ok = False
+            raise ValueError("root Obsidian origin journal could not be persisted") from None
+
+    def _obsidian_store_for_origin(self, data_root: Path, owner_sha: str) -> Any:
+        from .obsidian_second_brain import ObsidianVaultConfig, ObsidianVaultStore
+        if data_root.as_posix() != "/home/admin/.hermes/jarvis-second-brain":
+            raise ValueError("Obsidian origin store root differs from the enrolled fixed owner")
+        return ObsidianVaultStore(ObsidianVaultConfig(data_root, owner_sha, owner_uid=1000))
+
+    def _validate_obsidian_origin_binding(self, *, peer: tuple[int, int, int],
+                                          binding_id: str, owner: Any,
+                                          now: float) -> tuple[Path, str, str, dict[str, Any]]:
+        if not isinstance(binding_id, str) or not _OPAQUE.fullmatch(binding_id):
+            raise ValueError("Obsidian origin binding ID is malformed")
+        startup = self._obsidian_bindings.get(binding_id)
+        from .obsidian_owner_lifecycle import read_registration
+        data_root, registered_owner, registration_sha = read_registration()
+        if (startup is None or startup["peer"] != peer or startup["expiry"] <= now
+                or startup["owner_subject_sha256"] != owner.owner_subject_sha256
+                or startup["registration_sha256"] != registration_sha
+                or registered_owner != owner.owner_subject_sha256
+                or startup["core_generation"] != owner.core_generation
+                or startup["core_source_generation"] != owner.core_source_generation
+                or startup["core_pid"] != self._custody.core_pid
+                or startup["core_start_ticks"] != self._custody.core_start_ticks
+                or self._config.core_uid != 1000 or self._config.core_gid != 1000):
+            raise ValueError("Obsidian owner registration or startup binding changed")
+        return data_root, registered_owner, registration_sha, startup
+
+    def _read_obsidian_owner_draft(self, data_root: Path, owner_sha: str, draft_id: str) -> Any:
+        return self._obsidian_store_for_origin(data_root, owner_sha).read_owner_draft(draft_id=draft_id)
+
     def _handle(self, peer: tuple[int, int, int], request: dict[str, Any]) -> dict[str, Any]:
         op = request.get("op")
         nonce = request.get("nonce")
@@ -3269,6 +3522,176 @@ class RootCoreNativeObservationRegistry:
                     "source_instance_id": source_instance_id,
                     "mission_binding": mission, "selected_note_ids": selected_notes,
                     "issued_monotonic": now, "expires_monotonic": expiry}
+            if op == "record-obsidian-draft-origin":
+                if set(request) != {"schema", "op", "nonce", "observed_call_handle",
+                                    "startup_binding_id", "draft_id"}:
+                    raise ValueError("Obsidian origin record schema mismatch")
+                handle, binding_id, draft_id = (request["observed_call_handle"],
+                    request["startup_binding_id"], request["draft_id"])
+                if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
+                        or not isinstance(draft_id, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
+                        or not self._obsidian_origin_store_ok):
+                    raise ValueError("Obsidian origin record identity or journal is unavailable")
+                call, owner, origin, mode = self._classify_current_call(
+                    handle, peer, now=time.monotonic())
+                if (call["tool_name"] != "obsidian_create_private_draft"
+                        or mode not in {"expert_read", "master_read"}):
+                    raise ValueError("draft origin is not attached to an admitted create call")
+                now = time.monotonic()
+                data_root, registered_owner, registration_sha, startup = \
+                    self._validate_obsidian_origin_binding(
+                        peer=peer, binding_id=binding_id, owner=owner, now=now)
+                if self._config.core_uid != 1000 or self._config.core_gid != 1000:
+                    raise ValueError("Obsidian origin registration requires the selected Core identity")
+                try:
+                    arguments = json.loads(call["arguments"].decode("utf-8", "strict"),
+                                           object_pairs_hook=_unique_json_pairs)
+                except Exception:
+                    raise ValueError("observed draft creation arguments are malformed") from None
+                allowed = {"title", "markdown", "base_note_id", "base_sha256", "citations"}
+                if (type(arguments) is not dict or set(arguments) - allowed
+                        or not {"title", "markdown"}.issubset(arguments)
+                        or _canonical(arguments) != call["arguments"]):
+                    raise ValueError("observed draft creation call differs from fixed arguments")
+                reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+                from .obsidian_second_brain import _citations, _title_text
+                draft = reviewed.draft
+                expected_base_id = arguments.get("base_note_id")
+                expected_base_sha = arguments.get("base_sha256")
+                try:
+                    expected_citations = _citations(arguments.get("citations", ()))
+                    expected_title = _title_text(arguments["title"])
+                except Exception:
+                    raise ValueError("observed draft metadata is malformed") from None
+                if (reviewed.markdown != arguments["markdown"] or draft.title != expected_title
+                        or draft.base_note_id != expected_base_id or draft.base_sha256 != expected_base_sha
+                        or tuple(draft.citations) != tuple(expected_citations)
+                        or hashlib.sha256(reviewed.markdown.encode("utf-8", "strict")).hexdigest()
+                            != draft.content_sha256):
+                    raise ValueError("private draft bytes do not match the observed create call")
+                if mode == "expert_read":
+                    child = origin
+                    mission_binding = owner.mission_binding
+                    source = child.get("source") if isinstance(child, dict) else None
+                    source_id = child.get("profile_id") if isinstance(child, dict) else None
+                    if (child.get("session_id") != draft.execution_id
+                            or source_id != draft.source_instance_id
+                            or source is None or type(mission_binding) is not MissionBinding
+                            or mission_binding.schema != 2
+                            or source.is_current_sealed(self._custody, now=now) is not True):
+                        raise ValueError("Expert draft origin does not match its current selected child/source")
+                    execution_id = child["session_id"]
+                    source_generation = child["source_generation_sha256"]
+                    source_revision = source.source_revision
+                    mission_sha = hashlib.sha256(_canonical(mission_binding.to_wire())).hexdigest()
+                else:
+                    source = origin
+                    if (draft.execution_id != owner.owner_turn_handle
+                            or draft.source_instance_id != "hermes"
+                            or source.is_current_sealed(self._custody, now=now) is not True):
+                        raise ValueError("Jarvis draft origin does not match its current owner turn/source")
+                    execution_id = owner.owner_turn_handle
+                    source_generation = source.generation_sha256
+                    source_revision = source.source_revision
+                    mission_sha = None
+                if (draft.execution_id != execution_id or not isinstance(source_revision, str)
+                        or not source_revision or len(source_revision) > 128):
+                    raise ValueError("private draft identity differs from the root-observed creator")
+                key = (owner.owner_subject_sha256, draft_id)
+                if key in self._obsidian_draft_origins:
+                    raise ValueError("private draft origin was already recorded")
+                record = {
+                    "draft_id": draft_id, "owner_subject_sha256": owner.owner_subject_sha256,
+                    "registration_sha256": registration_sha, "origin_execution_id": execution_id,
+                    "origin_source_id": draft.source_instance_id,
+                    "origin_source_revision": source_revision,
+                    "source_generation_sha256": source_generation, "mission_sha256": mission_sha,
+                    "content_sha256": draft.content_sha256, "base_sha256": draft.base_sha256,
+                    "state": "private-draft",
+                }
+                record["origin_record_sha256"] = _obsidian_origin_record_digest(record)
+                proposed = dict(self._obsidian_draft_origins)
+                proposed[key] = record
+                self._persist_obsidian_origin(proposed)
+                self._obsidian_draft_origins = proposed
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                        "origin_record_sha256": record["origin_record_sha256"]}
+            if op == "resolve-obsidian-draft-origin":
+                if set(request) != {"schema", "op", "nonce", "observed_call_handle",
+                                    "startup_binding_id", "draft_id", "expected_content_sha256"}:
+                    raise ValueError("Obsidian origin resolution schema mismatch")
+                handle, binding_id = request["observed_call_handle"], request["startup_binding_id"]
+                draft_id, content_sha = request["draft_id"], request["expected_content_sha256"]
+                if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
+                        or not isinstance(draft_id, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
+                        or not _HASH.fullmatch(content_sha or "")
+                        or not self._obsidian_origin_store_ok
+                        or handle in self._obsidian_resolved_origin_calls):
+                    raise ValueError("Obsidian origin lookup identity or journal is unavailable")
+                if len(self._obsidian_resolved_origin_calls) >= 4096:
+                    self._obsidian_resolved_origin_calls = {
+                        item for item in self._obsidian_resolved_origin_calls
+                        if item in self._calls and self._calls[item].get("expiry", 0) > time.monotonic()}
+                if len(self._obsidian_resolved_origin_calls) >= 4096:
+                    raise ValueError("Obsidian origin lookup replay window is full")
+                self._obsidian_resolved_origin_calls.add(handle)
+                call, owner, _source, mode = self._classify_current_call(
+                    handle, peer, now=time.monotonic())
+                if call["tool_name"] != "obsidian_promote_reviewed_draft" or mode != "master_effect":
+                    raise ValueError("only the current Jarvis owner promotion can resolve a draft origin")
+                try:
+                    arguments = json.loads(call["arguments"].decode("utf-8", "strict"),
+                                           object_pairs_hook=_unique_json_pairs)
+                except Exception:
+                    raise ValueError("observed promotion arguments are malformed") from None
+                if (type(arguments) is not dict
+                        or set(arguments) != {"draft_id", "expected_draft_sha256", "destination",
+                                              "expected_base_sha256"}
+                        or _canonical(arguments) != call["arguments"]
+                        or arguments["draft_id"] != draft_id
+                        or arguments["expected_draft_sha256"] != content_sha):
+                    raise ValueError("draft lookup differs from the exact observed owner review call")
+                now = time.monotonic()
+                data_root, registered_owner, registration_sha, startup = \
+                    self._validate_obsidian_origin_binding(
+                        peer=peer, binding_id=binding_id, owner=owner, now=now)
+                key = (owner.owner_subject_sha256, draft_id)
+                record = self._obsidian_draft_origins.get(key)
+                if (record is None or record["state"] != "private-draft"
+                        or record["registration_sha256"] != registration_sha
+                        or record["content_sha256"] != content_sha
+                        or record["base_sha256"] != arguments["expected_base_sha256"]):
+                    raise ValueError("draft has no current root-retained private origin")
+                reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+                if (reviewed.draft.execution_id != record["origin_execution_id"]
+                        or reviewed.draft.source_instance_id != record["origin_source_id"]
+                        or reviewed.draft.content_sha256 != record["content_sha256"]
+                        or reviewed.draft.base_sha256 != record["base_sha256"]
+                        or hashlib.sha256(reviewed.markdown.encode("utf-8", "strict")).hexdigest()
+                            != record["content_sha256"]):
+                    raise ValueError("retained draft origin no longer matches private owner bytes")
+                origin_record_sha = _obsidian_origin_record_digest(record)
+                if origin_record_sha != record["origin_record_sha256"]:
+                    raise ValueError("retained Obsidian origin record digest changed")
+                issued = time.monotonic()
+                expiry = min(float(call["expiry"]), float(owner.expires_monotonic),
+                             float(startup["expiry"]), issued + 5.0)
+                if not issued < expiry <= issued + 5.0:
+                    raise ValueError("current Obsidian draft origin proof lease is unavailable")
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "draft_id": draft_id, "owner_subject_sha256": owner.owner_subject_sha256,
+                    "registration_sha256": registration_sha,
+                    "origin_execution_id": record["origin_execution_id"],
+                    "origin_source_id": record["origin_source_id"],
+                    "origin_source_revision": record["origin_source_revision"],
+                    "source_generation_sha256": record["source_generation_sha256"],
+                    "mission_sha256": record["mission_sha256"],
+                    "content_sha256": record["content_sha256"],
+                    "base_sha256": record["base_sha256"],
+                    "origin_record_sha256": origin_record_sha, "state": record["state"],
+                    "issued_monotonic": issued, "expires_monotonic": expiry}
             if op == "planning-turn-context":
                 if set(request) != {"schema", "op", "nonce", "session_id", "turn_id", "prompt_sha256"}:
                     raise ValueError("planning-turn lookup schema mismatch")

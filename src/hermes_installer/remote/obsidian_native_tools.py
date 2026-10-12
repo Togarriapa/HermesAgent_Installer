@@ -21,7 +21,7 @@ from hermes_installer.native_invocations import canonical_tool_arguments, curren
 from .core_native_observer import ObservedNativeToolCall
 from .jarvis_final_effects import FinalEffectPermit, review_digest
 from .obsidian_native_scope import (
-    RootObsidianCallScope, RootSelectedObsidianVaultBinding,
+    RootObsidianCallScope, RootObsidianDraftOrigin, RootSelectedObsidianVaultBinding,
 )
 from .obsidian_second_brain import ObsidianVaultStore
 
@@ -54,6 +54,7 @@ class AdmittedObsidianCall:
     scope: RootObsidianCallScope
     binding: RootSelectedObsidianVaultBinding
     permit: FinalEffectPermit | None
+    observer_client: Any | None
     _seal: object
 
 
@@ -61,7 +62,8 @@ class AdmittedObsidianCall:
 def _admit_current_obsidian_call(*, observed_call: ObservedNativeToolCall,
                                  scope: RootObsidianCallScope,
                                  binding: RootSelectedObsidianVaultBinding,
-                                 permit: FinalEffectPermit | None = None) -> Iterator[AdmittedObsidianCall]:
+                                 permit: FinalEffectPermit | None = None,
+                                 observer_client: Any | None = None) -> Iterator[AdmittedObsidianCall]:
     """Bind only server-derived caller context around middleware ``next_call``.
 
     The underscore is intentional: the only production caller is ROOT's
@@ -106,7 +108,10 @@ def _admit_current_obsidian_call(*, observed_call: ObservedNativeToolCall,
                     observed_call, tool_name=scope.tool_name, arguments_sha256=digest,
                     review_sha256=review_digest(scope.tool_name, digest))):
             raise ObsidianNativeToolUnavailable("owner permit does not match the exact Obsidian effect")
-    context = AdmittedObsidianCall(observed_call, scope, binding, permit, _SEAL)
+    if observer_client is not None and not callable(
+            getattr(observer_client, "record_obsidian_draft_origin", None)):
+        raise ObsidianNativeToolUnavailable("root draft-origin recorder is unavailable")
+    context = AdmittedObsidianCall(observed_call, scope, binding, permit, observer_client, _SEAL)
     token = _CURRENT.set(context)
     try:
         yield context
@@ -221,6 +226,9 @@ class ObsidianNativeTools:
                 values = _args(args, {"title", "markdown", "base_note_id", "base_sha256", "citations"})
                 if context.scope.mode not in {"master_read", "expert_read"}:
                     raise ObsidianNativeToolUnavailable("private draft creation requires an admitted owner or Expert execution")
+                recorder = getattr(context.observer_client, "record_obsidian_draft_origin", None)
+                if not callable(recorder):
+                    raise ObsidianNativeToolUnavailable("root draft-origin recording is required for private drafts")
                 draft = store.create_private_draft(
                     execution_id=context.scope.execution_id,
                     source_instance_id=context.scope.source_instance_id,
@@ -228,14 +236,30 @@ class ObsidianNativeTools:
                     base_note_id=values.get("base_note_id"), base_sha256=values.get("base_sha256"),
                     citations=values.get("citations", ()),
                 )
+                recorder(observed_call=context.observed_call, binding=context.binding,
+                         draft_id=draft.draft_id)
                 return draft.to_projection()
             values = _args(args, {"draft_id", "expected_draft_sha256", "destination",
                                   "expected_base_sha256"})
             permit = context.permit
             if permit is None:
                 raise ObsidianNativeToolUnavailable("root middleware did not forward the exact one-use final-effect permit")
+            resolver = getattr(context.observer_client, "resolve_obsidian_draft_origin", None)
+            if not callable(resolver):
+                raise ObsidianNativeToolUnavailable("root draft-origin resolver is unavailable")
+            origin = resolver(observed_call=context.observed_call, binding=context.binding,
+                              draft_id=values["draft_id"],
+                              expected_content_sha256=values["expected_draft_sha256"])
+            if (type(origin) is not RootObsidianDraftOrigin
+                    or not origin.matches(
+                        draft_id=values["draft_id"],
+                        owner_subject_sha256=context.scope.owner_subject_sha256,
+                        registration_sha256=context.scope.registration_sha256,
+                        content_sha256=values["expected_draft_sha256"],
+                        base_sha256=values["expected_base_sha256"])):
+                raise ObsidianNativeToolUnavailable("root draft origin differs from the exact reviewed bytes")
             saved = store.promote_reviewed_draft(
-                execution_id=context.scope.execution_id, draft_id=values["draft_id"],
+                origin=origin, draft_id=values["draft_id"],
                 expected_draft_sha256=values["expected_draft_sha256"],
                 destination=values["destination"], expected_base_sha256=values["expected_base_sha256"],
                 observed_call=context.observed_call, permit=permit,

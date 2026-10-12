@@ -19,6 +19,9 @@ class NativeChildAdapterTests(unittest.TestCase):
         names = {
             "web_search", "web_extract", "todo_list", "skills_list", "skill_view",
             "delegate_task", "terminal", "write_file", "send_email", "mcp__mail__send",
+            "obsidian_list_notes", "obsidian_search_notes", "obsidian_read_note",
+            "obsidian_note_links", "obsidian_graph_snapshot", "obsidian_create_private_draft",
+            "obsidian_promote_reviewed_draft",
         }
         child = type("Child", (), {})()
         child.tools = [_definition(name) for name in sorted(names)]
@@ -35,6 +38,9 @@ class NativeChildAdapterTests(unittest.TestCase):
         names = {
             "web_search", "web_extract", "todo_list", "skills_list", "skill_view",
             "delegate_task", "terminal", "write_file", "send_email", "mcp__mail__send",
+            "obsidian_list_notes", "obsidian_search_notes", "obsidian_read_note",
+            "obsidian_note_links", "obsidian_graph_snapshot", "obsidian_create_private_draft",
+            "obsidian_promote_reviewed_draft",
         }
         child = type("Child", (), {})()
         child.tools = [_definition(name) for name in sorted(names)]
@@ -42,11 +48,15 @@ class NativeChildAdapterTests(unittest.TestCase):
 
         retained = apply_native_child_tool_closure(child, NativeChildMode.EXPERT_READ_RESEARCH)
 
-        expected = frozenset({"web_search", "web_extract", "skills_list", "skill_view"})
+        expected = frozenset({"web_search", "web_extract", "skills_list", "skill_view",
+            "obsidian_list_notes", "obsidian_search_notes", "obsidian_read_note",
+            "obsidian_note_links", "obsidian_graph_snapshot", "obsidian_create_private_draft"})
         self.assertEqual(retained, expected)
         self.assertEqual(child.valid_tool_names, set(expected))
         self.assertEqual({item["function"]["name"] for item in child.tools}, set(expected))
         self.assertNotIn("delegate_task", child.valid_tool_names)
+        self.assertNotIn("obsidian_promote_reviewed_draft", child.valid_tool_names)
+        self.assertEqual(child.enabled_toolsets, ["web", "skills", "obsidian_second_brain"])
         self.assertFalse(any(name.startswith("mcp__") for name in child.valid_tool_names))
 
     def test_direct_builtin_delegation_is_denied_without_calling_executor(self):

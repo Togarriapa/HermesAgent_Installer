@@ -467,7 +467,7 @@ class ObsidianVaultStore:
             raise ObsidianVaultError("draft is no longer awaiting owner review")
         return OwnerDraftReview(_draft_projection(draft_id, data), data["markdown"])
 
-    def promote_reviewed_draft(self, *, execution_id: str, draft_id: str,
+    def promote_reviewed_draft(self, *, origin: object, draft_id: str,
                                expected_draft_sha256: str, destination: str,
                                expected_base_sha256: str | None,
                                observed_call: object, permit: object) -> NoteRead:
@@ -486,7 +486,16 @@ class ObsidianVaultStore:
         from hermes_installer.remote.core_native_observer import ObservedNativeToolCall
         from hermes_installer.remote.jarvis_final_effects import FinalEffectPermit, review_digest
 
-        execution_id = _safe_identifier(execution_id, "execution")
+        from hermes_installer.remote.obsidian_native_scope import RootObsidianDraftOrigin
+        if (type(origin) is not RootObsidianDraftOrigin
+                or not origin.matches(
+                    draft_id=draft_id,
+                    owner_subject_sha256=self._config.owner_scope_sha256,
+                    registration_sha256=origin.registration_sha256,
+                    content_sha256=expected_draft_sha256,
+                    base_sha256=expected_base_sha256)):
+            raise ObsidianVaultError("promotion lacks the current root-resolved draft origin")
+        execution_id = _safe_identifier(origin.origin_execution_id, "execution")
         relative = _note_relative_path(destination)
         # ROOT derives the private execution path from the admitted owner/child
         # context. The permit binds the exact public draft/digest/destination/base
@@ -517,8 +526,11 @@ class ObsidianVaultStore:
             raise ObsidianVaultError("promotion is outside the exact admitted native tool dispatch")
         if not _HASH.fullmatch(expected_draft_sha256 or ""):
             raise ObsidianVaultError("promotion requires the exact reviewed draft digest")
-        record = self.read_private_draft(execution_id=execution_id, draft_id=draft_id)
-        if record["contentSha256"] != expected_draft_sha256:
+        record = self.read_private_draft(execution_id=execution_id, draft_id=draft_id,
+                                         source_instance_id=origin.origin_source_id)
+        if (record["contentSha256"] != expected_draft_sha256
+                or record["baseSha256"] != expected_base_sha256
+                or origin.state != "private-draft"):
             raise ObsidianVaultConflict("private draft changed after Jarvis review")
         current = self._read_optional_note(relative)
         if current is None:
