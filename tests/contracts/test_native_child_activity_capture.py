@@ -6,6 +6,7 @@ run through the identified hardware validation path.
 from __future__ import annotations
 
 import json
+import hashlib
 import threading
 import time
 from types import SimpleNamespace
@@ -63,6 +64,57 @@ def test_activity_snapshot_replay_restores_alias_and_rejects_duplicates():
     assert observer._native_activity_snapshot_from_bytes(raw + b" ") is None
 
 
+def test_team_snapshot_requires_exact_same_owner_source_and_completion_join():
+    binding_digest = "a" * 64
+    team_key = "T" * 32
+    sender = _row(execution="S" * 32, status="completed")
+    recipient = _row(execution="R" * 32, status="completed")
+    for row, profile in ((sender, "developer"), (recipient, "researcher")):
+        row.update(mission_id="mission_1", mission_revision=2)
+        row["profile_id"] = profile
+        row["team_lineage"] = {
+            "team_execution_key": team_key,
+            "binding_id_sha256": binding_digest,
+            "team_id": "pair_1", "team_source_revision": "team-rev-3",
+            "catalog_sha256": "3" * 64, "bundle_generation_sha256": "4" * 64,
+            "bundle_member_sha256": "5" * 64,
+            "selected_expert_ids": ["developer", "researcher"],
+            "binding_deadline_at": time.time() + 60,
+            "admission_deadline_at": time.time() + 30,
+        }
+        row["team_relation"] = None
+        row["history_partial"] = False
+    edge_at = time.time()
+    recipient["updated_at"] = edge_at + 0.01
+    recipient["team_relation"] = {
+        "relation_key": "Q" * 32, "dedupe_sha256": "6" * 64,
+        "binding_id_sha256": binding_digest, "team_execution_key": team_key,
+        "sender_execution_key": sender["execution_key"],
+        "recipient_execution_key": recipient["execution_key"],
+        "sender_profile_id": "developer", "recipient_profile_id": "researcher",
+        "sender_completion_sha256": "7" * 64, "recipient_completion_sha256": "8" * 64,
+        "team_message_sha256": "9" * 64, "excerpt_sha256": "a" * 64,
+        "recipient_request_sha256": "b" * 64, "sender_response_sha256": "c" * 64,
+        "recipient_response_sha256": "d" * 64, "sender_text_sha256": "e" * 64,
+        "recipient_text_sha256": "f" * 64,
+        "sender_source_generation_sha256": sender["source_generation_sha256"],
+        "recipient_source_generation_sha256": recipient["source_generation_sha256"],
+        "event_at": edge_at,
+    }
+    value = {"schema": 2, "instances": [sender, recipient]}
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    assert observer._native_activity_snapshot_from_bytes(raw) == [sender, recipient]
+
+    # A relation cannot claim a different actual recipient or cross an owner boundary.
+    recipient["team_relation"]["recipient_execution_key"] = "X" * 32
+    corrupt = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    assert observer._native_activity_snapshot_from_bytes(corrupt) is None
+    recipient["team_relation"]["recipient_execution_key"] = recipient["execution_key"]
+    recipient["owner_subject_sha256"] = "9" * 64
+    corrupt = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    assert observer._native_activity_snapshot_from_bytes(corrupt) is None
+
+
 def test_real_observed_callback_event_is_owner_source_bound_and_replay_deduped(monkeypatch):
     saved = []
     monkeypatch.setattr(observer, "_publish_root_native_activity_bytes", saved.append)
@@ -105,11 +157,62 @@ def test_real_observed_callback_event_is_owner_source_bound_and_replay_deduped(m
     assert "private-native-turn" not in serialized
 
 
+def test_actual_team_admission_binds_activity_only_from_retained_root_objects(monkeypatch):
+    from hermes_installer.remote.jarvis_mission_executor import MissionBinding
+
+    saved = []
+    monkeypatch.setattr(observer, "_publish_root_native_activity_bytes", saved.append)
+    registry = object.__new__(observer.RootCoreNativeObservationRegistry)
+    registry._activity_store_ok = True
+    registry._activity_records = {}
+    now = time.monotonic()
+    mission = MissionBinding(schema=1, mission_id="mission_2", revision=3,
+        plan_sha256="a" * 64, task_sha256="b" * 64, source_profile_id="orchestrator")
+    binding = observer.RootSelectedTeamBinding(schema=1, binding_id="B" * 32,
+        owner_subject_sha256="c" * 64, mission_id="mission_2", revision=3,
+        goal_sha256="b" * 64, plan_sha256="a" * 64, catalog_sha256="d" * 64,
+        team_id="team_2", source_revision="team-rev-4",
+        bundle_generation_sha256="e" * 64, bundle_member_sha256="f" * 64,
+        ordered_member_ids=("developer", "researcher"),
+        selected_expert_ids=("developer", "researcher"), issued_monotonic=now,
+        expires_monotonic=now + 120, _seal=observer._TEAM_BINDING_SEAL)
+    prompt = b"selected prompt"
+    source = observer.RootNativeSelectedSourceDelivery(source_handle="H" * 32,
+        profile_id="developer", source_revision="profile-rev-4",
+        generation_sha256="e" * 64, source_manifest_sha256="1" * 64,
+        profile_manifest_sha256="2" * 64, effective_prompt=prompt,
+        effective_prompt_sha256=hashlib.sha256(prompt).hexdigest(),
+        expires_monotonic=now + 20, _seal=observer._SELECTED_SOURCE_DELIVERY_SEAL,
+        team_binding=binding)
+    owner = SimpleNamespace(owner_subject_sha256="c" * 64, mission_binding=mission,
+        planning_context=None, gateway_turn_id="turn_12345678901234567890",
+        core_generation="3" * 64, core_source_generation="4" * 64)
+    registry._custody = SimpleNamespace(core_generation=owner.core_generation,
+        core_source_generation=owner.core_source_generation)
+    registry._team_bindings = {binding.binding_id: binding}
+    child = {"owner": owner, "source": source, "team_binding_id": binding.binding_id,
+        "expiry": now + 15, "profile_id": "developer", "source_generation_sha256": "e" * 64,
+        "source_manifest_sha256": "1" * 64, "session_id": "private-child",
+        "parent_session_id": "private-parent", "parent_turn_id": "private-turn"}
+
+    registry._record_child_activity(child, kind="admitted", status="accepted", event_id="unused")
+    row = child["activity"]
+    assert row["team_lineage"]["team_id"] == "team_2"
+    assert row["team_lineage"]["selected_expert_ids"] == ["developer", "researcher"]
+    serialized = saved[-1].decode()
+    assert "private-child" not in serialized and "private-parent" not in serialized
+    assert observer._native_activity_snapshot_from_bytes(saved[-1]) is not None
+
+
 def test_activity_projection_filters_owner_and_source_and_never_exposes_private_lineage():
     row = _row()
     registry = _registry([row])
     result = registry.read_native_activity(owner_subject_sha256="a" * 64,
         core_generation="d" * 64, core_source_generation="f" * 64)
+    assert result["schema"] == 2
+    assert set(result) == {"schema", "observed_at", "window_seconds", "coverage",
+                           "partial", "instances", "team_instances", "relations"}
+    assert result["team_instances"] == [] and result["relations"] == []
     assert len(result["instances"]) == 1
     item = result["instances"][0]
     assert item["execution_key"] == "e" * 32
@@ -123,7 +226,8 @@ def test_activity_projection_filters_owner_and_source_and_never_exposes_private_
     row["source_generation_sha256"] = "8" * 64
     stale_source = registry.read_native_activity(owner_subject_sha256="a" * 64,
         core_generation="d" * 64, core_source_generation="f" * 64)
-    assert stale_source["instances"] == []
+    assert len(stale_source["instances"]) == 1
+    assert stale_source["instances"][0]["source_generation_sha256"] == "8" * 64
 
 
 def test_activity_journal_failure_and_unknown_owner_fail_closed():
