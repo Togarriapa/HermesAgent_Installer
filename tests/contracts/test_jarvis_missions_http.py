@@ -177,12 +177,16 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
 
 
 def test_mission_routes_and_feature_assets_are_literal_and_finite():
+    assert ("POST", "/chat/api/missions/{mission_id}/jarvis-review") in MISSION_ASSETS.api_routes
+    assert ("POST", "/chat/api/heartbeat") in MISSION_ASSETS.api_routes
+    assert ("GET", "/chat/api/turns/{turn_id}/events") in MISSION_ASSETS.api_routes
     assert {path for _method, path in jarvis_missions.FEATURE_ROUTES} == {
         "/chat/api/missions",
         "/chat/api/missions/{mission_id}",
         "/chat/api/missions/{mission_id}/preview",
         "/chat/api/missions/{mission_id}/approve",
         "/chat/api/missions/{mission_id}/launch",
+        "/chat/api/missions/{mission_id}/jarvis-review",
         "/chat/api/missions/{mission_id}/stop",
         "/chat/api/missions/{mission_id}/review",
     }

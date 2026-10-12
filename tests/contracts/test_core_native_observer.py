@@ -274,6 +274,223 @@ def test_team_completion_excerpt_survives_child_lease_expiry_only_until_owner_bo
     assert "root-completion" not in registry._team_completion_evidence
 
 
+def test_root_master_review_receipt_joins_exact_live_owner_result_response_and_peer(monkeypatch):
+    """A review receipt is issued only from one complete zero-tool response and stays root-current."""
+    import hashlib
+    import threading
+    import time
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    import hermes_installer.remote.core_native_observer as observer
+
+    now = time.monotonic()
+    peer = (410, 996, 1000)
+    raw = '{"decision":"approved","result_sha256":"' + "d" * 64 + (
+        '","rationale":"The exact draft is complete."}')
+    response_sha = hashlib.sha256(raw.encode()).hexdigest()
+    context = SimpleNamespace(
+        mission_id="M" * 24, revision=4, run_id="run_44", result_sha256="d" * 64,
+        review_prompt_sha256="a" * 64, execution_core_generation="b" * 64,
+        execution_core_source_generation="c" * 64, master_source_generation_sha256="6" * 64,
+    )
+    owner_state = {"current": True}
+
+    def owner_current(_config, *, custody, now=None):
+        return owner_state["current"] and custody.core_generation == "e" * 64
+
+    owner = SimpleNamespace(
+        owner_subject_sha256="f" * 64, owner_turn_handle="1" * 32,
+        gateway_turn_id="G" * 24, core_generation="e" * 64,
+        core_source_generation="2" * 64, expires_monotonic=now + 240,
+        peer_gateway_pid=peer[0], peer_gateway_uid=peer[1], peer_gateway_gid=peer[2],
+        master_review_context=context, is_current_sealed=owner_current,
+    )
+    attempt = {
+        "owner": owner, "turn_id": owner.gateway_turn_id,
+        "provider": observer._CODEX_PROVIDER, "api_mode": observer._CODEX_MODE,
+        "base_url": observer._CODEX_ENDPOINT, "retry_count": 0,
+        "parent_tool_names": (), "account": "3" * 64, "request_sha256": "4" * 64,
+        "attempt_handle": "Q" * 43, "master_review_response_text": raw,
+        "master_review_response_sha256": response_sha, "master_review_context": context,
+        "response": ("5" * 64, {}, response_sha),
+    }
+    registry = object.__new__(RootCoreNativeObservationRegistry)
+    registry._closed = False
+    registry._custody = SimpleNamespace(core_generation="e" * 64,
+                                        core_source_generation="2" * 64)
+    registry._config = object()
+    registry._lock = threading.RLock()
+    registry._owners = {owner.owner_turn_handle: owner}
+    registry._attempts = {attempt["attempt_handle"]: attempt}
+    registry._master_review_completions = {}
+    registry._current_master_source = lambda: SimpleNamespace(generation_sha256="6" * 64)
+    monkeypatch.setattr(
+        "hermes_installer.remote.core_gateway_inspector._verify_master_review_context",
+        lambda value, **_kwargs: value)
+
+    registry._persist_master_review_response(attempt, raw, response_sha)
+    result = registry.confirm_master_review_response(
+        owner_subject_sha256=owner.owner_subject_sha256,
+        gateway_turn_id=owner.gateway_turn_id, response_sha256=response_sha,
+        gateway_peer=peer)
+
+    class RegistryClient:
+        expected_peer = peer
+
+        def verify_master_review_completion(self, receipt, *, config=None, custody=None):
+            return registry.verify_master_review_completion(
+                receipt, gateway_peer=self.expected_peer)
+
+    receipt = observer.CoreVerifiedJarvisMasterReviewCompletion(
+        owner_subject_sha256=result["owner_subject_sha256"],
+        owner_turn_handle=result["owner_turn_handle"],
+        gateway_turn_id=result["gateway_turn_id"],
+        core_generation=result["core_generation"],
+        core_source_generation=result["core_source_generation"],
+        prompt_sha256=result["prompt_sha256"], response_sha256=result["response_sha256"],
+        mission_id=result["mission_id"], revision=result["revision"], run_id=result["run_id"],
+        result_sha256=result["result_sha256"],
+        execution_core_generation=result["execution_core_generation"],
+        execution_core_source_generation=result["execution_core_source_generation"],
+        response_text=raw, completion_handle=result["completion_handle"],
+        expires_monotonic=result["expires_monotonic"],
+        owner_turn_expires_monotonic=result["owner_turn_expires_monotonic"],
+        _client=RegistryClient(), _seal=observer._MASTER_REVIEW_COMPLETION_SEAL)
+    assert receipt.is_current_sealed(registry._config, custody=registry._custody)
+    assert not replace(receipt, mission_id="X" * 24).is_current_sealed(
+        registry._config, custody=registry._custody)
+    assert not replace(receipt, result_sha256="9" * 64).is_current_sealed(
+        registry._config, custody=registry._custody)
+    assert not replace(receipt, owner_subject_sha256="8" * 64).is_current_sealed(
+        registry._config, custody=registry._custody)
+    assert not replace(receipt, response_sha256="7" * 64).is_current_sealed(
+        registry._config, custody=registry._custody)
+    assert not replace(receipt, execution_core_source_generation="6" * 64).is_current_sealed(
+        registry._config, custody=registry._custody)
+    RegistryClient.expected_peer = (411, 996, 1000)
+    assert not receipt.is_current_sealed(registry._config, custody=registry._custody)
+    RegistryClient.expected_peer = peer
+    owner_state["current"] = False
+    assert not receipt.is_current_sealed(registry._config, custody=registry._custody)
+    owner_state["current"] = True
+    registry._master_review_completions.pop(receipt.completion_handle)
+    assert not receipt.is_current_sealed(registry._config, custody=registry._custody)
+
+
+def test_root_master_review_completion_denies_provider_result_not_yet_completed(monkeypatch):
+    """No completion receipt is minted while the actual provider attempt is pending."""
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    now = time.monotonic()
+    peer = (410, 996, 1000)
+    context = SimpleNamespace(mission_id="M" * 24, revision=1, run_id="run_1",
+        result_sha256="d" * 64, review_prompt_sha256="a" * 64,
+        execution_core_generation="b" * 64, execution_core_source_generation="c" * 64)
+    owner = SimpleNamespace(owner_subject_sha256="f" * 64, owner_turn_handle="1" * 32,
+        gateway_turn_id="G" * 24, core_generation="e" * 64,
+        core_source_generation="2" * 64, expires_monotonic=now + 240,
+        peer_gateway_pid=peer[0], peer_gateway_uid=peer[1], peer_gateway_gid=peer[2],
+        master_review_context=context,
+        is_current_sealed=lambda _config, *, custody, now=None: True)
+    registry = object.__new__(RootCoreNativeObservationRegistry)
+    registry._closed = False
+    registry._custody = SimpleNamespace(core_generation="e" * 64,
+                                        core_source_generation="2" * 64)
+    registry._config = object()
+    registry._lock = threading.RLock()
+    registry._owners = {owner.owner_turn_handle: owner}
+    registry._attempts = {"Q" * 43: {"owner": owner, "turn_id": owner.gateway_turn_id,
+                                     "response": None}}
+    registry._master_review_completions = {}
+    monkeypatch.setattr(
+        "hermes_installer.remote.core_gateway_inspector._verify_master_review_context",
+        lambda value, **_kwargs: value)
+    with pytest.raises(CoreNativeObservationUnavailable, match="response is missing or ambiguous"):
+        registry.confirm_master_review_response(
+            owner_subject_sha256=owner.owner_subject_sha256,
+            gateway_turn_id=owner.gateway_turn_id, response_sha256="5" * 64,
+            gateway_peer=peer)
+    assert registry._master_review_completions == {}
+
+
+def test_native_client_rechecks_review_receipt_through_closed_root_rpc(tmp_path, monkeypatch):
+    """The live-receipt check traverses the production client framing and response parser."""
+    import json
+    import stat
+    import struct
+    import time
+    from types import SimpleNamespace
+
+    import hermes_installer.remote.core_native_observer as observer
+
+    receipt = observer.CoreVerifiedJarvisMasterReviewCompletion(
+        owner_subject_sha256="a" * 64, owner_turn_handle="b" * 32,
+        gateway_turn_id="c" * 24, core_generation="d" * 64,
+        core_source_generation="e" * 64, prompt_sha256="f" * 64,
+        response_sha256="1" * 64, mission_id="M" * 24, revision=2,
+        run_id="run_2", result_sha256="2" * 64,
+        execution_core_generation="3" * 64,
+        execution_core_source_generation="4" * 64, response_text="review response",
+        completion_handle="Q" * 43, expires_monotonic=time.monotonic() + 10,
+        owner_turn_expires_monotonic=time.monotonic() + 200,
+        _client=object(), _seal=observer._MASTER_REVIEW_COMPLETION_SEAL)
+    exchange = {"requests": [], "response_ok": True}
+
+    class Transport:
+        def __init__(self, *_args, **_kwargs):
+            self.incoming = bytearray()
+
+        def settimeout(self, _timeout):
+            pass
+
+        def connect(self, _path):
+            pass
+
+        def getsockopt(self, *_args):
+            return struct.pack("3i", 999, 0, 1000)
+
+        def sendall(self, payload):
+            size = struct.unpack("!I", payload[:4])[0]
+            request = json.loads(payload[4:4 + size])
+            exchange["requests"].append(request)
+            response = {"schema": 1, "nonce": request["nonce"], "ok": exchange["response_ok"]}
+            raw = json.dumps(response, separators=(",", ":")).encode()
+            self.incoming.extend(struct.pack("!I", len(raw)) + raw)
+
+        def recv(self, size):
+            result = bytes(self.incoming[:size])
+            del self.incoming[:size]
+            return result
+
+        def close(self):
+            pass
+
+    socket_path = Path("/run/hermes-jarvis-native-observer/native-observer.sock")
+    real_lstat = Path.lstat
+
+    def lstat(path):
+        if path == socket_path.parent:
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o750, st_uid=0, st_gid=1000)
+        if path == socket_path:
+            return SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_uid=0, st_gid=1000)
+        return real_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(observer.socket, "socket", Transport)
+    monkeypatch.setattr(observer.os, "getgroups", lambda: [1000])
+    client = CoreNativeObservationClient(socket_path=socket_path)
+    assert client.verify_master_review_completion(receipt) is True
+    request = exchange["requests"][0]
+    assert request["op"] == "verify-master-review-completion"
+    assert request["completion_handle"] == receipt.completion_handle
+    assert request["result_sha256"] == receipt.result_sha256
+    exchange["response_ok"] = False
+    assert client.verify_master_review_completion(receipt) is False
+
+
 def test_master_plan_readback_uses_canonical_root_durable_completion_record(monkeypatch):
     """Only canonical root-published zero-tool records survive a registry restart."""
     import threading

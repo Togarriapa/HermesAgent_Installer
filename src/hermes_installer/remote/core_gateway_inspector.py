@@ -177,7 +177,7 @@ _OWNER_TURN_FIELDS = (
     "core_uid", "core_gid", "core_start_ticks", "core_invocation_id", "core_listener_inode",
     "core_source_generation", "core_unit_sha256", "core_executable_sha256",
     "session_id", "conversation_id", "gateway_turn_id", "prompt_sha256", "mission_binding",
-    "planning_context", "project_context", "project_context_sha256", "project_source_refs",
+    "planning_context", "master_review_context", "project_context", "project_context_sha256", "project_source_refs",
 )
 
 
@@ -235,6 +235,63 @@ class PlanningContext:
                 or result.source_profile_id != "hermes"):
             raise CoreInspectionDenied("planning context is malformed")
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class MasterReviewContext:
+    """Purpose-bound correlation for one current no-tools Jarvis Mission review."""
+
+    schema: int
+    mission_id: str
+    revision: int
+    run_id: str
+    result_sha256: str
+    review_prompt_sha256: str
+    execution_core_generation: str
+    execution_core_source_generation: str
+    master_source_generation_sha256: str
+    master_source_manifest_sha256: str
+    master_prompt_sha256: str
+
+    def to_wire(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in (
+            "schema", "mission_id", "revision", "run_id", "result_sha256",
+            "review_prompt_sha256", "execution_core_generation",
+            "execution_core_source_generation", "master_source_generation_sha256",
+            "master_source_manifest_sha256", "master_prompt_sha256")}
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "MasterReviewContext":
+        fields = {"schema", "mission_id", "revision", "run_id", "result_sha256",
+                  "review_prompt_sha256", "execution_core_generation",
+                  "execution_core_source_generation", "master_source_generation_sha256",
+                  "master_source_manifest_sha256", "master_prompt_sha256"}
+        if type(value) is not dict or set(value) != fields:
+            raise CoreInspectionDenied("master review context fields differ")
+        try:
+            result = cls(**value)
+        except Exception:
+            raise CoreInspectionDenied("master review context is malformed") from None
+        if (type(result.schema) is not int or result.schema != 1
+                or not isinstance(result.mission_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", result.mission_id) is None
+                or type(result.revision) is not int or result.revision < 1
+                or not isinstance(result.run_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", result.run_id) is None
+                or any(not _is_hash(getattr(result, name)) for name in (
+                    "result_sha256", "review_prompt_sha256", "execution_core_generation",
+                    "execution_core_source_generation", "master_source_generation_sha256",
+                    "master_source_manifest_sha256", "master_prompt_sha256"))):
+            raise CoreInspectionDenied("master review context is malformed")
+        return result
+
+
+def _master_review_context_wire(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if type(value) is not MasterReviewContext:
+        raise CoreInspectionDenied("master review context is not a typed value")
+    return MasterReviewContext.from_wire(value.to_wire()).to_wire()
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,6 +408,9 @@ def _planning_context_wire(value: Any) -> dict[str, Any] | None:
     if type(value) is not PlanningContext:
         raise CoreInspectionDenied("planning context is not a typed value")
     return PlanningContext.from_wire(value.to_wire()).to_wire()
+
+
+# Kept next to the planner serializer so owner-turn digesting has one canonical wire shape.
 class CoreInspectionDenied(PermissionError):
     pass
 
@@ -419,6 +479,29 @@ def _consume_ingress_issue(*, caller_pid: int, caller_start_ticks: str,
             or retained.issued_monotonic >= now
             or not retained.issued_monotonic < retained.expires_monotonic <=
                 retained.issued_monotonic + MAX_PROOF_SECONDS
+            or now >= retained.expires_monotonic):
+        raise CoreInspectionDenied("original ingress proof is unavailable or expired")
+    return retained
+
+
+def _peek_ingress_issue(*, caller_pid: int, caller_start_ticks: str,
+                        nonce: str, proof_sha256: str,
+                        peer: tuple[int, int, int], core_generation: str,
+                        config: CoreGatewayConfig) -> _RetainedIngressIssue:
+    """Validate data-only preparation without consuming the later owner-turn admission."""
+    now = time.monotonic()
+    key = (caller_pid, caller_start_ticks, nonce, proof_sha256)
+    with _RETAINED_INGRESS_LOCK:
+        for old_key, old in tuple(_RETAINED_INGRESS_ISSUES.items()):
+            if old.expires_monotonic <= now:
+                _RETAINED_INGRESS_ISSUES.pop(old_key, None)
+        retained = _RETAINED_INGRESS_ISSUES.get(key)
+    if (retained is None or retained.caller_pid != caller_pid
+            or retained.caller_start_ticks != caller_start_ticks
+            or retained.peer != peer or retained.core_generation != core_generation
+            or retained.config_sha256 != config.config_sha256 or retained.boot_id != config.boot_id
+            or retained.issued_monotonic >= now
+            or not retained.issued_monotonic < retained.expires_monotonic <= retained.issued_monotonic + MAX_PROOF_SECONDS
             or now >= retained.expires_monotonic):
         raise CoreInspectionDenied("original ingress proof is unavailable or expired")
     return retained
@@ -762,6 +845,141 @@ def _resolve_spent_mission_binding(value: Any, *, owner_subject_sha256: str,
         return binding
     except Exception:
         raise CoreInspectionDenied("spent mission binding is unavailable or changed") from None
+
+
+def _verify_master_review_context(context: Any, *, owner_subject_sha256: str,
+                                 core_generation: str, core_source_generation: str,
+                                 prompt_sha256: str,
+                                 config: CoreGatewayConfig, custody: Any) -> MasterReviewContext:
+    """Rebuild the exact successful Mission result and current Jarvis prompt from root custody."""
+    dto = context if type(context) is MasterReviewContext else MasterReviewContext.from_wire(context)
+    if (not _is_hash(owner_subject_sha256) or dto.review_prompt_sha256 != prompt_sha256
+            or not _is_hash(core_generation) or not _is_hash(core_source_generation)):
+        raise CoreInspectionDenied("master review context does not match its owner turn")
+    if (type(custody) is not CoreNativeObserverCustody
+            or custody.core_generation != core_generation
+            or custody.core_source_generation != core_source_generation):
+        raise CoreInspectionDenied("master review core custody changed")
+    deadline = time.monotonic() + MAX_PROOF_SECONDS
+    try:
+        from hermes_installer.remote.jarvis_chat import CHAT_STORE_PATH
+        from hermes_installer.remote.jarvis_mission_executor import _native_child_result_state
+        from hermes_installer.remote.jarvis_master_planning import build_master_review_prompt
+        from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
+        path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
+        if CHAT_STORE_PATH != path:
+            raise ValueError
+        identity = _mission_store_identity(config, path)
+        master = RootVerifiedJarvisMasterSource.current_master_source(custody, config)
+        if (type(master) is not RootVerifiedJarvisMasterSource
+                or master.profile_id != "hermes" or master.native_profile_key != "default"
+                or master.display_name != "Jarvis"
+                or master.is_current_sealed(custody, now=time.monotonic()) is not True
+                or master.core_generation != core_generation
+                or master.core_source_generation != core_source_generation):
+            raise ValueError
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            mission = db.execute(
+                "SELECT id,owner,revision,status FROM jarvis_missions WHERE id=? AND owner=? AND revision=?",
+                (dto.mission_id, owner_subject_sha256, dto.revision)).fetchone()
+            run = db.execute(
+                "SELECT id,owner,mission_id,revision,source_binding,gateway_turn_id,status,"
+                "jarvis_review_state FROM jarvis_mission_runs WHERE id=? AND owner=? "
+                "AND mission_id=? AND revision=?",
+                (dto.run_id, owner_subject_sha256, dto.mission_id, dto.revision)).fetchone()
+            if (mission is None or mission["status"] != "preview_pending"
+                    or run is None or run["status"] != "queued"
+                    or run["jarvis_review_state"] != "pending"
+                    or not isinstance(run["gateway_turn_id"], str)):
+                raise ValueError
+            execution_source = json.loads(run["source_binding"], object_pairs_hook=_unique_pairs)
+            if (type(execution_source) is not dict
+                    or set(execution_source) != {"core_generation", "core_source_generation"}
+                    or execution_source["core_generation"] != dto.execution_core_generation
+                    or execution_source["core_source_generation"] != dto.execution_core_source_generation):
+                raise ValueError
+            result_turn = db.execute(
+                "SELECT t.status,t.partial,t.core_generation FROM turns t JOIN conversations c "
+                "ON c.id=t.conversation_id WHERE t.id=? AND t.owner=? AND c.owner=?",
+                (run["gateway_turn_id"], owner_subject_sha256, owner_subject_sha256)).fetchone()
+            events = db.execute(
+                "SELECT child_ref,event_type AS type,status FROM activity_events WHERE turn_id=? "
+                "AND child_ref IS NOT NULL AND event_type LIKE 'subagent.%' ORDER BY sequence LIMIT 500",
+                (run["gateway_turn_id"],)).fetchall()
+            _started, completed = _native_child_result_state([dict(item) for item in events])
+            result_text = result_turn["partial"] if result_turn is not None else None
+            if (result_turn is None or result_turn["status"] != "completed" or not completed
+                    or result_turn["core_generation"] != dto.execution_core_generation
+                    or not isinstance(result_text, str) or not result_text
+                    or len(result_text.encode("utf-8", "strict")) > 32 * 1024):
+                raise ValueError
+        _prompt, exact_prompt_sha, exact_result_sha = build_master_review_prompt(
+            mission_id=dto.mission_id, revision=dto.revision, run_id=dto.run_id,
+            result_text=result_text)
+        if (exact_prompt_sha != prompt_sha256 or exact_result_sha != dto.result_sha256
+                or dto.master_source_generation_sha256 != master.generation_sha256
+                or dto.master_source_manifest_sha256 != master.source_member_manifest_sha256
+                or dto.master_prompt_sha256 != master.effective_prompt_sha256
+                or _mission_store_identity(config, path) != identity
+                or time.monotonic() >= deadline
+                or master.is_current_sealed(custody, now=time.monotonic()) is not True):
+            raise ValueError
+        return dto
+    except CoreInspectionDenied:
+        raise
+    except Exception:
+        raise CoreInspectionDenied("exact successful Mission review result is unavailable") from None
+
+
+def _read_root_mission_review_source(*, owner_subject_sha256: str, mission_id: str,
+                                     revision: int, run_id: str, config: CoreGatewayConfig,
+                                     custody: Any) -> tuple[str, str, str]:
+    """Return only a complete successful native result still pending Jarvis review."""
+    try:
+        from hermes_installer.remote.jarvis_chat import CHAT_STORE_PATH
+        from hermes_installer.remote.jarvis_mission_executor import _native_child_result_state
+        path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
+        if CHAT_STORE_PATH != path:
+            raise ValueError
+        identity = _mission_store_identity(config, path)
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            mission = db.execute("SELECT id,status FROM jarvis_missions WHERE id=? AND owner=? AND revision=?",
+                (mission_id, owner_subject_sha256, revision)).fetchone()
+            run = db.execute("SELECT * FROM jarvis_mission_runs WHERE id=? AND owner=? "
+                "AND mission_id=? AND revision=?", (run_id, owner_subject_sha256,
+                mission_id, revision)).fetchone()
+            if (mission is None or mission["status"] != "preview_pending"
+                    or run is None or run["status"] != "queued"
+                    or run["jarvis_review_state"] != "pending"
+                    or not isinstance(run["gateway_turn_id"], str)):
+                raise ValueError
+            execution_source = json.loads(run["source_binding"], object_pairs_hook=_unique_pairs)
+            if (type(execution_source) is not dict
+                    or set(execution_source) != {"core_generation", "core_source_generation"}
+                    or not all(_is_hash(execution_source.get(key)) for key in execution_source)):
+                raise ValueError
+            result_turn = db.execute("SELECT t.status,t.partial,t.core_generation FROM turns t JOIN conversations c "
+                "ON c.id=t.conversation_id WHERE t.id=? AND t.owner=? AND c.owner=?",
+                (run["gateway_turn_id"], owner_subject_sha256, owner_subject_sha256)).fetchone()
+            events = db.execute("SELECT child_ref,event_type AS type,status FROM activity_events WHERE turn_id=? "
+                "AND child_ref IS NOT NULL AND event_type LIKE 'subagent.%' ORDER BY sequence LIMIT 500",
+                (run["gateway_turn_id"],)).fetchall()
+            _started, completed = _native_child_result_state([dict(item) for item in events])
+            result_text = result_turn["partial"] if result_turn is not None else None
+            if (result_turn is None or result_turn["status"] != "completed" or not completed
+                    or result_turn["core_generation"] != execution_source["core_generation"]
+                    or not isinstance(result_text, str) or not result_text
+                    or len(result_text.encode("utf-8", "strict")) > 32 * 1024):
+                raise ValueError
+        if _mission_store_identity(config, path) != identity:
+            raise ValueError
+        return result_text, execution_source["core_generation"], execution_source["core_source_generation"]
+    except Exception:
+        raise CoreInspectionDenied("exact successful Mission review result is unavailable") from None
 
 
 def _verify_planning_context(context: Any, *, owner_subject_sha256: str,
@@ -1342,11 +1560,11 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
     required = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
                 "core_generation", "ingress_nonce", "ingress_proof_sha256", "session_id",
                 "conversation_id", "gateway_turn_id", "prompt_sha256"}
+    optional_contexts = ({key for key in ("mission_binding", "planning_context", "master_review_context")
+                          if key in request} if type(request) is dict else set())
     if (type(request) is not dict or not required.issubset(request)
-            or set(request) - required - {"mission_binding", "planning_context"}
-                or set(request) - required not in (
-                    set(), {"mission_binding"}, {"planning_context"},
-                    {"mission_binding", "planning_context"})
+            or set(request) - required - {"mission_binding", "planning_context", "master_review_context"}
+            or len(optional_contexts) > 1
             or type(request.get("schema")) is not int
             or request["schema"] != 1 or request.get("op") != "observe-owner-turn"
             or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
@@ -1421,6 +1639,18 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
             gateway_turn_id=request["gateway_turn_id"],
             conversation_id=request["conversation_id"], session_id=request["session_id"],
             config=config, custody=custody, preparing=False)
+    master_review_context = None
+    if "master_review_context" in request:
+        if mission_binding is not None or planning_context is not None:
+            raise CoreInspectionDenied("mission review cannot be combined with another turn purpose")
+        review_wire = MasterReviewContext.from_wire(request["master_review_context"])
+        master_review_context = _verify_master_review_context(
+            request["master_review_context"],
+            owner_subject_sha256=hashlib.sha256(principal.subject.encode("utf-8")).hexdigest(),
+            core_generation=retained.core_generation,
+            core_source_generation=current["core_source_generation"],
+            prompt_sha256=request["prompt_sha256"],
+            config=config, custody=custody)
     final = observe_current_ingress(config, nonce=retained.nonce,
         caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
         peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
@@ -1493,10 +1723,12 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
         "project_context_sha256": hashlib.sha256(project_context.encode("utf-8")).hexdigest(),
         "project_source_refs": project_source_refs,
         "mission_binding": mission_binding, "planning_context": planning_context,
+        "master_review_context": master_review_context,
     }
     digest_claims = dict(claims)
     digest_claims["mission_binding"] = _mission_binding_wire(mission_binding)
     digest_claims["planning_context"] = _planning_context_wire(planning_context)
+    digest_claims["master_review_context"] = _master_review_context_wire(master_review_context)
     observation = CoreVerifiedOwnerTurnObservation(
         **claims, proof_sha256=_owner_turn_digest(digest_claims), _core_pidfd=pidfd,
         _seal=_OWNER_TURN_SEAL)
@@ -1690,6 +1922,163 @@ def prepare_master_planning_context(config: CoreGatewayConfig, *, request: dict[
         raise CoreInspectionDenied("planning ingress changed during preparation")
     return {"schema": 1, "nonce": request["nonce"], "ok": True,
             "planning_context": context.to_wire()}
+
+
+def prepare_master_review_context(config: CoreGatewayConfig, *, request: dict[str, Any],
+                                  caller_pid: int, caller_uid: int, caller_gid: int,
+                                  peer_pid: int, peer_uid: int, peer_gid: int,
+                                  custody: Any) -> dict[str, Any]:
+    """Derive a review prompt/context from one exact persisted successful native run."""
+    fields = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+              "core_generation", "ingress_nonce", "ingress_proof_sha256", "mission_id",
+              "revision", "run_id"}
+    if (type(request) is not dict or set(request) != fields or request.get("schema") != 1
+            or request.get("op") != "prepare-master-review-context"
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or not isinstance(request.get("nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384
+            or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("core_generation"))
+            or not isinstance(request.get("ingress_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))
+            or not isinstance(request.get("mission_id"), str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", request["mission_id"]) is None
+            or type(request.get("revision")) is not int or request["revision"] < 1
+            or not isinstance(request.get("run_id"), str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request["run_id"]) is None):
+        raise CoreInspectionDenied("master review request is invalid")
+    caller_start = _proc_start_ticks(caller_pid)
+    retained = _peek_ingress_issue(caller_pid=caller_pid, caller_start_ticks=caller_start,
+        nonce=request["ingress_nonce"], proof_sha256=request["ingress_proof_sha256"],
+        peer=(peer_pid, peer_uid, peer_gid), core_generation=request["core_generation"], config=config)
+    deadline = retained.expires_monotonic
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
+    owner_hash = hashlib.sha256(principal.subject.encode("utf-8")).hexdigest()
+    if (principal.email.casefold() not in config.allowed_emails
+            or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest()
+                != principal.token_fingerprint
+            or current["proof_sha256"] != retained.proof_sha256
+            or current["core_generation"] != retained.core_generation
+            or current["core_source_generation"] != custody.core_source_generation
+            or time.monotonic() >= deadline):
+        raise CoreInspectionDenied("master review ingress changed")
+    from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
+    from hermes_installer.remote.jarvis_master_planning import build_master_review_prompt
+    master = RootVerifiedJarvisMasterSource.current_master_source(custody, config)
+    if (type(master) is not RootVerifiedJarvisMasterSource or master.profile_id != "hermes"
+            or master.native_profile_key != "default" or master.display_name != "Jarvis"
+            or master.is_current_sealed(custody, now=time.monotonic()) is not True
+            or master.core_generation != retained.core_generation
+            or master.core_source_generation != current["core_source_generation"]):
+        raise CoreInspectionDenied("current Jarvis master source is unavailable")
+    result_text, execution_core, execution_source = _read_root_mission_review_source(
+        owner_subject_sha256=owner_hash, mission_id=request["mission_id"],
+        revision=request["revision"], run_id=request["run_id"], config=config, custody=custody)
+    prompt, prompt_sha, result_sha = build_master_review_prompt(
+        mission_id=request["mission_id"], revision=request["revision"],
+        run_id=request["run_id"], result_text=result_text)
+    context = MasterReviewContext(1, request["mission_id"], request["revision"], request["run_id"],
+        result_sha, prompt_sha, execution_core, execution_source, master.generation_sha256,
+        master.source_member_manifest_sha256, master.effective_prompt_sha256)
+    final = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    if (final["proof_sha256"] != retained.proof_sha256 or time.monotonic() >= deadline
+            or _verify_master_review_context(context, owner_subject_sha256=owner_hash,
+            core_generation=retained.core_generation,
+            core_source_generation=current["core_source_generation"],
+            prompt_sha256=prompt_sha,
+                config=config, custody=custody) is not context):
+        raise CoreInspectionDenied("master review changed during preparation")
+    return {"schema": 1, "nonce": request["nonce"], "ok": True,
+            "review_context": context.to_wire(), "review_prompt": prompt}
+
+
+def observe_master_review_completion(config: CoreGatewayConfig, *, request: dict[str, Any],
+                                     caller_pid: int, caller_uid: int, caller_gid: int,
+                                     peer_pid: int, peer_uid: int, peer_gid: int,
+                                     custody: Any, registry: Any) -> dict[str, Any]:
+    """Confirm one gateway-read response against the root's actual zero-tool provider record."""
+    required = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+        "core_generation", "ingress_nonce", "ingress_proof_sha256", "mission_id", "revision",
+        "run_id", "gateway_turn_id", "response_sha256"}
+    if (type(request) is not dict or set(request) != required or request.get("schema") != 1
+            or request.get("op") != "read-master-review-completion"
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or not isinstance(request.get("nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384
+            or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("core_generation"))
+            or not isinstance(request.get("ingress_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))
+            or not isinstance(request.get("mission_id"), str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", request["mission_id"]) is None
+            or type(request.get("revision")) is not int or request["revision"] < 1
+            or not isinstance(request.get("run_id"), str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request["run_id"]) is None
+            or not isinstance(request.get("gateway_turn_id"), str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", request["gateway_turn_id"]) is None
+            or not _is_hash(request.get("response_sha256"))):
+        raise CoreInspectionDenied("master-review completion request is invalid")
+    if registry is None or registry is not _CORE_NATIVE_REGISTRY or type(registry) is not _CORE_NATIVE_REGISTRY_TYPE:
+        raise CoreInspectionDenied("current master-review observer is unavailable")
+    caller_start = _proc_start_ticks(caller_pid)
+    retained = _consume_ingress_issue(caller_pid=caller_pid, caller_start_ticks=caller_start,
+        nonce=request["ingress_nonce"], proof_sha256=request["ingress_proof_sha256"],
+        peer=(peer_pid, peer_uid, peer_gid), core_generation=request["core_generation"], config=config)
+    deadline = retained.expires_monotonic
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
+    owner_hash = hashlib.sha256(principal.subject.encode("utf-8")).hexdigest()
+    if (principal.email.casefold() not in config.allowed_emails
+            or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest()
+                != principal.token_fingerprint
+            or current["proof_sha256"] != retained.proof_sha256
+            or current["core_generation"] != retained.core_generation
+            or current["core_source_generation"] != custody.core_source_generation
+            or time.monotonic() >= deadline):
+        raise CoreInspectionDenied("master-review owner ingress changed")
+    try:
+        receipt = registry.confirm_master_review_response(
+            owner_subject_sha256=owner_hash, gateway_turn_id=request["gateway_turn_id"],
+            response_sha256=request["response_sha256"],
+            gateway_peer=(peer_pid, peer_uid, peer_gid))
+        if (receipt["mission_id"] != request["mission_id"]
+                or receipt["revision"] != request["revision"]
+                or receipt["run_id"] != request["run_id"]
+                or receipt["owner_subject_sha256"] != owner_hash
+                or receipt["core_generation"] != retained.core_generation
+                or receipt["core_source_generation"] != custody.core_source_generation):
+            raise ValueError
+    except Exception:
+        raise CoreInspectionDenied("exact current Jarvis review completion is unavailable") from None
+    final = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    if final["proof_sha256"] != retained.proof_sha256 or time.monotonic() >= deadline:
+        raise CoreInspectionDenied("review ingress changed during completion confirmation")
+    return {"schema": 1, "nonce": request["nonce"], "ok": True, **receipt}
 
 
 def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, Any],
@@ -4014,6 +4403,7 @@ class CoreVerifiedOwnerTurnObservation:
     project_source_refs: tuple[str, ...] = field(repr=False, compare=False)
     mission_binding: MissionBinding | None
     planning_context: PlanningContext | None
+    master_review_context: MasterReviewContext | None
     _core_pidfd: int = field(repr=False, compare=False)
     _seal: object = field(repr=False, compare=False)
 
@@ -4024,6 +4414,7 @@ class CoreVerifiedOwnerTurnObservation:
             claims = {name: getattr(self, name) for name in _OWNER_TURN_FIELDS}
             claims["mission_binding"] = _mission_binding_wire(self.mission_binding)
             claims["planning_context"] = _planning_context_wire(self.planning_context)
+            claims["master_review_context"] = _master_review_context_wire(self.master_review_context)
             issued = self.ingress_issued_monotonic
             return bool(
                 self._seal is _OWNER_TURN_SEAL and type(self.schema) is int and self.schema == 1
@@ -4072,7 +4463,12 @@ class CoreVerifiedOwnerTurnObservation:
                 and (self.planning_context is None or (
                     type(self.planning_context) is PlanningContext
                     and self.mission_binding is None
+                    and self.master_review_context is None
                     and self.prompt_sha256 == self.planning_context.planner_prompt_sha256))
+                and (self.master_review_context is None or (
+                    type(self.master_review_context) is MasterReviewContext
+                    and self.mission_binding is None and self.planning_context is None
+                    and self.prompt_sha256 == self.master_review_context.review_prompt_sha256))
                 and all(type(value) in (int, float) and math.isfinite(value) for value in
                         (self.jwt_expires_monotonic, self.ingress_issued_monotonic,
                          self.ingress_expires_monotonic, self.accepted_monotonic,
@@ -4337,6 +4733,19 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
                 caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
                 peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
                 peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY)
+            maximum = MAX_RESPONSE
+        elif request.get("op") == "prepare-master-review-context":
+            result = prepare_master_review_context(config, request=request,
+                caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
+                peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY)
+            maximum = MAX_RESPONSE
+        elif request.get("op") == "read-master-review-completion":
+            result = observe_master_review_completion(config, request=request,
+                caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
+                peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY,
+                registry=_CORE_NATIVE_REGISTRY)
             maximum = MAX_RESPONSE
         elif request.get("op") == "read-current-mission-teams":
             result = observe_read_current_mission_teams(config, request=request,
@@ -4692,18 +5101,21 @@ def verify_current_owner_turn(config: CoreGatewayConfig, *, access_jwt: str,
                               conversation_id: str, gateway_turn_id: str,
                               prompt_sha256: str, mission_binding: Any = None,
                               planning_context: Any = None,
+                              master_review_context: Any = None,
                               require_planning_context: bool = False) -> str:
     """Ask the root inspector to mint one current owner-turn handle; return no proof fields."""
     from .core_gateway import CoreAcceptedIngressObservation, _log_ingress_denial, _read_config_current
     try:
         mission_wire = _mission_binding_wire(mission_binding)
         planning_wire = _planning_context_wire(planning_context)
+        review_wire = _master_review_context_wire(master_review_context)
     except Exception:
         raise CoreGatewayDenied("current accepted owner turn is required") from None
     if (type(require_planning_context) is not bool
             or (require_planning_context and planning_wire is None)
-            or (planning_wire is not None and mission_wire is not None)
+            or sum(value is not None for value in (mission_wire, planning_wire, review_wire)) > 1
             or (planning_wire is not None and planning_wire["planner_prompt_sha256"] != prompt_sha256)
+            or (review_wire is not None and review_wire["review_prompt_sha256"] != prompt_sha256)
             or type(accepted_ingress) is not CoreAcceptedIngressObservation
             or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
             or not access_jwt.isascii()
@@ -4747,7 +5159,11 @@ def verify_current_owner_turn(config: CoreGatewayConfig, *, access_jwt: str,
             "session_id": session_id, "conversation_id": conversation_id,
             "gateway_turn_id": gateway_turn_id, "prompt_sha256": prompt_sha256,
             "mission_binding": mission_wire, "planning_context": planning_wire,
+            "master_review_context": review_wire,
         }
+        body = {key: value for key, value in body.items()
+                if key not in {"mission_binding", "planning_context", "master_review_context"}
+                or value is not None}
         raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
         if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES or time.monotonic() >= deadline:
             raise ValueError
@@ -4773,6 +5189,35 @@ def verify_current_owner_turn(config: CoreGatewayConfig, *, access_jwt: str,
         _log_ingress_denial("root_owner_turn_currentness", error)
         raise CoreGatewayDenied("root owner-turn proof is stale") from None
     return result["owner_turn_handle"]
+
+
+@dataclass(frozen=True, slots=True)
+class _MasterReviewCompletionVerifier:
+    inspector: Any = field(repr=False, compare=False)
+    access_jwt: str = field(repr=False, compare=False)
+    accepted_ingress: Any = field(repr=False, compare=False)
+    mission_id: str
+    revision: int
+    run_id: str
+    gateway_turn_id: str
+    response_text: str = field(repr=False, compare=False)
+    confirmed_monotonic: float = field(default_factory=time.monotonic, repr=False, compare=False)
+
+    def verify_master_review_completion(self, receipt: Any, *, config: Any = None,
+                                         custody: Any = None) -> bool:
+        try:
+            now = time.monotonic()
+            from hermes_installer.remote.core_native_observer import CoreNativeObservationClient
+            root_current = CoreNativeObservationClient().verify_master_review_completion(receipt)
+            return bool(root_current is True and now < receipt.expires_monotonic
+                and now - self.confirmed_monotonic <= MAX_PROOF_SECONDS
+                and self.accepted_ingress.verify_current(self.inspector._config) is True
+                and hashlib.sha256(self.response_text.encode("utf-8", "strict")).hexdigest()
+                    == receipt.response_sha256
+                and receipt.mission_id == self.mission_id and receipt.revision == self.revision
+                and receipt.run_id == self.run_id and receipt.gateway_turn_id == self.gateway_turn_id)
+        except Exception:
+            return False
 
 
 class CoreGatewayInspector:
@@ -4914,6 +5359,138 @@ class CoreGatewayInspector:
             return context
         except Exception:
             raise CoreGatewayDenied("root planning context is malformed, stale or mismatched") from None
+
+    def prepare_master_review_context(self, access_jwt: str, accepted_ingress: Any,
+                                      mission_id: str, revision: int, run_id: str
+                                      ) -> tuple[MasterReviewContext, str]:
+        """Fetch exact result text only as part of root-derived current Jarvis review context."""
+        from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
+        if (type(accepted_ingress) is not CoreAcceptedIngressObservation
+                or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+                or not access_jwt.isascii()
+                or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                    != accepted_ingress.principal.token_fingerprint
+                or not isinstance(mission_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", mission_id) is None
+                or type(revision) is not int or revision < 1
+                or not isinstance(run_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", run_id) is None):
+            raise CoreGatewayDenied("current accepted mission review ingress is required")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("current accepted mission review ingress is required")
+        proof = accepted_ingress.root_observation
+        nonce = os.urandom(32).hex()
+        deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+        result = self._inspector_request({"schema": 1, "op": "prepare-master-review-context",
+            "nonce": nonce, "peer_pid": accepted_ingress.peer_pid,
+            "peer_uid": accepted_ingress.peer_uid, "peer_gid": accepted_ingress.peer_gid,
+            "access_jwt": access_jwt, "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": proof.nonce, "ingress_proof_sha256": proof.proof_sha256,
+            "mission_id": mission_id, "revision": revision, "run_id": run_id},
+            accepted_ingress, deadline)
+        try:
+            if (set(result) != {"schema", "nonce", "ok", "review_context", "review_prompt"}
+                    or result.get("schema") != 1 or result.get("nonce") != nonce
+                    or result.get("ok") is not True or time.monotonic() >= deadline
+                    or not isinstance(result["review_prompt"], str)):
+                raise ValueError
+            context = MasterReviewContext.from_wire(result["review_context"])
+            if (context.mission_id != mission_id or context.revision != revision
+                    or context.run_id != run_id
+                    or hashlib.sha256(result["review_prompt"].encode("utf-8", "strict")).hexdigest()
+                        != context.review_prompt_sha256):
+                raise ValueError
+            _read_config_current(self._config)
+            if accepted_ingress.verify_current(self._config) is not True:
+                raise ValueError
+            return context, result["review_prompt"]
+        except Exception:
+            raise CoreGatewayDenied("root Mission review prompt is malformed or stale") from None
+
+    def read_master_review_completion(self, access_jwt: str, accepted_ingress: Any, *,
+                                      mission_id: str, revision: int, run_id: str,
+                                      gateway_turn_id: str, response_text: str) -> Any:
+        """Seal stored Jarvis text only after the observer matches its provider response digest."""
+        from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
+        from .core_native_observer import (
+            CoreVerifiedJarvisMasterReviewCompletion, _MASTER_REVIEW_COMPLETION_SEAL,
+        )
+        if (type(accepted_ingress) is not CoreAcceptedIngressObservation
+                or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+                or not access_jwt.isascii()
+                or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                    != accepted_ingress.principal.token_fingerprint
+                or not isinstance(mission_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", mission_id) is None
+                or type(revision) is not int or revision < 1
+                or not isinstance(run_id, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", run_id) is None
+                or not isinstance(gateway_turn_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", gateway_turn_id) is None
+                or not isinstance(response_text, str)
+                or not 1 <= len(response_text.encode("utf-8", "strict")) <= 32 * 1024):
+            raise CoreGatewayDenied("current Jarvis review completion is unavailable")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("current Jarvis review completion is unavailable")
+        proof = accepted_ingress.root_observation
+        nonce = os.urandom(32).hex()
+        response_sha = hashlib.sha256(response_text.encode("utf-8", "strict")).hexdigest()
+        result = self._inspector_request({"schema": 1, "op": "read-master-review-completion",
+            "nonce": nonce, "peer_pid": accepted_ingress.peer_pid,
+            "peer_uid": accepted_ingress.peer_uid, "peer_gid": accepted_ingress.peer_gid,
+            "access_jwt": access_jwt, "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": proof.nonce, "ingress_proof_sha256": proof.proof_sha256,
+            "mission_id": mission_id, "revision": revision, "run_id": run_id,
+            "gateway_turn_id": gateway_turn_id, "response_sha256": response_sha},
+            accepted_ingress, min(time.monotonic() + MAX_PROOF_SECONDS,
+                                  accepted_ingress.expires_monotonic))
+        fields = {"schema", "nonce", "ok", "completion_handle", "owner_subject_sha256",
+            "owner_turn_handle", "gateway_turn_id", "core_generation", "core_source_generation",
+            "prompt_sha256", "response_sha256", "mission_id", "revision", "run_id",
+            "result_sha256", "execution_core_generation", "execution_core_source_generation",
+            "expires_monotonic", "owner_turn_expires_monotonic"}
+        try:
+            if (set(result) != fields or result.get("schema") != 1 or result.get("nonce") != nonce
+                    or result.get("ok") is not True or result["mission_id"] != mission_id
+                    or result["revision"] != revision or result["run_id"] != run_id
+                    or result["gateway_turn_id"] != gateway_turn_id
+                    or result["response_sha256"] != response_sha
+                    or any(not _is_hash(result[name]) for name in (
+                        "owner_subject_sha256", "core_generation", "core_source_generation",
+                        "prompt_sha256", "result_sha256", "execution_core_generation",
+                        "execution_core_source_generation"))
+                    or not isinstance(result["completion_handle"], str)
+                    or not _OPAQUE.fullmatch(result["completion_handle"])
+                    or not isinstance(result["owner_turn_handle"], str)
+                    or re.fullmatch(r"[0-9a-f]{32}", result["owner_turn_handle"]) is None):
+                raise ValueError
+            verifier = _MasterReviewCompletionVerifier(self, access_jwt, accepted_ingress,
+                mission_id, revision, run_id, gateway_turn_id, response_text)
+            receipt = CoreVerifiedJarvisMasterReviewCompletion(
+                owner_subject_sha256=result["owner_subject_sha256"],
+                owner_turn_handle=result["owner_turn_handle"],
+                gateway_turn_id=result["gateway_turn_id"],
+                core_generation=result["core_generation"],
+                core_source_generation=result["core_source_generation"],
+                prompt_sha256=result["prompt_sha256"], response_sha256=result["response_sha256"],
+                mission_id=result["mission_id"], revision=result["revision"], run_id=result["run_id"],
+                result_sha256=result["result_sha256"],
+                execution_core_generation=result["execution_core_generation"],
+                execution_core_source_generation=result["execution_core_source_generation"],
+                response_text=response_text, completion_handle=result["completion_handle"],
+                expires_monotonic=float(result["expires_monotonic"]),
+                owner_turn_expires_monotonic=float(result["owner_turn_expires_monotonic"]),
+                _client=verifier, _seal=_MASTER_REVIEW_COMPLETION_SEAL)
+            _read_config_current(self._config)
+            if (accepted_ingress.verify_current(self._config) is not True
+                    or not time.monotonic() < receipt.expires_monotonic <= min(
+                        accepted_ingress.expires_monotonic, time.monotonic() + 30.0)
+                    or receipt.expires_monotonic > receipt.owner_turn_expires_monotonic):
+                raise ValueError
+            return receipt
+        except Exception:
+            raise CoreGatewayDenied("root Jarvis review completion is malformed or stale") from None
 
     def read_master_plan(self, access_jwt: str, accepted_ingress: Any,
                          mission_id: str, revision: int) -> RootVerifiedJarvisMasterPlanData | None:

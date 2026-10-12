@@ -1066,6 +1066,7 @@ _RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4
 _MISSION_AUTHORIZATION_SEAL = object()
 _NATIVE_CHILD_AUTHORIZATION_SEAL = object()
 _MASTER_PLANNING_COMPLETION_SEAL = object()
+_MASTER_REVIEW_COMPLETION_SEAL = object()
 _SELECTED_SOURCE_DELIVERY_SEAL = object()
 
 
@@ -1930,6 +1931,57 @@ class CoreVerifiedJarvisMasterPlanningCompletion:
         return bool(callable(verifier) and verifier(self, config=config, custody=custody) is True)
 
 
+@dataclass(frozen=True, slots=True)
+class CoreVerifiedJarvisMasterReviewCompletion:
+    """Root-captured actual zero-tool Jarvis review response over one retained Mission result."""
+
+    owner_subject_sha256: str
+    owner_turn_handle: str
+    gateway_turn_id: str
+    core_generation: str
+    core_source_generation: str
+    prompt_sha256: str
+    response_sha256: str
+    mission_id: str
+    revision: int
+    run_id: str
+    result_sha256: str
+    execution_core_generation: str
+    execution_core_source_generation: str
+    response_text: str = field(repr=False, compare=False)
+    completion_handle: str
+    expires_monotonic: float
+    owner_turn_expires_monotonic: float
+    _client: Any = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def is_current_sealed(self, config: Any = None, custody: Any = None,
+                          now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        try:
+            return bool(type(self) is CoreVerifiedJarvisMasterReviewCompletion
+                and self._seal is _MASTER_REVIEW_COMPLETION_SEAL
+                and all(_HASH.fullmatch(getattr(self, name) or "") for name in (
+                    "owner_subject_sha256", "core_generation", "core_source_generation",
+                    "prompt_sha256", "response_sha256", "result_sha256",
+                    "execution_core_generation", "execution_core_source_generation"))
+                and isinstance(self.mission_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{24,64}", self.mission_id)
+                and type(self.revision) is int and self.revision >= 1
+                and isinstance(self.run_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", self.run_id)
+                and isinstance(self.owner_turn_handle, str) and re.fullmatch(r"[0-9a-f]{32}", self.owner_turn_handle)
+                and isinstance(self.gateway_turn_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{24,64}", self.gateway_turn_id)
+                and isinstance(self.response_text, str) and 1 <= len(self.response_text.encode("utf-8", "strict")) <= 32 * 1024
+                and hashlib.sha256(self.response_text.encode("utf-8", "strict")).hexdigest() == self.response_sha256
+                and _OPAQUE.fullmatch(self.completion_handle or "")
+                and current < self.expires_monotonic <= current + 30.0
+                and current < self.owner_turn_expires_monotonic <= current + 600.0
+                and self.expires_monotonic <= self.owner_turn_expires_monotonic
+                and self._client.verify_master_review_completion(
+                    self, config=config, custody=custody) is True)
+        except Exception:
+            return False
+
+
 class CoreNativeObservationClient:
     """Fixed bounded client for the root-owned current-core observation socket."""
 
@@ -1954,6 +2006,7 @@ class CoreNativeObservationClient:
             "read-selected-expert-source", "admit-selected-expert-child",
             "complete-selected-expert-child", "prepare-team-message",
             "planning-turn-context", "bind-obsidian-native-vault",
+            "master-review-turn-context",
             "authorize-obsidian-call-scope", "record-obsidian-draft-origin",
             "resolve-obsidian-draft-origin", "read-obsidian-private-draft",
             "confirm-obsidian-draft-read-delivery", "reserve-obsidian-draft-completion",
@@ -2062,6 +2115,59 @@ class CoreNativeObservationClient:
         if context.planner_prompt_sha256 != prompt_sha256:
             raise CoreNativeObservationUnavailable("planning prompt changed before provider dispatch")
         return context
+
+    def master_review_context_for_attempt(self, *, session_id: str, turn_id: str,
+                                          prompt_sha256: str) -> Any | None:
+        """Resolve only the exact root-enrolled Mission-review prompt for this turn."""
+        from .core_gateway_inspector import MasterReviewContext
+        row = self._rpc("master-review-turn-context", {
+            "session_id": _require_id(session_id, "session ID"),
+            "turn_id": _require_id(turn_id, "turn ID"),
+            "prompt_sha256": _require_hash(prompt_sha256, "prompt digest"),
+        })
+        if set(row) != {"schema", "nonce", "ok", "reviewing", "review_context"}:
+            raise CoreNativeObservationUnavailable("master-review response has an unknown schema")
+        if type(row["reviewing"]) is not bool:
+            raise CoreNativeObservationUnavailable("master-review response is malformed")
+        if not row["reviewing"]:
+            if row["review_context"] is not None:
+                raise CoreNativeObservationUnavailable("ordinary turn carried review purpose")
+            return None
+        try:
+            context = MasterReviewContext.from_wire(row["review_context"])
+        except Exception:
+            raise CoreNativeObservationUnavailable("root master-review context is malformed") from None
+        if context.review_prompt_sha256 != prompt_sha256:
+            raise CoreNativeObservationUnavailable("master-review prompt changed before provider dispatch")
+        return context
+
+    def verify_master_review_completion(self, receipt: Any) -> bool:
+        """Revalidate a short-lived review receipt against the issuing root registry."""
+        if (type(receipt) is not CoreVerifiedJarvisMasterReviewCompletion
+                or receipt._seal is not _MASTER_REVIEW_COMPLETION_SEAL):
+            return False
+        try:
+            row = self._rpc("verify-master-review-completion", {
+                "completion_handle": receipt.completion_handle,
+                "owner_turn_handle": receipt.owner_turn_handle,
+                "gateway_turn_id": receipt.gateway_turn_id,
+                "owner_subject_sha256": receipt.owner_subject_sha256,
+                "core_generation": receipt.core_generation,
+                "core_source_generation": receipt.core_source_generation,
+                "prompt_sha256": receipt.prompt_sha256,
+                "response_sha256": receipt.response_sha256,
+                "mission_id": receipt.mission_id,
+                "revision": receipt.revision,
+                "run_id": receipt.run_id,
+                "result_sha256": receipt.result_sha256,
+                "execution_core_generation": receipt.execution_core_generation,
+                "execution_core_source_generation": receipt.execution_core_source_generation,
+                "owner_turn_expires_monotonic": receipt.owner_turn_expires_monotonic,
+            })
+            return (set(row) == {"schema", "nonce", "ok"}
+                    and row.get("schema") == 1 and row.get("ok") is True)
+        except Exception:
+            return False
 
     def current_project_context(self, *, session_id: str,
                                 prompt_sha256: str) -> dict[str, Any] | None:
@@ -3309,6 +3415,7 @@ class RootCoreNativeObservationRegistry:
         # record is retired; a later middleware lookup must not misclassify a
         # stale planned request as ordinary chat and restore its original tools.
         self._planning_sessions: dict[str, Any] = {}
+        self._master_review_sessions: dict[str, Any] = {}
         self._owner_turn_bindings: dict[str, str] = {}
         self._policies: dict[str, dict[str, Any]] = {}
         self._owner_policy_handles: dict[str, str] = {}
@@ -3320,6 +3427,7 @@ class RootCoreNativeObservationRegistry:
         self._consumed_dispatches: dict[str, dict[str, Any]] = {}
         self._child_sessions: dict[str, dict[str, Any]] = {}
         self._planning_completions: dict[str, dict[str, Any]] = {}
+        self._master_review_completions: dict[str, dict[str, Any]] = {}
         self._expert_completions: dict[str, dict[str, Any]] = {}
         self._team_completion_evidence: dict[str, dict[str, Any]] = {}
         self._team_bindings: dict[str, RootSelectedTeamBinding] = {}
@@ -3904,7 +4012,8 @@ class RootCoreNativeObservationRegistry:
                 self._close_fd(getattr(observation, "_core_pidfd", None))
                 raise CoreNativeObservationUnavailable("owner-turn observation was already registered")
             if len(self._owners) >= 256 and all(
-                    row.planning_context is not None for row in self._owners.values()):
+                    row.planning_context is not None or row.master_review_context is not None
+                    for row in self._owners.values()):
                 self._close_fd(getattr(observation, "_core_pidfd", None))
                 raise CoreNativeObservationUnavailable("retained owner-turn registry is full")
             if observation.planning_context is not None:
@@ -3913,10 +4022,17 @@ class RootCoreNativeObservationRegistry:
                     self._close_fd(getattr(observation, "_core_pidfd", None))
                     raise CoreNativeObservationUnavailable("planning session is already enrolled or registry is full")
                 self._planning_sessions[observation.session_id] = observation
+            if observation.master_review_context is not None:
+                existing = self._master_review_sessions.get(observation.gateway_turn_id)
+                if existing is not None or len(self._master_review_sessions) >= 512:
+                    self._close_fd(getattr(observation, "_core_pidfd", None))
+                    raise CoreNativeObservationUnavailable("review turn is already enrolled or registry is full")
+                self._master_review_sessions[observation.gateway_turn_id] = observation
             self._owners[handle] = observation
             while len(self._owners) > 256:
                 expired_handle = next((key for key, row in self._owners.items()
-                                       if row.planning_context is None), None)
+                                       if row.planning_context is None
+                                       and row.master_review_context is None), None)
                 if expired_handle is None:
                     raise CoreNativeObservationUnavailable("retained owner-turn registry is full")
                 expired = self._owners.pop(expired_handle)
@@ -4573,6 +4689,42 @@ class RootCoreNativeObservationRegistry:
             while len(self._master_plan_records) > 256:
                 self._master_plan_records.pop(next(iter(self._master_plan_records)))
 
+    def _persist_master_review_response(self, attempt: dict[str, Any], raw_output: str,
+                                        response_text_sha256: str) -> None:
+        """Retain only the exact current zero-tool response for a root-bound review prompt."""
+        owner = attempt.get("owner")
+        context = getattr(owner, "master_review_context", None)
+        if (owner is None or context is None
+                or attempt.get("provider") != _CODEX_PROVIDER
+                or attempt.get("api_mode") != _CODEX_MODE
+                or attempt.get("base_url") != _CODEX_ENDPOINT
+                or attempt.get("retry_count") != 0
+                or attempt.get("parent_tool_names") != ()
+                or not _HASH.fullmatch(attempt.get("account", ""))
+                or not _HASH.fullmatch(attempt.get("request_sha256", ""))
+                or not isinstance(attempt.get("attempt_handle"), str)
+                or not _OPAQUE.fullmatch(attempt["attempt_handle"])
+                or attempt.get("turn_id") != owner.gateway_turn_id
+                or not isinstance(raw_output, str)
+                or hashlib.sha256(raw_output.encode("utf-8", "strict")).hexdigest()
+                    != response_text_sha256):
+            raise ValueError("current master-review response is unavailable")
+        from hermes_installer.remote.core_gateway_inspector import _verify_master_review_context
+        _verify_master_review_context(context,
+            owner_subject_sha256=owner.owner_subject_sha256,
+            core_generation=owner.core_generation,
+            core_source_generation=owner.core_source_generation,
+            prompt_sha256=context.review_prompt_sha256,
+            config=self._config, custody=self._custody)
+        if (owner.is_current_sealed(self._config, custody=self._custody,
+                                    now=time.monotonic()) is not True
+                or self._current_master_source() is None
+                or self._current_master_source().generation_sha256 != context.master_source_generation_sha256):
+            raise ValueError("current master-review owner or source changed")
+        attempt["master_review_response_text"] = raw_output
+        attempt["master_review_response_sha256"] = response_text_sha256
+        attempt["master_review_context"] = context
+
     def read_master_plan_record(self, *, owner_subject_sha256: str,
                                  mission_id: str, revision: int) -> RootObservedMasterPlanRecord | None:
         """Return only a root-retained completion; gateway rows cannot mint one."""
@@ -4593,6 +4745,122 @@ class RootCoreNativeObservationRegistry:
                 return None
             self._master_plan_records[(owner_subject_sha256, mission_id, revision)] = record
         return record
+
+    def confirm_master_review_response(self, *, owner_subject_sha256: str,
+                                      gateway_turn_id: str, response_sha256: str,
+                                      gateway_peer: tuple[int, int, int]) -> dict[str, Any]:
+        """Seal only the exact provider response retained for the admitted review turn."""
+        if (not _HASH.fullmatch(owner_subject_sha256 or "")
+                or not isinstance(gateway_turn_id, str) or not _ID.fullmatch(gateway_turn_id)
+                or not _HASH.fullmatch(response_sha256 or "")):
+            raise CoreNativeObservationUnavailable("master-review response identity is malformed")
+        now = time.monotonic()
+        with self._lock:
+            self._ensure_open()
+            owners = [owner for owner in self._owners.values()
+                      if owner.owner_subject_sha256 == owner_subject_sha256
+                      and owner.gateway_turn_id == gateway_turn_id
+                      and owner.master_review_context is not None]
+            if len(owners) != 1:
+                raise CoreNativeObservationUnavailable("current admitted review turn is unavailable")
+            owner = owners[0]
+            if ((owner.peer_gateway_pid, owner.peer_gateway_uid, owner.peer_gateway_gid) != gateway_peer
+                    or owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                    or owner.core_generation != self._custody.core_generation
+                    or owner.core_source_generation != self._custody.core_source_generation):
+                raise CoreNativeObservationUnavailable("review owner or Core source changed")
+            context = owner.master_review_context
+            from hermes_installer.remote.core_gateway_inspector import _verify_master_review_context
+            _verify_master_review_context(context,
+                owner_subject_sha256=owner.owner_subject_sha256,
+                core_generation=owner.core_generation,
+                core_source_generation=owner.core_source_generation,
+                prompt_sha256=context.review_prompt_sha256,
+                config=self._config, custody=self._custody)
+            attempts = [row for row in self._attempts.values()
+                if row.get("owner") is owner and row.get("turn_id") == gateway_turn_id
+                and row.get("master_review_response_text") is not None]
+            if len(attempts) != 1:
+                raise CoreNativeObservationUnavailable("review provider response is missing or ambiguous")
+            attempt = attempts[0]
+            text = attempt["master_review_response_text"]
+            if (attempt.get("response") is None or attempt["response"][1]
+                    or attempt.get("response")[2] != response_sha256
+                    or attempt.get("master_review_response_sha256") != response_sha256
+                    or hashlib.sha256(text.encode("utf-8", "strict")).hexdigest() != response_sha256
+                    or attempt.get("master_review_context") is not context
+                    or attempt.get("parent_tool_names") != ()
+                    or attempt.get("retry_count") != 0
+                    or attempt.get("provider") != _CODEX_PROVIDER
+                    or attempt.get("api_mode") != _CODEX_MODE
+                    or attempt.get("base_url") != _CODEX_ENDPOINT
+                    or not _HASH.fullmatch(attempt.get("request_sha256", ""))
+                    or attempt.get("turn_id") != owner.gateway_turn_id):
+                raise CoreNativeObservationUnavailable("review response differs from the root-captured result")
+            handle = secrets.token_urlsafe(32)
+            expiry = min(owner.expires_monotonic, now + 30.0)
+            self._master_review_completions[handle] = {
+                "owner": owner, "attempt": attempt, "context": context,
+                "response_sha256": response_sha256, "expiry": expiry,
+                "peer": gateway_peer,
+            }
+            while len(self._master_review_completions) > 128:
+                self._master_review_completions.pop(next(iter(self._master_review_completions)))
+            return {"completion_handle": handle,
+                "owner_subject_sha256": owner.owner_subject_sha256,
+                "owner_turn_handle": owner.owner_turn_handle,
+                "gateway_turn_id": owner.gateway_turn_id,
+                "core_generation": owner.core_generation,
+                "core_source_generation": owner.core_source_generation,
+                "prompt_sha256": context.review_prompt_sha256,
+                "response_sha256": response_sha256,
+                "mission_id": context.mission_id, "revision": context.revision,
+                "run_id": context.run_id, "result_sha256": context.result_sha256,
+                "execution_core_generation": context.execution_core_generation,
+                "execution_core_source_generation": context.execution_core_source_generation,
+                "expires_monotonic": expiry,
+                "owner_turn_expires_monotonic": owner.expires_monotonic}
+
+    def verify_master_review_completion(self, receipt: Any,
+                                        gateway_peer: tuple[int, int, int]) -> bool:
+        now = time.monotonic()
+        handle = getattr(receipt, "completion_handle", None)
+        if not isinstance(handle, str):
+            return False
+        with self._lock:
+            record = self._master_review_completions.get(handle)
+            if record is None or record["expiry"] <= now or record["peer"] != gateway_peer:
+                return False
+            owner, context, attempt = record["owner"], record["context"], record["attempt"]
+            if (owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                    or owner.owner_turn_handle != getattr(receipt, "owner_turn_handle", None)
+                    or owner.gateway_turn_id != getattr(receipt, "gateway_turn_id", None)
+                    or owner.owner_subject_sha256 != getattr(receipt, "owner_subject_sha256", None)
+                    or owner.core_generation != getattr(receipt, "core_generation", None)
+                    or owner.core_source_generation != getattr(receipt, "core_source_generation", None)
+                    or context.review_prompt_sha256 != getattr(receipt, "prompt_sha256", None)
+                    or context.mission_id != getattr(receipt, "mission_id", None)
+                    or context.revision != getattr(receipt, "revision", None)
+                    or context.run_id != getattr(receipt, "run_id", None)
+                    or context.result_sha256 != getattr(receipt, "result_sha256", None)
+                    or context.execution_core_generation != getattr(receipt, "execution_core_generation", None)
+                    or context.execution_core_source_generation != getattr(receipt, "execution_core_source_generation", None)
+                    or record["response_sha256"] != getattr(receipt, "response_sha256", None)
+                    or attempt.get("master_review_response_text") != getattr(receipt, "response_text", None)
+                    or attempt.get("response") is None or attempt["response"][1]
+                    or attempt.get("response")[2] != record["response_sha256"]):
+                return False
+            try:
+                from hermes_installer.remote.core_gateway_inspector import _verify_master_review_context
+                _verify_master_review_context(context,
+                    owner_subject_sha256=owner.owner_subject_sha256,
+                    core_generation=owner.core_generation,
+                    core_source_generation=owner.core_source_generation,
+                    prompt_sha256=context.review_prompt_sha256,
+                    config=self._config, custody=self._custody)
+                return True
+            except Exception:
+                return False
 
     def _policy_for_owner(self, owner: Any, now: float) -> RootSelectedOrchestratorDelegationPolicy | None:
         from hermes_installer.remote.core_gateway_inspector import CoreVerifiedNativeToolConfiguration
@@ -5976,6 +6244,52 @@ class RootCoreNativeObservationRegistry:
                     config=self._config, custody=self._custody, preparing=False)
                 return {"schema": 1, "nonce": nonce, "ok": True,
                         "planning": True, "planning_context": owner.planning_context.to_wire()}
+            if op == "master-review-turn-context":
+                if set(request) != {"schema", "op", "nonce", "session_id", "turn_id", "prompt_sha256"}:
+                    raise ValueError("master-review lookup schema mismatch")
+                session_id, turn_id = request["session_id"], request["turn_id"]
+                prompt_sha256 = request["prompt_sha256"]
+                if (not isinstance(session_id, str) or not isinstance(turn_id, str)
+                        or not _HASH.fullmatch(prompt_sha256 or "")):
+                    raise ValueError("master-review lookup is malformed")
+                owner = self._master_review_sessions.get(turn_id)
+                if owner is None:
+                    owner = next((item for item in self._owners.values()
+                                  if item.session_id == session_id), None)
+                if owner is None or owner.master_review_context is None:
+                    return {"schema": 1, "nonce": nonce, "ok": True,
+                            "reviewing": False, "review_context": None}
+                now = time.monotonic()
+                context = owner.master_review_context
+                if (owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                        or owner.gateway_turn_id != turn_id
+                        or context.review_prompt_sha256 != prompt_sha256
+                        or owner.core_generation != self._custody.core_generation
+                        or owner.core_source_generation != self._custody.core_source_generation):
+                    raise ValueError("registered master review turn is stale or mismatched")
+                from hermes_installer.remote.core_gateway_inspector import _verify_master_review_context
+                _verify_master_review_context(context,
+                    owner_subject_sha256=owner.owner_subject_sha256,
+                    core_generation=owner.core_generation,
+                    core_source_generation=owner.core_source_generation,
+                    prompt_sha256=prompt_sha256,
+                    config=self._config, custody=self._custody)
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                        "reviewing": True, "review_context": context.to_wire()}
+            if op == "verify-master-review-completion":
+                required = {"schema", "op", "nonce", "completion_handle", "owner_turn_handle",
+                    "gateway_turn_id", "owner_subject_sha256", "core_generation",
+                    "core_source_generation", "prompt_sha256", "response_sha256",
+                    "mission_id", "revision", "run_id", "result_sha256",
+                    "execution_core_generation", "execution_core_source_generation",
+                    "owner_turn_expires_monotonic"}
+                if set(request) != required:
+                    raise ValueError("master-review completion verification schema mismatch")
+                receipt = SimpleNamespace(**{key: value for key, value in request.items()
+                    if key not in {"schema", "op", "nonce"}})
+                if not self.verify_master_review_completion(receipt, gateway_peer=peer):
+                    raise ValueError("master-review completion is stale, replayed or mismatched")
+                return {"schema": 1, "nonce": nonce, "ok": True}
             if op == "current-project-context":
                 if set(request) != {"schema", "op", "nonce", "session_id", "prompt_sha256"}:
                     raise ValueError("project-context lookup schema mismatch")
@@ -6832,7 +7146,9 @@ class RootCoreNativeObservationRegistry:
                 child_tools = tuple(child["tool_names"]) if child is not None else None
                 is_child_attempt = child is not None
                 planning_owner = owner is not None and owner.planning_context is not None
+                review_owner = owner is not None and owner.master_review_context is not None
                 planning_current = False
+                review_current = False
                 if planning_owner:
                     from hermes_installer.remote.core_gateway_inspector import _verify_planning_context
                     try:
@@ -6851,6 +7167,18 @@ class RootCoreNativeObservationRegistry:
                         planning_current = True
                     except Exception:
                         planning_current = False
+                if review_owner:
+                    from hermes_installer.remote.core_gateway_inspector import _verify_master_review_context
+                    try:
+                        _verify_master_review_context(owner.master_review_context,
+                            owner_subject_sha256=owner.owner_subject_sha256,
+                            core_generation=owner.core_generation,
+                            core_source_generation=owner.core_source_generation,
+                            prompt_sha256=request["prompt_sha256"],
+                            config=self._config, custody=self._custody)
+                        review_current = True
+                    except Exception:
+                        review_current = False
                 if (owner is None or request["provider"] != _CODEX_PROVIDER
                         or request["api_mode"] != _CODEX_MODE or request["base_url"] != _CODEX_ENDPOINT
                         or type(request["retry_count"]) is not int or request["retry_count"] != 0
@@ -6867,6 +7195,9 @@ class RootCoreNativeObservationRegistry:
                         or policy is None
                         or (planning_owner and (not planning_current
                             or request["prompt_sha256"] != owner.planning_context.planner_prompt_sha256
+                            or request["parent_tool_names"] != []))
+                        or (review_owner and (not review_current
+                            or request["prompt_sha256"] != owner.master_review_context.review_prompt_sha256
                             or request["parent_tool_names"] != []))
                         or (is_child_attempt and (
                             child["owner"] is not owner or child["expiry"] <= time.monotonic()
@@ -6892,9 +7223,9 @@ class RootCoreNativeObservationRegistry:
                 handle = secrets.token_urlsafe(32)
                 if len(self._attempts) >= 2048:
                     raise ValueError("native attempt registry is full")
-                if planning_owner or (is_child_attempt and child["mode"] == "planner"):
+                if planning_owner or review_owner or (is_child_attempt and child["mode"] == "planner"):
                     # The start receipt only authorizes beginning within 30s.
-                    # A same-owner-turn plan is also bounded by the original
+                    # Protected no-tools master turns remain bounded by the original
                     # owner/policy lease, not a 30-second response timeout.
                     expiry = min(float(owner.expires_monotonic), float(policy.expires_monotonic))
                     if is_child_attempt:
@@ -6963,6 +7294,16 @@ class RootCoreNativeObservationRegistry:
                                 != request["response_text_sha256"]):
                         raise ValueError("planning response is not a completed zero-tool result")
                     self._persist_master_plan_result(row, raw_plan, request["response_text_sha256"])
+                elif row["owner"].master_review_context is not None:
+                    raw_review = request.get("response_text")
+                    if (calls or not request["completed"]
+                            or not _HASH.fullmatch(request["response_text_sha256"] or "")
+                            or not isinstance(raw_review, str)
+                            or hashlib.sha256(raw_review.encode("utf-8", errors="strict")).hexdigest()
+                                != request["response_text_sha256"]):
+                        raise ValueError("master-review response is not a completed zero-tool result")
+                    self._persist_master_review_response(row, raw_review,
+                                                        request["response_text_sha256"])
                 elif "response_text" in request:
                     raise ValueError("ordinary response cannot carry private planning output")
                 if "response_text" in request:
@@ -6971,7 +7312,8 @@ class RootCoreNativeObservationRegistry:
                             <= 32 * 1024
                             or hashlib.sha256(text.encode("utf-8", errors="strict")).hexdigest()
                                 != request["response_text_sha256"]
-                            or (child is None and row["owner"].planning_context is None)):
+                            or (child is None and row["owner"].planning_context is None
+                                and row["owner"].master_review_context is None)):
                         raise ValueError("provider text is not permitted or digest-bound")
                 row["response"] = ((request["response_sha256"], calls,
                                     request["response_text_sha256"])
@@ -7221,6 +7563,8 @@ class RootCoreNativeObservationRegistry:
             self._consumed_dispatches.clear()
             self._child_sessions.clear()
             self._planning_completions.clear()
+            self._master_review_sessions.clear()
+            self._master_review_completions.clear()
             self._expert_completions.clear()
             self._team_completion_evidence.clear()
             self._team_messages.clear()
@@ -7442,11 +7786,14 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                     planned = client.planning_context_for_attempt(
                         session_id=event.get("session_id"), turn_id=event.get("turn_id"),
                         prompt_sha256=prompt_digest)
+                    review = client.master_review_context_for_attempt(
+                        session_id=event.get("session_id"), turn_id=event.get("turn_id"),
+                        prompt_sha256=prompt_digest)
                 except Exception:
                     # Do not spend on an alternate provider when a planned
                     # turn cannot be distinguished from ordinary chat.
                     return denied_response()
-                if planned is not None:
+                if planned is not None or review is not None:
                     return denied_response()
                 return next_call(request)
             return denied_response()
@@ -7466,20 +7813,24 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
             prompt_sha256 = _native_prompt_sha256(request)
             planning_context = client.planning_context_for_attempt(
                 session_id=session_id, turn_id=turn_id, prompt_sha256=prompt_sha256)
+            master_review_context = client.master_review_context_for_attempt(
+                session_id=session_id, turn_id=turn_id, prompt_sha256=prompt_sha256)
         except Exception:
             # Hook failures normally fall through to the original request. A
             # completed local denial prevents provider retries/failover for an
             # unknown mode without pretending to be a root receipt.
             planning_context = None
+            master_review_context = None
             force_no_tools = True
             return denied_response()
-        if planning_context is not None:
+        protected_context = planning_context is not None or master_review_context is not None
+        if protected_context:
             force_no_tools = True
         if force_no_tools:
             provider_request = no_tool_request(request)
         if force_no_tools and (not callable(next_call) or not isinstance(request, dict)):
             return None
-        if planning_context is not None:
+        if protected_context:
             if event.get("middleware_trace"):
                 return denied_response()
         with lineage_lock:
@@ -7487,13 +7838,13 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
             # same api_request_id. The first observation is logical-attempt-only; a
             # second call is allowed to proceed for ordinary chat but cannot mint proof.
             if request_key in request_attempts:
-                return denied_response() if planning_context is not None else next_call(provider_request)
+                return denied_response() if protected_context else next_call(provider_request)
             request_attempts[request_key] = None  # reserved before any provider effect
             request_attempts.move_to_end(request_key)
             while len(request_attempts) > 1024:
                 request_attempts.popitem(last=False)
         if event.get("middleware_trace"):
-            return denied_response() if planning_context is not None else next_call(provider_request)
+            return denied_response() if protected_context else next_call(provider_request)
         try:
             account = _codex_account_fingerprint(resolve_credentials)
             attempt = client.register_attempt(
@@ -7520,7 +7871,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                     response_text_sha256=None, tool_calls=[], completed=False)
             except Exception:
                 pass
-            if planning_context is not None:
+            if protected_context:
                 return denied_response()
             raise
         try:
@@ -7531,11 +7882,11 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
             except CoreNativeObservationUnavailable:
                 same_account = False
             if not same_account:
-                if planning_context is not None:
+                if protected_context:
                     return denied_response()
                 return response
             calls = _response_tool_calls(response)
-            if planning_context is not None and calls:
+            if protected_context and calls:
                 # No downstream Hermes tool dispatcher may consume a tool call
                 # returned to a request whose root-enrolled closure was empty.
                 return denied_response()
@@ -7552,7 +7903,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 client.register_response(
                     attempt=attempt, response_sha256=hashlib.sha256(response_bytes).hexdigest(),
                     response_text_sha256=response_text_sha256,
-                    response_text=(output_text if (planning_context is not None or attempt.capture_child_output)
+                    response_text=(output_text if (protected_context or attempt.capture_child_output)
                                    and isinstance(output_text, str) else None),
                     tool_calls=[{"id": call_id, "name": name,
                                  "arguments_sha256": hashlib.sha256(arguments).hexdigest()}
@@ -7560,7 +7911,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                     completed=True,
                 )
             except CoreNativeObservationUnavailable:
-                if planning_context is not None:
+                if protected_context:
                     return denied_response()
                 return response
             with lineage_lock:
@@ -7573,7 +7924,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
         except Exception:
             # Observation failure must not discard a successfully consumed answer.
             # Without its root response receipt, Resources delegation has no call handle.
-            if planning_context is not None:
+            if protected_context:
                 return denied_response()
             return response
 

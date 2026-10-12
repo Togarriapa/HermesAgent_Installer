@@ -36,6 +36,7 @@ FEATURE_ROUTES = (
     ("POST", "/chat/api/missions/{mission_id}/launch"),
     ("POST", "/chat/api/missions/{mission_id}/stop"),
     ("POST", "/chat/api/missions/{mission_id}/review"),
+    ("POST", "/chat/api/missions/{mission_id}/jarvis-review"),
 )
 
 _ID_RE = ID_RE
@@ -1277,6 +1278,7 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                 "launch": {"revision", "plan_sha256", "approval_nonce", "idempotency_key"},
                 "stop": {"revision", "idempotency_key"},
                 "review": {"revision", "decision", "idempotency_key"},
+                "jarvis-review": {"revision", "run_id", "idempotency_key", "turn_id"},
             }.get(action)
             if expected is None:
                 raise web.HTTPNotFound(text="not found", headers=_secure_headers())
@@ -1292,6 +1294,12 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                 raise web.HTTPBadRequest(text="invalid request", headers=_secure_headers())
             if action == "review" and (not isinstance(body["decision"], str)
                     or body["decision"] not in {"accept", "reject"}):
+                raise web.HTTPBadRequest(text="invalid request", headers=_secure_headers())
+            if action == "jarvis-review" and (
+                    not isinstance(body["run_id"], str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", body["run_id"])
+                    or not isinstance(body["turn_id"], str)
+                    or (body["turn_id"] and not re.fullmatch(r"[A-Za-z0-9_-]{24,64}", body["turn_id"]))):
                 raise web.HTTPBadRequest(text="invalid request", headers=_secure_headers())
             owner = service.store._owner(principal.subject)
             row = _owned_row(service.store, owner, request.match_info.get("mission_id", ""))
@@ -1410,6 +1418,51 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                             headers=_secure_headers()) from None
                     raise web.HTTPServiceUnavailable(text="mission launch outcome is unknown; do not retry",
                                                      headers=_secure_headers()) from None
+            if action == "jarvis-review":
+                from .jarvis_master_planning import issue_master_review_decision
+                run = executor.latest_run(owner, row["id"], revision)
+                if (run is None or run["id"] != body["run_id"]
+                        or run["jarvis_review_state"] != "pending"):
+                    raise web.HTTPConflict(text="pending exact native result required", headers=_secure_headers())
+                captured = service._capture_owner_turn_context(request)
+                if captured is None or service.inspector is None:
+                    raise JarvisChatDenied("current root review ingress is unavailable")
+                access_jwt, accepted_ingress, _binding = captured
+                if not body["turn_id"]:
+                    projected = executor.project(principal.subject, run)
+                    if projected["status"] != "review_pending":
+                        raise web.HTTPConflict(text="complete native result required", headers=_secure_headers())
+                    review_context, review_prompt = service.inspector.prepare_master_review_context(
+                        access_jwt, accepted_ingress, row["id"], revision, run["id"])
+                    conversation = service.store.get_conversation(principal.subject, run["conversation_id"])
+                    queued = await service.start_server_turn(
+                        request, conversation_id=conversation["id"], text=review_prompt,
+                        idempotency_key=body["idempotency_key"], before_schedule=lambda _turn: None,
+                        master_review_context=review_context)
+                    _recheck_principal(service, request, principal)
+                    return web.json_response({"run": projected, "review_turn_id": queued["turn_id"],
+                        "heartbeat_nonce": queued["heartbeat_nonce"],
+                        "review_status": "queued"}, status=202, headers=_secure_headers())
+                review_turn = service.store.owned_turn(principal.subject, body["turn_id"])
+                if (review_turn["status"] != "completed" or not isinstance(review_turn["partial"], str)
+                        or not review_turn["partial"]):
+                    raise web.HTTPConflict(text="Jarvis review turn is not complete", headers=_secure_headers())
+                completion = service.inspector.read_master_review_completion(
+                    access_jwt, accepted_ingress, mission_id=row["id"], revision=revision,
+                    run_id=run["id"], gateway_turn_id=body["turn_id"],
+                    response_text=review_turn["partial"])
+                decision = issue_master_review_decision(
+                    completion=completion, config=service.inspector._config,
+                    custody=getattr(service.inspector, "_custody", None),
+                    raw_output=review_turn["partial"])
+                if not executor.record_jarvis_master_review(
+                        decision, config=service.inspector._config,
+                        custody=getattr(service.inspector, "_custody", None)):
+                    raise web.HTTPConflict(text="current Jarvis review could not be recorded", headers=_secure_headers())
+                _recheck_principal(service, request, principal)
+                latest = executor.latest_run(owner, row["id"], revision)
+                return web.json_response({"run": executor.project(principal.subject, latest),
+                    "review_status": "completed"}, headers=_secure_headers())
             if action == "stop":
                 request_hash = _hash({"mission_id": row["id"], "revision": revision, "action": "stop"})
                 try:
@@ -1445,5 +1498,5 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
     app.router.add_get("/chat/api/missions/{mission_id}", detail, allow_head=False)
     app.router.add_post("/chat/api/missions/{mission_id}/preview", preview)
     app.router.add_post("/chat/api/missions/{mission_id}/approve", approve)
-    for action in ("launch", "stop", "review"):
+    for action in ("launch", "stop", "review", "jarvis-review"):
         app.router.add_post(f"/chat/api/missions/{{mission_id}}/{action}", mission_action)

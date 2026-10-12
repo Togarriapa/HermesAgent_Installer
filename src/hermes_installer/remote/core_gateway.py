@@ -450,14 +450,15 @@ class CoreGatewayLaunch:
                             session_id: str, conversation_id: str,
                             gateway_turn_id: str, prompt_sha256: str,
                             mission_binding: Any = None,
-                            planning_context: Any = None) -> str:
+                            planning_context: Any = None,
+                            master_review_context: Any = None) -> str:
         """Mint only a root-verified opaque handle for the exact current submitted turn."""
         from .core_gateway_inspector import verify_current_owner_turn
         return verify_current_owner_turn(self.config, access_jwt=access_jwt,
             accepted_ingress=accepted_ingress, session_id=session_id,
             conversation_id=conversation_id, gateway_turn_id=gateway_turn_id,
             prompt_sha256=prompt_sha256, mission_binding=mission_binding,
-            planning_context=planning_context)
+            planning_context=planning_context, master_review_context=master_review_context)
 
 
 def create_core_gateway_app(launch: CoreGatewayLaunch):

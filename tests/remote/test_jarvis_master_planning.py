@@ -107,10 +107,63 @@ def test_team_selection_is_bound_to_exact_catalog_bundle_and_two_selected_member
 def test_master_review_is_bound_to_exact_result_digest():
     result = "Private internal draft"
     result_sha = hashlib.sha256(result.encode()).hexdigest()
-    raw = json.dumps({"decision": "approved", "result_sha256": result_sha})
-    assert parse_master_review_output(raw, expected_result_sha256=result_sha)["decision"] == "approved"
+    raw = json.dumps({"decision": "approved", "result_sha256": result_sha,
+                      "rationale": "The draft answers the requested question."})
+    parsed = parse_master_review_output(raw, expected_result_sha256=result_sha)
+    assert parsed["decision"] == "approved"
+    assert parsed["rationale"] == "The draft answers the requested question."
     with pytest.raises(JarvisMasterPlanningDenied):
         parse_master_review_output(raw, expected_result_sha256="0" * 64)
+
+
+@pytest.mark.parametrize("rationale", ["", "   ", "x" * 513])
+def test_master_review_requires_a_bounded_nonempty_reason(rationale):
+    result_sha = hashlib.sha256(b"draft").hexdigest()
+    raw = json.dumps({"decision": "rejected", "result_sha256": result_sha,
+                      "rationale": rationale})
+    with pytest.raises(JarvisMasterPlanningDenied):
+        parse_master_review_output(raw, expected_result_sha256=result_sha)
+
+
+def test_review_decision_uses_only_a_current_root_review_completion_and_keeps_lineage(monkeypatch):
+    from hermes_installer.remote.core_native_observer import (
+        CoreVerifiedJarvisMasterReviewCompletion, _MASTER_REVIEW_COMPLETION_SEAL,
+    )
+
+    result_sha = hashlib.sha256(b"persisted exact result").hexdigest()
+    raw = json.dumps({"decision": "approved", "result_sha256": result_sha,
+                      "rationale": "The completed draft is accurate and relevant."})
+    now = time.monotonic()
+
+    class ObserverReceiptClient:
+        def verify_master_review_completion(self, receipt, *, config=None, custody=None):
+            return receipt.completion_handle == "opaque-root-review-handle"
+
+    completion = CoreVerifiedJarvisMasterReviewCompletion(
+        owner_subject_sha256="a" * 64, owner_turn_handle="b" * 32,
+        gateway_turn_id="c" * 24, core_generation="d" * 64,
+        core_source_generation="e" * 64, prompt_sha256="f" * 64,
+        response_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+        mission_id=MISSION_ID, revision=3, run_id="run_review_03",
+        result_sha256=result_sha, execution_core_generation="1" * 64,
+        execution_core_source_generation="2" * 64, response_text=raw,
+        completion_handle="opaque-root-review-handle", expires_monotonic=now + 20,
+        owner_turn_expires_monotonic=now + 300, _client=ObserverReceiptClient(),
+        _seal=_MASTER_REVIEW_COMPLETION_SEAL,
+    )
+    decision = planning.issue_master_review_decision(
+        completion=completion, config=object(), custody=object(), raw_output=raw)
+    assert decision.decision == "approved"
+    assert decision.rationale == "The completed draft is accurate and relevant."
+    assert decision.result_sha256 == result_sha
+    assert decision.execution_core_generation == "1" * 64
+    assert decision.core_generation == "d" * 64
+    assert decision.is_current_sealed(object(), custody=object())
+    with pytest.raises(JarvisMasterPlanningDenied):
+        planning.issue_master_review_decision(
+            completion=completion, config=object(), custody=object(),
+            raw_output=json.dumps({"decision": "approved", "result_sha256": "0" * 64,
+                                   "rationale": "Wrong result."}))
 
 
 def test_server_prompt_builders_bind_mission_and_exact_result():

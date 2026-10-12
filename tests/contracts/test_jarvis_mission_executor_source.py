@@ -46,6 +46,112 @@ def test_mission_result_requires_matching_native_child_start_and_successful_comp
     ]) == (False, False)
 
 
+def test_jarvis_review_sink_requires_current_exact_result_then_records_idempotently(tmp_path):
+    """Exercise the actual SQLite review CAS, distinct result turn, and separate owner gate."""
+    from dataclasses import replace
+
+    from hermes_installer.remote.jarvis_mission_executor import MissionExecutionAdapter
+    from hermes_installer.remote.jarvis_master_planning import issue_master_review_decision
+    from hermes_installer.remote.core_native_observer import (
+        CoreVerifiedJarvisMasterReviewCompletion, _MASTER_REVIEW_COMPLETION_SEAL,
+    )
+
+    now = time.monotonic()
+    result_text = "Verified completed expert result."
+    result_sha = hashlib.sha256(result_text.encode()).hexdigest()
+    raw_review = __import__("json").dumps({
+        "decision": "approved", "result_sha256": result_sha,
+        "rationale": "The exact result is ready for owner review.",
+    })
+    response_sha = hashlib.sha256(raw_review.encode()).hexdigest()
+    current = {"value": True}
+
+    class RootReceiptClient:
+        def verify_master_review_completion(self, _receipt, *, config=None, custody=None):
+            return current["value"]
+
+    owner_sha = hashlib.sha256(b"owner-a").hexdigest()
+    completion = CoreVerifiedJarvisMasterReviewCompletion(
+        owner_subject_sha256=owner_sha, owner_turn_handle="a" * 32,
+        gateway_turn_id="R" * 24, core_generation=CORE, core_source_generation=SOURCE,
+        prompt_sha256="b" * 64, response_sha256=response_sha,
+        mission_id="M" * 24, revision=2, run_id="run_review_02", result_sha256=result_sha,
+        execution_core_generation=CORE, execution_core_source_generation=SOURCE,
+        response_text=raw_review, completion_handle="C" * 43,
+        expires_monotonic=now + 20, owner_turn_expires_monotonic=now + 240,
+        _client=RootReceiptClient(), _seal=_MASTER_REVIEW_COMPLETION_SEAL)
+    decision = issue_master_review_decision(
+        completion=completion, config=object(), custody=object(), raw_output=raw_review)
+
+    store = JarvisChatStore(tmp_path / "mission-review.sqlite3")
+    conversation = store.create_conversation("owner-a", "runtime-session", "stored-session", CORE)
+    principal = ChatPrincipal("owner-a", time.monotonic() + 120,
+                              time.monotonic() + 120, CORE)
+
+    def completed_turn(text, key):
+        turn_id, _nonce, _conversation = store.begin_turn(
+            "owner-a", conversation["id"], text, key, principal)
+        store.append_delta(turn_id, text)
+        store.finish_turn(turn_id, "completed")
+        return turn_id
+
+    result_turn_id = completed_turn(result_text, "review-result-turn-key-001")
+    review_turn_id = completed_turn(raw_review, "review-owner-turn-key-001")
+    source_binding = __import__("json").dumps({
+        "core_generation": CORE, "core_source_generation": SOURCE,
+    }, sort_keys=True)
+
+    class Service:
+        def _current(self, *_args, **_kwargs):
+            return principal
+
+        async def start_server_turn(self, *_args, **_kwargs):
+            raise AssertionError("review persistence must not start another turn")
+
+    executor = MissionExecutionAdapter(store, Service())
+    with store._connect() as db:
+        db.execute(
+            "INSERT INTO jarvis_mission_runs "
+            "(id,owner,mission_id,revision,plan_sha256,task_sha256,source_binding,"
+            "launch_idempotency_hash,launch_request_hash,conversation_id,gateway_turn_id,"
+            "status,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (decision.run_id, owner_sha, decision.mission_id, decision.revision,
+             "1" * 64, "2" * 64, source_binding, "3" * 64, "4" * 64,
+             conversation["id"], result_turn_id, "queued", time.time(), time.time()))
+        db.execute("CREATE TABLE activity_events (turn_id TEXT,child_ref TEXT,event_type TEXT,status TEXT)")
+        db.executemany("INSERT INTO activity_events VALUES(?,?,?,?)", [
+            (result_turn_id, "5" * 64, "subagent.start", "running"),
+            (result_turn_id, "5" * 64, "subagent.complete", "completed"),
+        ])
+
+    with pytest.raises(ValueError, match="Jarvis has not approved"):
+        executor.review(subject=owner_sha, owner=owner_sha, mission_id=decision.mission_id,
+            revision=decision.revision, decision="accept", idempotency_hash="6" * 64,
+            request_hash="7" * 64)
+
+    current["value"] = False
+    assert executor.record_jarvis_master_review(decision, config=object(), custody=object()) is False
+    current["value"] = True
+    with store._connect() as db:
+        db.execute("UPDATE turns SET partial=? WHERE id=?", ("changed result", result_turn_id))
+    assert executor.record_jarvis_master_review(decision, config=object(), custody=object()) is False
+    with store._connect() as db:
+        db.execute("UPDATE turns SET partial=? WHERE id=?", (result_text, result_turn_id))
+
+    assert executor.record_jarvis_master_review(decision, config=object(), custody=object()) is True
+    assert executor.record_jarvis_master_review(decision, config=object(), custody=object()) is True
+    conflicting = replace(decision, rationale="Conflicting review disposition rationale.")
+    assert executor.record_jarvis_master_review(conflicting, config=object(), custody=object()) is False
+    with store._connect() as db:
+        row = db.execute("SELECT jarvis_review_state,jarvis_review_rationale,"
+                         "jarvis_review_response_sha256,jarvis_review_core_generation,"
+                         "jarvis_review_core_source_generation,jarvis_review_turn_id "
+                         "FROM jarvis_mission_runs WHERE id=?", (decision.run_id,)).fetchone()
+    assert tuple(row) == ("approved", decision.rationale, response_sha,
+                          decision.core_generation, decision.core_source_generation,
+                          review_turn_id)
+
+
 def test_spent_binding_root_preflight_denial_stops_before_owner_registration_or_model_submit(tmp_path):
     binding = MissionBinding(
         schema=2, mission_id="m" * 24, revision=1,

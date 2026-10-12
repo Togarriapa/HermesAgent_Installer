@@ -84,12 +84,15 @@ FEATURE_ASSETS = JarvisFeatureAssets(
 @media(max-width:760px){[data-feature-root="missions"] .jm-grid{grid-template-columns:1fr}[data-feature-root="missions"] .jm-header{align-items:center}}
 """,
     api_routes=(
+        ("POST", "/chat/api/heartbeat"),
+        ("GET", "/chat/api/turns/{turn_id}/events"),
         ("GET", "/chat/api/missions"),
         ("POST", "/chat/api/missions"),
         ("GET", "/chat/api/missions/{mission_id}"),
         ("POST", "/chat/api/missions/{mission_id}/preview"),
         ("POST", "/chat/api/missions/{mission_id}/approve"),
         ("POST", "/chat/api/missions/{mission_id}/launch"),
+        ("POST", "/chat/api/missions/{mission_id}/jarvis-review"),
         ("POST", "/chat/api/missions/{mission_id}/stop"),
         ("POST", "/chat/api/missions/{mission_id}/review"),
     ),
@@ -106,6 +109,8 @@ FEATURE_ASSETS = JarvisFeatureAssets(
   let activePreview = null;
   let activeApprovalNonce = null;
   let launchAttempted = false;
+  const reviewAttemptKeys = new Map();
+  const reviewWatchers = new Set();
   const signal = abort.signal;
   const el = (selector) => root.querySelector(selector);
   const stateNode = el('[data-jm-state]');
@@ -280,14 +285,25 @@ FEATURE_ASSETS = JarvisFeatureAssets(
       const output = document.createElement('pre'); output.className = 'jm-result'; output.textContent = run.result; section.append(output);
       if (run.review_state === 'awaiting_jarvis_review') {
         addText(section, 'p', 'jm-card-meta', 'Jarvis review pending. The owner decision control stays unavailable until Jarvis reviews this exact result.');
+        const review = document.createElement('button');
+        review.type = 'button'; review.className = 'jm-primary';
+        review.textContent = 'Ask Jarvis to review this result';
+        review.addEventListener('click', () => startJarvisReview(preview, run, review), { signal });
+        section.append(review);
       } else if (run.review_state === 'approved') {
         addText(section, 'p', 'jm-card-meta', 'Jarvis reviewed this exact draft. Owner approval is a separate step; no final effect is performed here.');
+        if (typeof run.jarvis_review_rationale === 'string') {
+          addText(section, 'p', 'jm-card-meta', 'Jarvis rationale · ' + run.jarvis_review_rationale);
+        }
         for (const [decision, label] of [['accept', 'Approve reviewed draft'], ['reject', 'Reject reviewed draft']]) {
           const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
           button.addEventListener('click', () => reviewMission(preview, decision, button), { signal }); section.append(button);
         }
       } else if (run.review_state === 'rejected') {
         addText(section, 'p', 'jm-card-meta', 'Jarvis rejected this draft. It cannot be approved for final effects.');
+        if (typeof run.jarvis_review_rationale === 'string') {
+          addText(section, 'p', 'jm-card-meta', 'Jarvis rationale · ' + run.jarvis_review_rationale);
+        }
       }
     }
     if (['queued', 'running'].includes(run.status)) {
@@ -334,6 +350,85 @@ FEATURE_ASSETS = JarvisFeatureAssets(
       await openDetail(preview.mission_id);
       setMessage('Owner decision recorded for the Jarvis-reviewed draft. No final effect was performed.');
     } catch (_) { setMessage('The observed result could not be reviewed.', 'error'); button.disabled = false; }
+  };
+  const watchJarvisReview = (preview, run, reviewTurnId, initialNonce, idempotencyKey) => {
+    let active = true;
+    let nonce = initialNonce;
+    const source = new EventSource('/chat/api/turns/' + encodeURIComponent(reviewTurnId) + '/events', { withCredentials: true });
+    const close = () => {
+      if (!active) return;
+      active = false;
+      window.clearInterval(heartbeatTimer);
+      source.close();
+      reviewWatchers.delete(close);
+    };
+    const fail = (message) => { close(); setMessage(message, 'error'); };
+    const finish = async (status) => {
+      if (!active) return;
+      close();
+      if (status !== 'completed') {
+        setMessage('Jarvis review did not complete. Refresh this mission before starting another review.', 'error');
+        return;
+      }
+      setMessage('Jarvis completed the review. Recording its exact result-bound decision…');
+      try {
+        await api.post('/chat/api/missions/' + encodeURIComponent(preview.mission_id) + '/jarvis-review', {
+          revision: preview.revision, run_id: run.run_id,
+          idempotency_key: idempotencyKey, turn_id: reviewTurnId
+        });
+        reviewAttemptKeys.delete(preview.mission_id + ':' + preview.revision + ':' + run.run_id);
+        await openDetail(preview.mission_id);
+        setMessage('Jarvis review was recorded. Owner approval remains a separate action; no final effect was performed.');
+      } catch (_) {
+        setMessage('Jarvis finished, but its review could not be confirmed. Refresh the mission before taking another action.', 'error');
+      }
+    };
+    const heartbeatTimer = window.setInterval(async () => {
+      if (!active || !nonce) return;
+      const current = nonce;
+      nonce = null;
+      try {
+        const renewed = await api.post('/chat/api/heartbeat', { turnId: reviewTurnId, nonce: current });
+        if (!active) return;
+        if (!renewed || renewed.turnId !== reviewTurnId || typeof renewed.nonce !== 'string'
+            || !/^[0-9a-f]{64}$/.test(renewed.nonce)) {
+          fail('Jarvis review connection could not be renewed. Refresh the mission to check its state.');
+          return;
+        }
+        nonce = renewed.nonce;
+      } catch (_) {
+        fail('Jarvis review connection ended before confirmation. Refresh the mission before retrying.');
+      }
+    }, 2000);
+    source.addEventListener('turn.completed', () => finish('completed'));
+    source.addEventListener('turn.failed', () => finish('failed'));
+    source.addEventListener('turn.cancelled', () => finish('cancelled'));
+    reviewWatchers.add(close);
+    setMessage('Jarvis is reviewing the exact completed Mission result. Keep this page open until the review is confirmed.');
+  };
+  const startJarvisReview = async (preview, run, button) => {
+    const attemptId = preview.mission_id + ':' + preview.revision + ':' + run.run_id;
+    const idempotencyKey = reviewAttemptKeys.get(attemptId) || actionKey();
+    reviewAttemptKeys.set(attemptId, idempotencyKey);
+    button.disabled = true;
+    setMessage('Starting a no-tools Jarvis review of the exact completed result…');
+    try {
+      const result = await api.post('/chat/api/missions/' + encodeURIComponent(preview.mission_id) + '/jarvis-review', {
+        revision: preview.revision, run_id: run.run_id,
+        idempotency_key: idempotencyKey, turn_id: ''
+      });
+      if (!result || result.review_status !== 'queued'
+          || typeof result.review_turn_id !== 'string'
+          || !/^[A-Za-z0-9_-]{24,64}$/.test(result.review_turn_id)
+          || typeof result.heartbeat_nonce !== 'string'
+          || !/^[0-9a-f]{64}$/.test(result.heartbeat_nonce)) {
+        throw new Error('invalid Jarvis review admission');
+      }
+      watchJarvisReview(preview, run, result.review_turn_id, result.heartbeat_nonce, idempotencyKey);
+    } catch (_) {
+      setMessage('Jarvis review start could not be confirmed. Refresh before retrying; an uncertain start is never duplicated automatically.', 'error');
+      button.disabled = false;
+    }
   };
   const load = async () => {
     const requestGeneration = ++generation;
@@ -413,7 +508,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     }
   }, { signal });
   void load();
-  return () => { mounted = false; generation += 1; abort.abort(); };
+  return () => { mounted = false; generation += 1; for (const close of [...reviewWatchers]) close(); abort.abort(); };
 }''',
     unmount_js="function unmount() {}",
 )
