@@ -563,6 +563,43 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         ? /^[A-Za-z0-9._~-]+$/.test(actual[index]) && actual[index] !== "." && actual[index] !== ".."
         : part === actual[index]);
   }
+  function featureRouteMatches(feature, route, method, path) {
+    if (typeof path !== "string" || path.includes("#") || /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(path)) return false;
+    const queryAt = path.indexOf("?");
+    if (queryAt < 0) return featurePathMatches(route.path, path);
+    if (queryAt === 0 || path.indexOf("?", queryAt + 1) >= 0
+        || feature.id !== "second-brain" || method !== "GET") return false;
+    const pathname = path.slice(0, queryAt);
+    const query = path.slice(queryAt + 1);
+    if ((pathname !== "/chat/api/second-brain/notes"
+         && pathname !== "/chat/api/second-brain/search")
+        || route.path !== pathname || !query) return false;
+    const search = pathname.endsWith("/search");
+    const allowed = search ? new Set(["limit", "cursor", "query"])
+      : new Set(["limit", "cursor"]);
+    const values = new Map();
+    for (const pair of query.split("&")) {
+      if (!pair || !pair.includes("=")) return false;
+      const separator = pair.indexOf("=");
+      const key = pair.slice(0, separator);
+      const rawValue = pair.slice(separator + 1);
+      if (!allowed.has(key) || values.has(key) || /%(?![0-9A-Fa-f]{2})/.test(rawValue)) return false;
+      let value;
+      try { value = decodeURIComponent(rawValue.replace(/\+/g, " ")); }
+      catch (_) { return false; }
+      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) return false;
+      values.set(key, value);
+    }
+    const limit = values.get("limit");
+    if (!limit || !/^(?:[1-9]|[1-4][0-9]|50)$/.test(limit)) return false;
+    const cursor = values.get("cursor");
+    if (cursor !== undefined && !/^v1:(?:0|[1-9][0-9]{0,5})$/.test(cursor)) return false;
+    if (search) {
+      const text = values.get("query");
+      if (text === undefined || !text.trim() || [...text].length > 256) return false;
+    } else if (values.has("query")) return false;
+    return true;
+  }
   function renderCoreStatus(root, core, failed = false) {
     const status = root.querySelector("[data-core-status]");
     const readiness = root.querySelector("[data-core-readiness]");
@@ -589,7 +626,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   }
   function featureApi(feature, root) {
     const requestFeature = (method, path, body) => {
-      if (!feature.routes.some((route) => route.method === method && featurePathMatches(route.path, path))) {
+      if (!feature.routes.some((route) => route.method === method && featureRouteMatches(feature, route, method, path))) {
         return Promise.reject(new Error("This dashboard view is not allowed to call that service route."));
       }
       const result = request(path, method === "GET" ? {method} : {method, body: JSON.stringify(body)});

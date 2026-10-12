@@ -650,6 +650,69 @@ SUBMIT
             )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_second_brain_query_routes_are_bounded_get_effects(self):
+        _content_type, script = reviewed_client_bundle()
+        client = script.decode("utf-8")
+        route_helpers = "function featurePathMatches(template, path) {" + client.split(
+            "function featurePathMatches(template, path) {", 1)[1].split(
+                "\n  function renderCoreStatus(", 1)[0]
+        feature_api = "function featureApi(feature, root) {" + client.split(
+            "function featureApi(feature, root) {", 1)[1].split(
+                "\n  function unmountFeature()", 1)[0]
+        asset = next(feature for feature in FEATURE_ASSETS if feature.feature_id == "second-brain")
+        routes = json.dumps(
+            [{"method": method, "path": path} for method, path in asset.api_routes],
+            separators=(",", ":"),
+        )
+        harness = r'''const assert = require("node:assert/strict");
+const requests = [];
+function request(path, options) {
+  requests.push({path, options});
+  return Promise.resolve({notes: [], nextCursor: null});
+}
+ROUTE_HELPERS
+FEATURE_API
+(async () => {
+  const api = featureApi({id: "second-brain", routes: FEATURE_ROUTES}, {});
+  await api.get("/chat/api/second-brain/notes?limit=50");
+  await api.get("/chat/api/second-brain/search?limit=20&query=project%20notes");
+  await api.get("/chat/api/second-brain/notes?limit=50&cursor=v1%3A12");
+  assert.deepEqual(requests, [
+    {path: "/chat/api/second-brain/notes?limit=50", options: {method: "GET"}},
+    {path: "/chat/api/second-brain/search?limit=20&query=project%20notes", options: {method: "GET"}},
+    {path: "/chat/api/second-brain/notes?limit=50&cursor=v1%3A12", options: {method: "GET"}}
+  ]);
+  for (const path of [
+    "/chat/api/second-brain/notes?limit=0",
+    "/chat/api/second-brain/notes?limit=50&limit=1",
+    "/chat/api/second-brain/notes?limit=50&unknown=x",
+    "/chat/api/second-brain/notes?limit=50&cursor=v2%3A1",
+    "/chat/api/second-brain/notes?limit=50&cursor=v1%3A01",
+    "/chat/api/second-brain/search?limit=50",
+    "/chat/api/second-brain/search?limit=50&query=%20%20",
+    "/chat/api/second-brain/search?limit=50&query=one&query=two",
+    "/chat/api/second-brain/search?limit=50&query=%E0%A4%A",
+    "/chat/api/second-brain/search?limit=50&query=" + "x".repeat(257),
+    "/chat/api/second-brain/notes?limit=50&%6cimit=1",
+    "/chat/api/second-brain/notes?limit=50&cursor=%GG",
+    "/chat/api/second-brain/notes?limit=50&cursor",
+    "/chat/api/second-brain/notes?limit=50#fragment",
+    "https://example.test/chat/api/second-brain/notes?limit=50",
+    "/chat/api/second-brain/overview?limit=50"
+  ]) {
+    await assert.rejects(api.get(path));
+  }
+  assert.equal(requests.length, 3, "invalid or out-of-scope routes must never reach request()");
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+'''.replace("FEATURE_ROUTES", routes).replace("ROUTE_HELPERS", route_helpers).replace("FEATURE_API", feature_api)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "second-brain-query-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                ["node", str(path)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_accepted_queued_turn_exposes_stop_until_terminal_cleanup(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         source = script.decode("utf-8")
