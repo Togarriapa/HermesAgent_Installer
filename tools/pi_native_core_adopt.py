@@ -1936,6 +1936,7 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
                 "old_inspector_sha256", "old_config_sha256", "new_gateway_sha256",
                 "new_inspector_sha256", "new_config_sha256", "post_core_config_sha256",
                 "runtime_inspector_sha256", "new_gateway_config", "adapter_refresh"}
+        final_keys = keys | {"prior_completed_ingress_sha256"}
         legacy_keys = keys - {"post_core_config_sha256", "runtime_inspector_sha256",
                               "new_gateway_config", "adapter_refresh"}
         if type(value) is dict and set(value) == legacy_keys:
@@ -1956,11 +1957,11 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
             value["adapter_refresh"] = None
         elif type(value) is dict and set(value) == keys - {"adapter_refresh"}:
             value["adapter_refresh"] = None
-        elif type(value) is dict and set(value) == keys | {"prior_completed_ingress_sha256"}:
+        elif type(value) is dict and set(value) == final_keys:
             pass
         if type(value) is dict and "prior_completed_ingress_sha256" not in value:
             value["prior_completed_ingress_sha256"] = None
-        if (type(value) is not dict or set(value) != keys or type(value["schema"]) is not int
+        if (type(value) is not dict or set(value) != final_keys or type(value["schema"]) is not int
                 or value["schema"] != 1 or value["candidate_sha"] != candidate_sha
                 or value["state"] not in {"prepared", "units-switched", "migrated", "recovery-required"}
                 or value["gateway_mode"] != 0o440 or value["gateway_gid"] != 981

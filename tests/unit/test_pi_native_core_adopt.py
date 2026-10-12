@@ -1064,6 +1064,7 @@ def test_backup_reader_binds_exact_prospective_config_digest(monkeypatch):
     value.pop("new_gateway_config")
     legacy_loaded, *_ = adopt._backup_value(candidate)
     assert legacy_loaded["new_gateway_config"] is None
+    assert legacy_loaded["prior_completed_ingress_sha256"] is None
 
 
 @pytest.mark.parametrize("action", ["--rollback", "--resume"])
