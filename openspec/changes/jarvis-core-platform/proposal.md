@@ -1,5 +1,7 @@
 # Proposal
 
+Existing household admission repair within R0200..R0208/RT-T266.3: remove the gateway's accidental one-email configuration limit and accept the bounded normalized explicitly approved household allowlist while preserving the original address. Signed Access principal/subject ownership, optional-directory compatibility, CSRF and original leases remain enforced. Admission does not confer global Extensions/Obsidian ownership or final-effect authority; their operation-specific protected gates remain separate. No new requirement or acceptance closure.
+
 Complete the existing M1 startup producer's real process boundary: Root CLI owns a short-lived fixed lifecycle-only observer/socket captured from its actual held new peer and receives its local registry directly. Preserve the separate old Inspector/socket/public URL; no cross-process global, old-source custody relabeling or generic observer grant. Actual new-peer terminal proof and exact owned cleanup/recovery remain required; no scope or acceptance closure.
 
 Clarify only the M1 interrupted initial-adoption recovery boundary: a separate Root-issued offline rollback-only custody verifies stopped owned service and exact retained/current files, allowing safe prior-SOUL/journal restoration without the live peer that the boot guard correctly denies. Live adoption and genuine startup proof remain mandatory on the positive path; no new grants or acceptance closure.

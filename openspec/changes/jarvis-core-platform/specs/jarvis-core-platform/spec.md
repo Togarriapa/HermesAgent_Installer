@@ -2317,6 +2317,11 @@ Within R0203 and HI-T266.2/RT-T266.3/RB-T266.4/VD-T266.5, root SHALL retain genu
 ### Requirement: Household identity compatibility and private-data continuity
 Within R0200..R0205, server identity SHALL derive from verified Access issuer/configured audience/subject. Optional household-directory adoption SHALL preserve valid existing access and owned data through versioned migration/rollback. Shared devices SHALL disclose current account and separate explicitly shared data; persona/email/speaker/device/caller claims SHALL NOT grant private access or final authority.
 
+#### Scenario: Explicit approved household email set
+- **WHEN** the owner adds approved household emails while retaining the existing address
+- **THEN** protected gateway configuration accepts1..32 valid bounded unique normalized addresses, including the approved3-address case, and independently admits each genuine signed Access principal through existing subject ownership/CSRF/currentness gates without mandatory directory enrollment.
+- **AND** malformed/duplicate/over-bound entries, unsigned email claims and cross-owner reads deny; email membership does not confer global Extensions/vault ownership or final-action approval. Future token duration never renews old turns/leases; missing operation-specific owner seams remain pending and existing data is preserved.
+
 #### Scenario: Existing user, namespace migration or account switch
 - **WHEN** an existing valid user has no directory entry, old subject-owned history is namespaced, or a shared tablet switches accounts
 - **THEN** valid access persists, old records remain owned/readable or explicitly preserved pending ambiguous recovery, stale private view state clears and another principal cannot obtain history/private knowledge; no silent empty replacement or email-based reassignment occurs.
