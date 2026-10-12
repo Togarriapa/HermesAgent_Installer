@@ -75,23 +75,24 @@ CORE_NATIVE_ADAPTER_SOURCE = Path(__file__).resolve(strict=True).parents[2]
 CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/__init__.py": "61ac3dfa3bd8505d5296065d597b9b76c4a42c1f17c706c2d67f4fee2b193242",
     "hermes_installer/remote/__init__.py": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
-    "hermes_installer/remote/core_client.py": "ebc380ed001839668a802ad55ce729574f3fa91771b766f41a43772130f3959b",
-    "hermes_installer/remote/core_native_observer.py": "6609d9afcbf3750b43cf5ca5d1dd023258c6272e703af7e6f125d3dbfee107b0",
+    "hermes_installer/remote/core_client.py": "0b9551a01d35c8491989645580cc7b85c1b7db5f73240d3bf28c33d78833f87e",
+    "hermes_installer/remote/core_native_observer.py": "3206978ece01d03816654685fa9443556e0f476c2e85570a8e6469c4d6e4c3be",
+    "hermes_installer/remote/core_lifecycle_startup.py": "19f2463fa45a2b1cdb827e72dc2ebbcda1983b24fa0d9cd52f8da77c32110f37",
     "hermes_installer/remote/jarvis_project_context_engine.py": "a4e1729960d6445c55225859b802860c014671c275d395794f3755c51b7a675a",
     "hermes_installer/primary_prompt_manager.py": "19c2b13bfe8856bfd8cc7c0f7a0a1a8132b728e581d9cb61ebc75d506a5d3216",
-    "hermes_installer/core_runtime.py": "5570c89f925996659fb4754f03697fa283cfcebe9f3b9d8b9d5abda4e6b82be5",
-    "hermes_installer/registry/manual_jarvis_skills.py": "623f139795d1d5cc3f35b0ebb8bd8bdf07cc57f8f39edc2bb1abeae283f44f6a",
-    "hermes_installer/registry/resources_skill_overlay.py": "cd8637322c4bde5e2a3208cc86b365ed2bbdb536af448e0d129a04e6f8bcc5e9",
+    "hermes_installer/core_runtime.py": "6969b3713697717ffa5b0685ae92915ceb09fd2e7ac09bac04469fe978ed183b",
+    "hermes_installer/registry/manual_jarvis_skills.py": "9aee42af8fe3d317f49554f81ff0bbfb334990d3a146bf9c550a4a00e97cd063",
+    "hermes_installer/registry/resources_skill_overlay.py": "eb37f5e1048fe852dc99a94513cfc365b7c2507931ee6bf8f4b1f18a28902e10",
     "hermes_installer/remote/jarvis_profile_source_adapter.py": "48cf1015d3c997a4b949b5bb8d2d2593d04bcec677f3a3b10fa43cff1cf130c6",
     "hermes_installer/remote/native_child_adapter.py": "40578754388a04114b6103056051bf7362ac5e9b34195626b16c882c76547de8",
-    "hermes_installer/remote/jarvis_master_planning.py": "3c41534b775b6ccdd1730e79d3a39a30d79075337863ba410e4572d18598f271",
+    "hermes_installer/remote/jarvis_master_planning.py": "e01bd654c3503d4916e5e6e2034300998b11f19433ac2acd1db4eca1e4ad68be",
     "hermes_installer/remote/native_plugin_bootstrap.py": "1644827ce4490f8ad091752f5eb98ed7986f54d652465829d3a1dad1730180f5",
-    "hermes_installer/remote/jarvis_mission_executor.py": "47f00e5d89cc88e98eccd6a838b212c4161c21f6621110ace131236bf22c6cfe",
+    "hermes_installer/remote/jarvis_mission_executor.py": "35cd3c5dab7157f086558c193e6c3d1526d5cd173d5f49c2b5df84f0a3433eef",
     "hermes_installer/components/__init__.py": "eb02d685a1fb560210c2915296f7553e279e100b511d6b63892d3e877ccd7e7b",
     "hermes_installer/components/resources_internal_dispatch.py": "47c3eb1ec9e21d15d9f86f184dad3e2020878e6d8b3de2edf4a63568f141aecd",
     "hermes_installer/components/resources_active_profile_source.py": "408ac8e98609b5beab00b048ec28f5e3c6c7e01868295148e334c68542d077dc",
     "hermes_installer/components/resources_native_plugin_bundle/plugin.yaml": "a3310f4d5645680ef10b62a99894a251cecde21ba04bdab113335463a3fad852",
-    "hermes_installer/components/resources_native_plugin_bundle/__init__.py": "5e53bed15035a6a5aebc801f80230718096c8b5d3cae3a76afc96d4870bfe051",
+    "hermes_installer/components/resources_native_plugin_bundle/__init__.py": "0880a490259b8a62881db7474662eb3d288475c3a6a44b3e22de222335c96f67",
     "hermes_installer/native_invocations.py": "16878d0b5416a763743ca9fa8b1714db93e5c9b063d3f71880ca429ebf16dc63",
     "hermes_installer/remote/jarvis_final_effects.py": "6ffe4b6927eab34a4fddbf4aeb09d1443c7d3275f1593ff8bbaa0ad7d526fc2a",
     "hermes_installer/remote/jarvis_chat.py": "ee42c4160d65fb65883e5d22d9e649fbf259cb023927ce23e0218276dde737d7",
@@ -105,7 +106,7 @@ CORE_NATIVE_ADAPTER_SOURCE_FILES = {
 }
 CORE_NATIVE_PLUGIN_STAGED_FILES = {
     "plugin.yaml": "a3310f4d5645680ef10b62a99894a251cecde21ba04bdab113335463a3fad852",
-    "__init__.py": "5e53bed15035a6a5aebc801f80230718096c8b5d3cae3a76afc96d4870bfe051",
+    "__init__.py": "0880a490259b8a62881db7474662eb3d288475c3a6a44b3e22de222335c96f67",
 }
 CORE_NATIVE_PLUGIN_ID = "hermes-installer-resources-delegation"
 CORE_PYVENV_CFG_SHA256 = "d982d4b71a70c99f49afef3c0b2cf683c2f053a802da8885d366657b9565f1ad"
