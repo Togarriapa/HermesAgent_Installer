@@ -2333,6 +2333,11 @@ Within R0200..R0205, server identity SHALL derive from verified Access issuer/co
 - **AND** the real fixed candidate Core qualification and independent committed-source/binding proof precede new Inspector/observer/Gateway/config-union activation. Legacy migration and sole-owner vault preparation are not invoked; existing registration/vault remain exact or absent/pending.
 - **AND** recovery uses actual retained adapter-update/primary rollback custody before exact old ingress restoration, never legacy backups, guessed process authority, repeated uncertain effects or revived leases. Real target positive/recovery and added-user login remain required; eight groups OPEN.
 
+#### Scenario: Completed prior ingress snapshot before successor refresh
+- **WHEN** an already-adapter refresh finds a retained prior ingress record
+- **THEN** only a structurally valid completed record genuinely matching the current active owned source/unit/config/Core/process cohort may hand off under a fixed Root lock. Exact raw protected bytes and referenced backups remain immutable in fixed digest-addressed history; a staged successor journal replaces the active slot atomically after last custody/byte CAS and binds the verified predecessor digest.
+- **AND** nonterminal, uncertain, foreign, changed or archive-conflicting records deny before public effects; interrupted handoff leaves either the old record or exact resumable successor, never an empty slot. Immediate rollback uses the successor's old adapter cohort, preserving auth/owner/Resources/overlays/vault and older legacy rollback history without replaying it.
+
 #### Scenario: Existing user, namespace migration or account switch
 - **WHEN** an existing valid user has no directory entry, old subject-owned history is namespaced, or a shared tablet switches accounts
 - **THEN** valid access persists, old records remain owned/readable or explicitly preserved pending ambiguous recovery, stale private view state clears and another principal cannot obtain history/private knowledge; no silent empty replacement or email-based reassignment occurs.

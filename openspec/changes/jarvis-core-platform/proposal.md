@@ -1,5 +1,7 @@
 # Proposal
 
+Within existing M1/R0201/R0203, let a genuinely completed retained ingress snapshot hand off to an already-adapter source refresh: verify its actual current cohort, durably retain immutable exact protected history and atomically replace only the active journal with the staged successor. Preserve legacy rollback/data/auth; uncertain or drifted prior transactions still deny. This corrects the actual Pi62 pre-effect refusal without changing authority or acceptance.
+
 Complete existing M1 deployment for an already active adapter Core: a finite Root-derived refresh lane closes public ingress, runs the real candidate Core qualification, then binds new Inspector/Gateway/config union with actual fresh observer custody. Preserve the original ingress/Core/data snapshots and restore actual adapter-update backups on failure; legacy migration stays distinct. Existing owned socket presence is verified and retired precisely, never blanket-deleted. No new framework, scope or acceptance closure.
 
 Bind the already approved household email union into the existing Root ingress source-adoption transaction instead of editing its configuration afterward. Use finite bounded standard-input intake before effects, retain exact original and prospective protected config bytes/digests, and resume/rollback that same cohort. Preserve original users and leases; extra household admission does not grant global owner capabilities. This is existing R0200..R0208 scope, with acceptance OPEN.
