@@ -33,6 +33,34 @@ GATEWAY_CONFIG = Path("/etc/hermes-installer/jarvis-core-gateway.json")
 INGRESS_BACKUP = Path("/var/lib/hermes-installer/core-runtime/native-adoption-ingress-backup.json")
 _SOURCE_PATH = re.compile(rb"/opt/hermes-installer-core-[0-9a-f]{9,64}/src\Z")
 
+_CORE_MIGRATION_REASON_CODES = {
+    "requires installed Linux root actor": "root_actor_required",
+    "prior plugin selection snapshot is not verified": "prior_selection_snapshot_unverified",
+    "prior plugin selection could not be journaled; migration was not started": "prior_selection_journal_failed",
+    "native bridge activation did not verify the fixed plugin": "native_plugin_activation_unverified",
+    "native plugin selection is not currently verified": "native_plugin_selection_unverified",
+    "native bridge activation is not current": "native_bridge_generation_unverified",
+    "adapter activation failed; protected migration backup retained": "activation_failed_backup_retained",
+    "native bridge activation is unavailable; existing core remains active": "native_bridge_unavailable",
+    "journal-owned core changed during native bridge activation": "core_changed_during_activation",
+    "service unit ownership changed before restart": "unit_ownership_changed_before_restart",
+    "adapter core post-restart custody is not current": "post_restart_custody_unverified",
+    "adapter core journal proof differs after restart": "post_restart_journal_unverified",
+    "service unit changed during migration rollback": "unit_changed_during_rollback",
+    "service process is no longer the journal-owned core": "core_process_ownership_lost",
+    "prior owned core did not recover after migration rollback": "prior_core_recovery_failed",
+    "adapter migration failed; protected backup retained for fixed recovery": "migration_failed_backup_retained",
+    "adapter migration failed; original core service files and journal were restored": "migration_failed_prior_files_restored",
+}
+
+
+def _core_migration_reason_code(core_runtime, error: BaseException) -> str | None:
+    """Map only exact, reviewed CoreRuntimeError messages to fixed safe codes."""
+    error_type = getattr(core_runtime, "CoreRuntimeError", None)
+    if type(error) is not error_type or len(error.args) != 1 or type(error.args[0]) is not str:
+        return None
+    return _CORE_MIGRATION_REASON_CODES.get(error.args[0])
+
 
 def _run(*args: str, check: bool = True) -> str:
     try:
@@ -756,6 +784,9 @@ def main() -> int:
             print("Prior Core verified: " + ("yes" if recovered else "no"))
             print("Prior Inspector/Gateway/tunnel cohort restored: " + ("yes" if restored else "no; ingress remains stopped"))
             print("Failed phase: " + failed_phase)
+            if failed_phase == "migrate owned Core and verify listener":
+                reason_code = _core_migration_reason_code(core_runtime, error)
+                print("Core migration reason code: " + (reason_code or "unclassified"))
             print("Failure type: " + type(error).__name__)
             return 4
     except Exception as error:

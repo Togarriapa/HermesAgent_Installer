@@ -272,7 +272,8 @@ def test_cli_rollback_recovers_core_before_restoring_old_ingress(monkeypatch, tm
     assert events[0] == ("source", candidate, source)
 
 
-@pytest.mark.parametrize("failure", [None, "owner", "migration", "inspector-restart", "fresh-observer"])
+@pytest.mark.parametrize("failure", [None, "owner", "migration", "migration-unclassified",
+                                     "inspector-restart", "fresh-observer"])
 def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fresh(
         monkeypatch, tmp_path, failure, capsys):
     candidate = "c" * 40
@@ -294,7 +295,9 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         assert states[adopt.GATEWAY] == states[adopt.TUNNEL] == "inactive"
         events.append("migrate-core")
         if failure == "migration":
-            raise RuntimeError("injected Core migration failure")
+            raise CoreRuntimeError("native bridge activation is unavailable; existing core remains active")
+        if failure == "migration-unclassified":
+            raise RuntimeError("native bridge activation is unavailable; existing core remains active")
         legacy["value"] = False
         return "migration verified"
 
@@ -305,8 +308,12 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         events.append("verify-migrated-core")
         return not legacy["value"]
 
+    class CoreRuntimeError(RuntimeError):
+        pass
+
     core = SimpleNamespace(
         SERVICE="hermes-jarvis-core.service",
+        CoreRuntimeError=CoreRuntimeError,
         _validate_adapter_source_path=lambda: events.append("validate-source"),
         _owned_listener=owned_listener,
         migrate_owned_core_to_adapter_path=migrate,
@@ -439,7 +446,12 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         expected_phase = {
             "owner": "prepare existing Chat owner and vault",
             "migration": "migrate owned Core and verify listener",
+            "migration-unclassified": "migrate owned Core and verify listener",
             "inspector-restart": "restart Inspector for migrated Core PID",
             "fresh-observer": "bind fresh Inspector observer to migrated Core",
         }[failure]
-        assert "Failed phase: " + expected_phase in capsys.readouterr().out
+        output = capsys.readouterr().out
+        assert "Failed phase: " + expected_phase in output
+        if failure in {"migration", "migration-unclassified"}:
+            expected_reason = "native_bridge_unavailable" if failure == "migration" else "unclassified"
+            assert "Core migration reason code: " + expected_reason in output
