@@ -76,7 +76,7 @@ CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/__init__.py": "61ac3dfa3bd8505d5296065d597b9b76c4a42c1f17c706c2d67f4fee2b193242",
     "hermes_installer/remote/__init__.py": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
     "hermes_installer/remote/core_client.py": "ebc380ed001839668a802ad55ce729574f3fa91771b766f41a43772130f3959b",
-    "hermes_installer/remote/core_native_observer.py": "f8c061f3ac9fbd5b9e455c3981f5503e282eb4258e684d32f3b0052d59fcfccc",
+    "hermes_installer/remote/core_native_observer.py": "159c5f5979a2c0b74369c58449b5e28a55b2031160dad3b5a29f9b6947674b07",
     "hermes_installer/remote/jarvis_project_context_engine.py": "a4e1729960d6445c55225859b802860c014671c275d395794f3755c51b7a675a",
     "hermes_installer/primary_prompt_manager.py": "9e5a456478fdae763494da7ae4a197ad4b4cbf60e0ade454793c38713e603289",
     "hermes_installer/core_runtime.py": "5570c89f925996659fb4754f03697fa283cfcebe9f3b9d8b9d5abda4e6b82be5",
