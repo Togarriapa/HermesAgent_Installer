@@ -58,11 +58,13 @@ _MOUNT = r"""function mount(container, api, state) {
   const chatEmpty = $('[data-chat-empty]'), conversationSelect = $('[data-conversation]');
   const addChat = $('[data-add-chat]'), save = $('[data-save]'), archive = $('[data-archive]');
   let stopped = false, projects = [], selected = null, chats = [], vaultNotes = [];
+  const lifecycle = new AbortController();
+  const {signal} = lifecycle;
   const key = () => { const bytes = crypto.getRandomValues(new Uint8Array(24));
     return btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replaceAll('=',''); };
-  const text = (node, value) => { node.textContent = typeof value === 'string' ? value : ''; };
+  const text = (node, value) => { if (!stopped) node.textContent = typeof value === 'string' ? value : ''; };
   async function call(path, options = {}) {
-    const response = await fetch(path, {credentials:'same-origin', cache:'no-store', ...options});
+    const response = await fetch(path, {credentials:'same-origin', cache:'no-store', signal, ...options});
     if (!response.ok) throw new Error(response.status === 404 ? 'That project or chat is unavailable.' : 'The request could not be completed.');
     return response.status === 204 ? {} : response.json();
   }
@@ -79,6 +81,7 @@ _MOUNT = r"""function mount(container, api, state) {
     renderChats(project ? project.chats : []);
   }
   function renderNoteOptions(selectedIds) {
+    if (stopped) return;
     const control = form.elements.obsidianNoteIds;
     control.replaceChildren();
     const byId = new Map(vaultNotes.map(note => [note.noteId, note]));
@@ -98,27 +101,30 @@ _MOUNT = r"""function mount(container, api, state) {
       : 'The owner vault note list is unavailable; existing links remain saved.';
   }
   function renderChats(items) {
+    if (stopped) return;
     chatList.replaceChildren();
     for (const chat of items || []) {
       const li = document.createElement('li'), label = document.createElement('span'), remove = document.createElement('button');
       text(label, chat.title || 'Untitled chat'); remove.type = 'button'; remove.textContent = 'Remove';
       remove.addEventListener('click', async () => {
+        if (stopped) return;
         remove.disabled = true;
         try { await call('/chat/api/conversations/' + encodeURIComponent(chat.id) + '/project',
           {method:'POST', headers:{'Content-Type':'application/json','Idempotency-Key':key()},
            body:JSON.stringify({projectId:null})}); await refresh(); text(status, 'Chat removed from project.'); }
         catch (error) { text(status, error.message || 'Chat could not be moved.'); }
-        finally { remove.disabled = false; }
-      });
+        finally { if (!stopped) remove.disabled = false; }
+      }, {signal});
       li.append(label, remove); chatList.append(li);
     }
     chatEmpty.hidden = (items || []).length > 0;
   }
   function render() {
+    if (stopped) return;
     list.replaceChildren();
     for (const project of projects) { const li = document.createElement('li'), button = document.createElement('button');
       button.type = 'button'; button.dataset.id = project.id; button.textContent = project.title;
-      button.addEventListener('click', () => selectProject(project)); li.append(button); list.append(li); }
+      button.addEventListener('click', () => { if (!stopped) selectProject(project); }, {signal}); li.append(button); list.append(li); }
     empty.hidden = projects.length > 0;
     if (selected) selected = projects.find(item => item.id === selected.id) || null;
     selectProject(selected);
@@ -126,28 +132,29 @@ _MOUNT = r"""function mount(container, api, state) {
   async function refresh() {
     const [projectData, conversationData, trashData] = await Promise.all([
       call('/chat/api/projects'), call('/chat/api/conversations'), call('/chat/api/projects/trash')]);
+    if (stopped) return;
     projects = Array.isArray(projectData.projects) ? projectData.projects : [];
     chats = Array.isArray(conversationData.conversations) ? conversationData.conversations : [];
     trash.replaceChildren();
     const deleted = Array.isArray(trashData.projects) ? trashData.projects : [];
     for (const project of deleted) { const li = document.createElement('li'), label = document.createElement('span'), restore = document.createElement('button');
       text(label, project.title); restore.type = 'button'; restore.textContent = 'Restore';
-      restore.addEventListener('click', async () => { restore.disabled = true;
+      restore.addEventListener('click', async () => { if (stopped) return; restore.disabled = true;
         try { await call('/chat/api/projects/' + encodeURIComponent(project.id) + '/restore',
           {method:'POST', headers:{'Content-Type':'application/json','Idempotency-Key':key()}, body:JSON.stringify({version:project.version})});
           await refresh(); text(status, 'Project restored with its chats.'); }
         catch (error) { text(status, error.message || 'Project could not be restored.'); }
-        finally { restore.disabled = false; }
-      }); li.append(label, restore); trash.append(li); }
+        finally { if (!stopped) restore.disabled = false; }
+      }, {signal}); li.append(label, restore); trash.append(li); }
     trashEmpty.hidden = deleted.length > 0;
     const current = selected && projects.find(item => item.id === selected.id);
     render(); conversationSelect.replaceChildren(new Option('Choose a chat…',''));
     for (const chat of chats) conversationSelect.add(new Option(chat.title || 'Untitled chat', chat.id));
     if (current && current.chats) renderChats(current.chats);
   }
-  $('[data-new]').addEventListener('click', () => { selectProject(null); form.elements.title.focus(); });
+  $('[data-new]').addEventListener('click', () => { if (stopped) return; selectProject(null); form.elements.title.focus(); }, {signal});
   form.addEventListener('submit', async event => {
-    event.preventDefault(); save.disabled = true; text(status, 'Saving project…');
+    event.preventDefault(); if (stopped) return; save.disabled = true; text(status, 'Saving project…');
     const noteIds = Array.from(form.elements.obsidianNoteIds.selectedOptions, option => option.value);
     const payload = {title:form.elements.title.value, instructions:form.elements.instructions.value,
       sharedMemory:form.elements.sharedMemory.value, obsidianNoteIds:noteIds};
@@ -155,41 +162,46 @@ _MOUNT = r"""function mount(container, api, state) {
     try {
       const result = await call(selected ? '/chat/api/projects/' + encodeURIComponent(selected.id) : '/chat/api/projects',
         {method:'POST', headers:{'Content-Type':'application/json','Idempotency-Key':key()}, body:JSON.stringify(payload)});
+      if (stopped) return;
       selected = result.project; await refresh(); text(status, 'Project saved.');
     } catch (error) { text(status, error.message || 'Project could not be saved.'); }
-    finally { save.disabled = false; }
-  });
+    finally { if (!stopped) save.disabled = false; }
+  }, {signal});
   archive.addEventListener('click', async () => {
-    if (!selected) return;
+    if (stopped || !selected) return;
     if (!window.confirm('Move this project to Trash? Its chats and linked note references will be retained here.')) return;
     archive.disabled = true; text(status, 'Moving project to Trash…');
     try { await call('/chat/api/projects/' + encodeURIComponent(selected.id) + '/trash',
       {method:'POST', headers:{'Content-Type':'application/json','Idempotency-Key':key()},
        body:JSON.stringify({version:selected.version})});
+      if (stopped) return;
       selected = null; await refresh(); text(status, 'Project moved to Trash. Its chats remain available in Chats.');
     } catch (error) { text(status, error.message || 'Project could not be deleted.'); }
-    finally { archive.disabled = false; }
-  });
-  conversationSelect.addEventListener('change', () => { addChat.disabled = !selected || !conversationSelect.value; });
+    finally { if (!stopped) archive.disabled = false; }
+  }, {signal});
+  conversationSelect.addEventListener('change', () => { if (!stopped) addChat.disabled = !selected || !conversationSelect.value; }, {signal});
   addChat.addEventListener('click', async () => {
-    if (!selected || !conversationSelect.value) return;
+    if (stopped || !selected || !conversationSelect.value) return;
     addChat.disabled = true; text(status, 'Adding chat…');
     try { await call('/chat/api/conversations/' + encodeURIComponent(conversationSelect.value) + '/project',
       {method:'POST', headers:{'Content-Type':'application/json','Idempotency-Key':key()},
        body:JSON.stringify({projectId:selected.id})});
+      if (stopped) return;
       conversationSelect.value = ''; await refresh(); text(status, 'Chat added to project.');
     } catch (error) { text(status, error.message || 'Chat could not be added.'); }
-    finally { addChat.disabled = !selected; }
-  });
+    finally { if (!stopped) addChat.disabled = !selected; }
+  }, {signal});
   refresh().then(() => text(status, '')).catch(error => text(status, error.message || 'Projects are unavailable.'));
   call('/chat/api/second-brain/notes?limit=50').then(data => {
+    if (stopped) return;
     vaultNotes = Array.isArray(data.notes) ? data.notes : [];
     renderNoteOptions(selected ? selected.obsidianNoteIds || [] : []);
   }).catch(() => {
+    if (stopped) return;
     vaultNotes = [];
     renderNoteOptions(selected ? selected.obsidianNoteIds || [] : []);
   });
-  return () => { stopped = true; };
+  return () => { stopped = true; lifecycle.abort(); };
 }"""
 
 _UNMOUNT = "function unmount() {}"

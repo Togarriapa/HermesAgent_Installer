@@ -88,10 +88,9 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")', client)
         self.assertIn('navSelection === "sessions" && selected === "chat" ? "sessions" : selected', navigation)
         self.assertIn('if (selectedNavigation === "sessions") setPanel(true);', navigation)
-        self.assertIn(
-            'showView(button.dataset.view, button.dataset.openSessions === "true" ? "sessions" : button.dataset.view, featureContext);',
-            client,
-        )
+        self.assertIn('button.dataset.view === selected;', navigation)
+        self.assertIn('const openChats = button.dataset.view === "chat"', client)
+        self.assertIn('showView(button.dataset.view, openChats ? "sessions" : button.dataset.view, featureContext);', client)
         self.assertIn('button.classList.contains("chat-model-link") && conversationId', client)
         self.assertIn("Object.freeze({initialConversationId: context.initialConversationId})", client)
         self.assertIn('showView("overview");', client)

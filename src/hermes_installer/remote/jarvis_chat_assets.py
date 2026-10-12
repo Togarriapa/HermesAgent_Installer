@@ -1780,7 +1780,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     if (selectedNavigation === "sessions") setPanel(true);
     for (const panel of document.querySelectorAll("[data-view-panel]")) panel.hidden = panel.dataset.viewPanel !== selected;
     for (const button of document.querySelectorAll(".nav-item")) {
-      const selectedButton = button.dataset.view === selected && (selectedNavigation !== "sessions" || button.dataset.openSessions === "true");
+      const selectedButton = button.dataset.view === selected;
       if (selectedButton) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
@@ -1915,7 +1915,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     for (const group of document.querySelectorAll(".nav-group")) group.open = false;
     const featureContext = button.classList.contains("chat-model-link") && conversationId
       ? {initialConversationId: conversationId} : {};
-    showView(button.dataset.view, button.dataset.openSessions === "true" ? "sessions" : button.dataset.view, featureContext);
+    const openChats = button.dataset.view === "chat"
+      && window.matchMedia("(max-width: 760px)").matches;
+    showView(button.dataset.view, openChats ? "sessions" : button.dataset.view, featureContext);
   });
   byId("jarvis-home").addEventListener("click", (event) => {
     event.preventDefault();
