@@ -48,6 +48,22 @@ def test_managed_block_parser_denies_edited_or_ambiguous_markers():
         split_managed_block(duplicate, owner_prefix_length=len(prefix), separator=separator)
 
 
+@pytest.mark.parametrize("custody", [None, object()])
+def test_starting_cohort_adoption_and_rollback_reject_unissued_custody_before_effects(
+        monkeypatch, custody):
+    effects = []
+    monkeypatch.setattr(manager, "_ensure_dirs", lambda *_args: effects.append("mkdir"))
+    monkeypatch.setattr(manager, "_read_record", lambda *_args: effects.append("journal-read"))
+    monkeypatch.setattr(manager, "_read_soul", lambda *_args: effects.append("soul-read"))
+
+    with pytest.raises(manager.PrimaryPromptAdoptionError, match="sealed starting-cohort"):
+        manager.adopt_primary_prompt_for_starting_cohort(custody)
+    with pytest.raises(manager.PrimaryPromptAdoptionError, match="sealed starting-cohort"):
+        manager.rollback_primary_prompt_for_starting_cohort(custody)
+
+    assert effects == []
+
+
 def test_atomic_admin_replace_preserves_file_identity_contract_and_refuses_stale_prefix(tmp_path, monkeypatch):
     uid, gid = os.getuid(), os.getgid()
     home = tmp_path / "hermes"
