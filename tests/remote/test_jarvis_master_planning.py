@@ -137,7 +137,7 @@ def test_review_decision_uses_only_a_current_root_review_completion_and_keeps_li
 
     class ObserverReceiptClient:
         def verify_master_review_completion(self, receipt, *, config=None, custody=None):
-            return receipt.completion_handle == "opaque-root-review-handle"
+            return receipt.completion_handle == "opaque-root-review-handle-00000000"
 
     completion = CoreVerifiedJarvisMasterReviewCompletion(
         owner_subject_sha256="a" * 64, owner_turn_handle="b" * 32,
@@ -147,7 +147,7 @@ def test_review_decision_uses_only_a_current_root_review_completion_and_keeps_li
         mission_id=MISSION_ID, revision=3, run_id="run_review_03",
         result_sha256=result_sha, execution_core_generation="1" * 64,
         execution_core_source_generation="2" * 64, response_text=raw,
-        completion_handle="opaque-root-review-handle", expires_monotonic=now + 20,
+        completion_handle="opaque-root-review-handle-00000000", expires_monotonic=now + 20,
         owner_turn_expires_monotonic=now + 300, _client=ObserverReceiptClient(),
         _seal=_MASTER_REVIEW_COMPLETION_SEAL,
     )
