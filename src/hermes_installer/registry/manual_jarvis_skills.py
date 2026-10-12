@@ -16,6 +16,7 @@ import re
 import shutil
 import stat
 import struct
+import sys
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath

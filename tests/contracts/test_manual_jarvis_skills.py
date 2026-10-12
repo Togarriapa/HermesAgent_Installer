@@ -26,6 +26,7 @@ from hermes_installer.registry.manual_jarvis_skills import (
     install_manual_jarvis_skills,
     _verify_owned_generation,
 )
+from hermes_installer.registry import manual_jarvis_skills as manual_skills
 from hermes_installer.registry.resources_skill_overlay import (
     ResourcesSkillOverlayError, build_effective_artifact, pinned_skill_bytes,
 )
@@ -54,6 +55,25 @@ class ManualJarvisSkillsTests(unittest.TestCase):
         (home / "skills" / "user-owned").mkdir()
         (home / "skills" / "user-owned" / "SKILL.md").write_text("user bytes\n", encoding="utf-8")
         return home
+
+    def test_import_bundled_migration_main_reads_retained_archive_from_stdin(self):
+        previous_archive = b"exact retained prior Resources archive"
+        previous_sha = manual_skills.LEGACY_MATERIALIZED_ARTIFACT_SHA256
+        receipt = {"state": "installed", "artifact_sha256": "a" * 64}
+        with patch("sys.stdin", io.BytesIO(previous_archive)), \
+             patch.object(manual_skills, "install_bundled_resources",
+                           return_value=receipt) as importer:
+            result = manual_skills.main([
+                "import-bundled", "--home", "/tmp/hermes-home",
+                "--hermes-source", "/opt/hermes-source", "--python", "/opt/python",
+                "--replace-owned-from-sha256", previous_sha,
+            ])
+        self.assertEqual(result, 0)
+        importer.assert_called_once_with(
+            hermes_home="/tmp/hermes-home", hermes_source="/opt/hermes-source",
+            python="/opt/python", replace_owned_from_archive=previous_archive,
+            replace_owned_from_sha256=previous_sha,
+        )
 
     def test_compiled_master_semantics_are_distinct_from_verbatim_upstream(self):
         manifest, files = _read_artifact(self.bundle, self.digest)
