@@ -24,3 +24,10 @@ Audited source: `2173290cdef9d7968971ef5c5cec82d2051dddad`. Scope: CURRENT-PLAN,
 ## Specification conclusion
 
 The requested UX/features/trust/settings/calendar scope already has current four-artifact requirements; do not generate a new task forest. One genuine refinement is needed: remove the stale Obsidian Expert execution_id=mission_id interpretation in favor of actual child invocation identity joined separately to schema2 mission/source; preserve originating draft identity separately from the current promoting master, and issue the single short promotion scope after current approval. The coherent R0090 artifact clarification accompanies this audit. No implementation code, source pin, remote ref, baseline/tag/history or acceptance status is changed here.
+
+## Finite seam ownership follow-up
+
+- Resources owner: Expert child adapter admits only actual root-policy/schema intersection of four research+six Obsidian nonfinal names. First genuine Team discussion is 2 Experts/2rounds/4completions with recorded actual sender-completion→recipient-input lineage; membership/parallel drafts are not communication.
+- Obsidian owner/ROOT: actual native create-call origin journal joins owner/registration/draftID/content/base to original child/source/mission; root resolves short origin proof for current Jarvis review/promotion, not model-selected execution. Scope issuance occurs after exact current approval, original deadlines remain.
+- Calendar leaf/ROOT: existing google selected-resource read contract is not OAuth/native readiness. Resolve actual enrolled owner account/calendar, three read tools, bounded range/page/timezone/currentness and unavailable/partial states; no generic proxy/account enrollment/write.
+- Profiles/Extensions owner: reuse existing finite selected file descriptors and generation-CAS; create/remove extra context fields only when exact descriptor/source pin/effect exists, otherwise pending. New generation/member source review precedes activation; no wildcard pins.

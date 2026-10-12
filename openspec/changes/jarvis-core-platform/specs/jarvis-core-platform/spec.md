@@ -2190,3 +2190,24 @@ Expert private drafts SHALL retain their actual admitted child execution/source 
 #### Scenario: Approval wait exceeds short scope duration
 - **WHEN** owner approval takes more than 5s but the original observed call/permit remains current
 - **THEN** the short scope is first issued at execution after approval, not extended/replayed from before the wait; original-expired admission still denies without losing the draft or repeating an uncertain effect.
+
+### Requirement: Exact Expert knowledge closure and root draft origin
+Expert child tools SHALL intersect actual native schemas/root-admitted policy with the fixed research and six Obsidian read/private-draft names, excluding promotion/delegation/unreviewed MCP. Draft origin SHALL derive from actual observed create-call and independent owned bytes, resolved by root owner+opaque ID+digest separately from current promoting Jarvis.
+
+#### Scenario: Forged origin or unavailable handler
+- **WHEN** requested tools lack a registered admitted schema or draft origin comes from caller text/file metadata without retained native create lineage
+- **THEN** the operation denies/pends without widening Expert tools or treating another execution's private draft as authorized.
+
+### Requirement: Actual bounded cross-Expert Team discussion
+Team discussion SHALL use verified source/member expansion, real admitted child instances and root-correlated sender completion/excerpt→recipient request/result records. The initial slice SHALL limit two Experts/two rounds/four completions under original deadline and zero-extra-spend scope; final Jarvis review and owner effect authority remain separate.
+
+#### Scenario: Independent drafts or expired round
+- **WHEN** Experts only produce independent drafts, or source/owner/deadline/route currentness fails before delivery
+- **THEN** no Team communication edge is claimed and pending work stops without effect/autonomy or fabricated discussion.
+
+### Requirement: Authentic bounded owner Calendar reads
+Calendar SHALL bind actual enrolled owner account/calendar and source-verified read tools to bounded event/timezone/page projections under current gateway/account custody. Readiness/empty/partial/error SHALL remain truthful; browser/model shall not select credentials/endpoints/arbitrary methods.
+
+#### Scenario: No native account adapter or requested mutation
+- **WHEN** current OAuth/selected-resource read producer is unavailable or an event invitation/create/delete is requested
+- **THEN** read capability stays pending or mutation requires a separate reviewed owner effect; no fake events, account scope expansion or outbound test occurs.
