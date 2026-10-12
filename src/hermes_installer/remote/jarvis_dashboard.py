@@ -478,5 +478,66 @@ def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
             verify_before_response()
             return web.json_response(base)
 
+    async def calendar_selection(request: Any) -> Any:
+        if request.raw_path != request.path:
+            raise web.HTTPNotFound(text="not found")
+        principal = service._current(request)
+        accepted = request.get("core_ingress")
+        launch = request.app.get("core_gateway_launch")
+        if accepted is None or launch is None:
+            raise web.HTTPServiceUnavailable(text="current core ingress unavailable")
+        if request.content_type != "application/json" or (
+                request.content_length is not None and request.content_length > 4096):
+            raise web.HTTPUnsupportedMediaType(text="Calendar selection requires bounded JSON")
+        chunks = bytearray()
+        async for chunk in request.content.iter_chunked(1024):
+            chunks.extend(chunk)
+            if len(chunks) > 4096:
+                raise web.HTTPRequestEntityTooLarge(max_size=4096, actual_size=len(chunks))
+        raw = bytes(chunks)
+        def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate selection field")
+                result[key] = value
+            return result
+        try:
+            body = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=unique_pairs,
+                              parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+        except Exception:
+            raise web.HTTPBadRequest(text="Calendar selection request is malformed") from None
+        if (not isinstance(body, dict) or set(body) != {"schema", "action", "confirmation"}
+                or type(body["schema"]) is not int or body["schema"] != 1
+                or body["action"] not in {"enable", "disable"}
+                or body["confirmation"] != "read-only-calendar-events"):
+            raise web.HTTPBadRequest(text="Calendar owner confirmation is required")
+        assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])
+        if len(assertions) != 1:
+            raise web.HTTPForbidden(text="current authenticated Calendar ingress is required")
+        try:
+            inspector = getattr(service, "inspector", None)
+            if inspector is None:
+                raise ValueError
+            state = await asyncio.wait_for(asyncio.to_thread(
+                inspector.select_owner_calendar, assertions[0], accepted,
+                action=body["action"]), timeout=5.0)
+            current = service._current(request)
+            if (current.subject != principal.subject
+                    or current.core_generation != principal.core_generation
+                    or accepted.verify_current(launch.config) is not True):
+                raise ValueError
+            return web.json_response({"schema": 1, "state": state},
+                dumps=lambda value: json.dumps(value, separators=(",", ":"), allow_nan=False))
+        except web.HTTPException:
+            raise
+        except Exception:
+            if body["action"] == "disable":
+                raise web.HTTPServiceUnavailable(text="Calendar consent could not be removed") from None
+            raise web.HTTPServiceUnavailable(text=(
+                "No current root-published Google Calendar read connection and selected resource are available. "
+                "Complete the protected Google Calendar enrollment, then retry.")) from None
+
     for path in _ROUTES:
         app.router.add_get(path, route, allow_head=False)
+    app.router.add_post("/chat/api/calendar/selection", calendar_selection)

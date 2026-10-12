@@ -4337,6 +4337,13 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
                 peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
                 peer_gid=request.get("peer_gid"))
             maximum = MAX_OWNER_CALENDAR_RESPONSE
+        elif request.get("op") == "select-owner-calendar":
+            from .owner_calendar_native import update_owner_calendar_selection
+            result = update_owner_calendar_selection(config=config, request=request,
+                caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
+                peer_gid=request.get("peer_gid"))
+            maximum = MAX_RESPONSE
         elif request.get("op") == "owner-profile-admin":
             result = observe_profile_admin(config, request=request, caller_pid=caller_pid,
                 caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
@@ -5091,6 +5098,64 @@ class CoreGatewayInspector:
                 or type(result["projection"]) is not dict or time.monotonic() >= deadline):
             raise CoreGatewayDenied("root Obsidian projection is malformed or stale")
         return result["projection"]
+
+    def select_owner_calendar(self, access_jwt: str, accepted_ingress: Any, *,
+                              action: str) -> str:
+        """Record or revoke the owner's separate consent for the selected native Calendar."""
+        from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
+        if (action not in {"enable", "disable"}
+                or type(accepted_ingress) is not CoreAcceptedIngressObservation
+                or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+                or not access_jwt.isascii()
+                or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                    != accepted_ingress.principal.token_fingerprint):
+            raise CoreGatewayDenied("current authenticated Calendar ingress is required")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("current authenticated Calendar ingress is required")
+        proof = accepted_ingress.root_observation
+        nonce = os.urandom(32).hex()
+        deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+        info = os.lstat(CORE_INSPECTOR_SOCKET)
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                or info.st_gid != self._config.gateway_gid or stat.S_IMODE(info.st_mode) != 0o660):
+            raise CoreGatewayDenied("root Calendar inspector is unavailable")
+        body = {"schema": 1, "op": "select-owner-calendar", "nonce": nonce,
+            "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+            "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+            "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": proof.nonce, "ingress_proof_sha256": proof.proof_sha256,
+            "confirmation": "read-only-calendar-events", "action": action}
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES or time.monotonic() >= deadline:
+            raise CoreGatewayDenied("Calendar selection request exceeded its bound")
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            conn.settimeout(max(0.05, deadline - time.monotonic()))
+            conn.connect(str(CORE_INSPECTOR_SOCKET))
+            if not hasattr(socket, "SO_PEERCRED"):
+                raise ValueError
+            pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != 0 or pid <= 1:
+                raise ValueError
+            conn.sendall(struct.pack("!I", len(raw)) + raw)
+            result = _read_frame(conn, deadline, MAX_RESPONSE)
+        except Exception:
+            raise CoreGatewayDenied("root Calendar selection is unavailable") from None
+        finally:
+            conn.close()
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("Calendar ingress changed during selection")
+        if (set(result) != {"schema", "nonce", "ok", "state"}
+                or result.get("schema") != 1 or result.get("nonce") != nonce
+                or result.get("ok") is not True
+                or result.get("state") not in {"selected", "disabled"}
+                or (action == "enable" and result.get("state") != "selected")
+                or (action == "disable" and result.get("state") != "disabled")
+                or time.monotonic() >= deadline):
+            raise CoreGatewayDenied("root Calendar selection result is invalid or stale")
+        return result["state"]
 
     def read_owner_calendar(self, access_jwt: str, accepted_ingress: Any, *,
                             calendar_ref: str | None, start_time: str, end_time: str,

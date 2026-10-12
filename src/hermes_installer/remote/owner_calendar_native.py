@@ -46,12 +46,18 @@ _HASH = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 _SEAL = object()
 _REG_FIELDS = frozenset({
     "schema", "owner_subject_sha256", "connection_id", "generation_sha256",
-    "source_binding_sha256", "provider_principal_id", "credential_consumer_uid",
+    "connection_generation_sha256", "source_binding_sha256",
+    "provider_principal_id", "credential_consumer_uid",
     "credential_ref", "credential_scope", "endpoint", "tool_name",
     "input_schema_sha256", "output_schema_sha256", "invocation_class",
     "calendars", "selected_calendar_ref", "provider_identity_label",
+    "owner_ui_consent", "native_binding_id",
+    "mcp_generation",
 })
 _CALENDAR_FIELDS = frozenset({"calendar_ref", "calendar_id", "label"})
+_CONSENT_FIELDS = frozenset({"schema", "owner_subject_sha256", "action", "confirmed_at",
+                             "core_generation", "connection_generation_sha256",
+                             "source_binding_sha256", "canonical_arguments_sha256"})
 
 
 class OwnerCalendarUnavailable(RuntimeError):
@@ -96,10 +102,11 @@ def _validate_registration(record: Any) -> dict[str, Any]:
             or not _HASH.fullmatch(str(row["owner_subject_sha256"]))
             or not _ID.fullmatch(row["connection_id"])
             or not _HASH.fullmatch(str(row["generation_sha256"]))
+            or not _HASH.fullmatch(str(row["connection_generation_sha256"]))
             or not _HASH.fullmatch(str(row["source_binding_sha256"]))
             or not _ID.fullmatch(row["provider_principal_id"])
             or type(row["credential_consumer_uid"]) is not int
-            or row["credential_consumer_uid"] != 0
+            or row["credential_consumer_uid"] <= 0
             or not isinstance(row["credential_ref"], str)
             or not re.fullmatch(r"[A-Za-z0-9_.-]{1,96}", row["credential_ref"])
             or row["credential_scope"] != "mcp:google-calendar:read"
@@ -108,6 +115,8 @@ def _validate_registration(record: Any) -> dict[str, Any]:
             or not _HASH.fullmatch(str(row["input_schema_sha256"]))
             or not _HASH.fullmatch(str(row["output_schema_sha256"]))
             or row["invocation_class"] != CALENDAR_INVOCATION_CLASS
+            or not _ID.fullmatch(row["native_binding_id"])
+            or not _ID.fullmatch(row["mcp_generation"])
             or not isinstance(row["calendars"], list)
             or not 1 <= len(row["calendars"]) <= MAX_CALENDARS
             or not isinstance(row["selected_calendar_ref"], str)
@@ -134,6 +143,17 @@ def _validate_registration(record: Any) -> dict[str, Any]:
     if label is not None and (not isinstance(label, str) or len(label) > 120
                               or any(ord(char) < 0x20 for char in label)):
         raise OwnerCalendarUnavailable("Calendar identity label is malformed")
+    consent = row["owner_ui_consent"]
+    if (not isinstance(consent, Mapping) or set(consent) != _CONSENT_FIELDS
+            or type(consent["schema"]) is not int or consent["schema"] != 1
+            or consent["owner_subject_sha256"] != row["owner_subject_sha256"]
+            or consent["action"] != "read-only-calendar-dashboard"
+            or not isinstance(consent["confirmed_at"], str)
+            or not _HASH.fullmatch(str(consent["core_generation"]))
+            or consent["connection_generation_sha256"] != row["connection_generation_sha256"]
+            or consent["source_binding_sha256"] != row["source_binding_sha256"]
+            or not _HASH.fullmatch(str(consent["canonical_arguments_sha256"]))):
+        raise OwnerCalendarUnavailable("Calendar owner consent record is unavailable")
     row["calendars"] = clean
     return row
 
@@ -262,11 +282,17 @@ class RootOwnerCalendarReadInvocation:
                 and _HASH.fullmatch(self.request_nonce)
                 and self.owner_subject_sha256 == registration["owner_subject_sha256"]
                 and self.connection_id == registration["connection_id"]
-                and self.connection_generation_sha256 == registration["generation_sha256"]
+                and self.connection_generation_sha256 == registration["connection_generation_sha256"]
                 and self.source_binding_sha256 == registration["source_binding_sha256"]
+                and registration["owner_ui_consent"]["owner_subject_sha256"] == self.owner_subject_sha256
+                and registration["owner_ui_consent"]["canonical_arguments_sha256"]
+                    == hashlib.sha256(_canonical({"calendarId": next(
+                        item["calendar_id"] for item in registration["calendars"]
+                        if item["calendar_ref"] == self.calendar_ref)})).hexdigest()
                 and self.provider_principal_id == registration["provider_principal_id"]
                 and self.credential_consumer_uid == registration["credential_consumer_uid"]
                 and self.credential_scope == registration["credential_scope"]
+                and self.calendar_ref in {item["calendar_ref"] for item in registration["calendars"]}
                 and self.ingress_nonce and _HASH.fullmatch(self.ingress_nonce)
                 and _HASH.fullmatch(self.ingress_proof_sha256)
                 and math.isfinite(now) and math.isfinite(self.issued_monotonic)
@@ -462,6 +488,255 @@ def _discover_schema(session_id: str | None, token: str, deadline: float,
     return session_id
 
 
+def _current_published_calendar_source(config: Any) -> tuple[dict[str, Any], Any]:
+    """Resolve the exact selected Calendar service and schema rows from the live publication."""
+    from ..authority.enrollment import RootCredentialVault, RootMCPCredentialHandle, load_published_protected_enrollment
+    from ..authority.setup_policy_publication import PolicyPublicationReceiptResolver
+    core = None
+    try:
+        core = PolicyPublicationReceiptResolver.resolve_selected_current_authority_core()
+        if core.verify_current() is not core:
+            raise ValueError
+        enrollment = load_published_protected_enrollment(core, vault=RootCredentialVault())
+        if (enrollment.publication_authority_core_sha256 != core.sha256
+                or enrollment.protected_enrollment_digest != core.service_generation_digest):
+            raise ValueError
+        service = enrollment.mcp_services.get(GOOGLE_CALENDAR_SERVICE)
+        from ..authority.enrollment import ProtectedMCPService
+        if (type(service) is not ProtectedMCPService
+                or service.service_id != GOOGLE_CALENDAR_SERVICE or service.channel != "http"
+                or GOOGLE_LIST_EVENTS_TOOL not in service.allowed_tools
+                or tuple(service.selection_arguments.get(GOOGLE_LIST_EVENTS_TOOL, ())) != ("calendarId",)):
+            raise ValueError
+        binding = enrollment.mcp_http_bindings.get(service.transport_binding_id)
+        from ..mcp.enrolled_transport import ProtectedMCPHTTPBinding
+        if (type(binding) is not ProtectedMCPHTTPBinding
+                or binding.binding_id != service.transport_binding_id
+                or binding.service_id != GOOGLE_CALENDAR_SERVICE
+                or binding.endpoint != GOOGLE_CALENDAR_ENDPOINT
+                or binding.endpoint_source_id != "https://developers.google.com/workspace/calendar/api/v3/reference/mcp/tools_list/list_events"
+                or binding.reviewed_revision != service.reviewed_revision
+                or type(binding.credential_handle) is not RootMCPCredentialHandle
+                or binding.credential_handle._service_id != GOOGLE_CALENDAR_SERVICE):
+            raise ValueError
+        owner_binding = enrollment.bindings_by_uid.get(config.core_uid)
+        if owner_binding is None or not isinstance(owner_binding.principal_id, str):
+            raise ValueError
+        native_rows = [row for row in enrollment.native_mcp_tool_binding_records
+            if row.get("mcp_enrollment_id") == GOOGLE_CALENDAR_SERVICE
+            and row.get("mcp_tool_name") == GOOGLE_LIST_EVENTS_TOOL
+            and row.get("effect_operation") == "mcp.request"
+            and row.get("effect_target") == "mcp:google-calendar:http"
+            and row.get("capability") == "mcp:google-calendar:read"
+            and row.get("recipient") is None]
+        if len(native_rows) != 1:
+            raise ValueError
+        native = native_rows[0]
+        scopes = native.get("scope_bindings")
+        if (not isinstance(scopes, list) or len(scopes) != 1
+                or set(scopes[0]) != {"argument_field", "selected_resource_id"}
+                or scopes[0]["argument_field"] != "calendarId"
+                or not _valid_calendar_id(scopes[0]["selected_resource_id"])):
+            raise ValueError
+        schema_rows = enrollment.native_schema_artifact_records
+        expected_schemas = {}
+        for kind, schema_id in (("arguments", native["request_schema_id"]),
+                                ("result", native["result_schema_id"])):
+            matches = [item for item in schema_rows if item.get("id") == schema_id
+                and item.get("schema_kind") == kind
+                and item.get("action_id") == native["id"]
+                and item.get("adapter_id") == native["handler_artifact_id"]
+                and item.get("native_package_id") == native["native_package_id"]
+                and item.get("native_package_generation") == native["native_package_generation"]]
+            if len(matches) != 1 or not _HASH.fullmatch(str(matches[0].get("sha256"))):
+                raise ValueError
+            expected_schemas[kind] = matches[0]["sha256"]
+        credential_ref = binding.credential_handle._reference
+        if (not isinstance(credential_ref, str)
+                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,96}", credential_ref)):
+            raise ValueError
+        source_fields = {
+            "authority_core_sha256": core.sha256,
+            "service_generation_sha256": core.service_generation_digest,
+            "service_id": service.service_id,
+            "transport_binding_id": binding.binding_id,
+            "endpoint": binding.endpoint,
+            "endpoint_source_id": binding.endpoint_source_id,
+            "reviewed_revision": binding.reviewed_revision,
+            "native_binding_id": native["id"],
+            "mcp_generation": native["mcp_generation"],
+            "selected_calendar_id": scopes[0]["selected_resource_id"],
+            "input_schema_sha256": expected_schemas["arguments"],
+            "output_schema_sha256": expected_schemas["result"],
+        }
+        source_digest = hashlib.sha256(_canonical(source_fields)).hexdigest()
+        connection_generation = hashlib.sha256(_canonical({
+            "authority_core_sha256": core.sha256,
+            "mcp_generation": native["mcp_generation"],
+            "transport_binding_id": binding.binding_id,
+        })).hexdigest()
+        from ..authority.enrollment import RootCredentialVault
+        token = RootCredentialVault().resolve_reference(credential_ref,
+            peer_uid=config.core_uid, required_scope="mcp:google-calendar:read",
+            principal_id=owner_binding.principal_id)
+        if not token:
+            raise ValueError
+        token = ""
+        return ({"connection_id": "google-calendar-" + hashlib.sha256(
+                    (binding.binding_id + core.service_generation_digest).encode("ascii")).hexdigest()[:24],
+                 "generation_sha256": core.service_generation_digest,
+                 "connection_generation_sha256": connection_generation,
+                 "mcp_generation": native["mcp_generation"],
+                 "source_binding_sha256": source_digest,
+                 "provider_principal_id": owner_binding.principal_id,
+                 "credential_consumer_uid": config.core_uid,
+                 "credential_ref": credential_ref,
+                 "credential_scope": "mcp:google-calendar:read",
+                 "input_schema_sha256": expected_schemas["arguments"],
+                 "output_schema_sha256": expected_schemas["result"],
+                 "native_binding_id": native["id"],
+                 "calendar_id": scopes[0]["selected_resource_id"],
+                 "calendar_label": "Selected native Calendar",
+                 "authority_core_sha256": core.sha256}, enrollment)
+    except OwnerCalendarUnavailable:
+        raise
+    except Exception:
+        raise OwnerCalendarUnavailable(
+            "No current protected Google Calendar read connection is available") from None
+    finally:
+        if core is not None:
+            try:
+                core.close()
+            except Exception:
+                pass
+
+
+def _calendar_source_is_current(config: Any, registration: Mapping[str, Any]) -> bool:
+    selected, enrollment = _current_published_calendar_source(config)
+    consent = registration["owner_ui_consent"]
+    calendar = next((row for row in registration["calendars"]
+                    if row["calendar_ref"] == registration["selected_calendar_ref"]), None)
+    return bool(calendar is not None
+        and selected["connection_id"] == registration["connection_id"]
+        and selected["generation_sha256"] == registration["generation_sha256"]
+        and selected["connection_generation_sha256"] == registration["connection_generation_sha256"]
+        and selected["mcp_generation"] == registration["mcp_generation"]
+        and selected["source_binding_sha256"] == registration["source_binding_sha256"]
+        and selected["provider_principal_id"] == registration["provider_principal_id"]
+        and selected["credential_consumer_uid"] == registration["credential_consumer_uid"]
+        and selected["credential_ref"] == registration["credential_ref"]
+        and selected["native_binding_id"] == registration["native_binding_id"]
+        and selected["input_schema_sha256"] == registration["input_schema_sha256"]
+        and selected["output_schema_sha256"] == registration["output_schema_sha256"]
+        and selected["calendar_id"] == calendar["calendar_id"]
+        and consent["core_generation"] == selected["authority_core_sha256"])
+
+
+def update_owner_calendar_selection(*, config: Any, request: Mapping[str, Any],
+                                    caller_pid: int, caller_uid: int, caller_gid: int,
+                                    peer_pid: int, peer_uid: int, peer_gid: int) -> dict[str, Any]:
+    """Persist explicit current owner consent for the protected native selection."""
+    from .core_gateway import CORE_GATEWAY_UNIT, CoreGatewayConfig, _read_config_current
+    from .core_gateway_inspector import (
+        _check_unit_process, _consume_ingress_issue, observe_current_ingress,
+    )
+    fields = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+        "core_generation", "ingress_nonce", "ingress_proof_sha256", "confirmation", "action"}
+    if (type(config) is not CoreGatewayConfig or not isinstance(request, Mapping)
+            or set(request) != fields or type(request.get("schema")) is not int or request["schema"] != 1
+            or request.get("op") != "select-owner-calendar"
+            or request.get("confirmation") != "read-only-calendar-events"
+            or request.get("action") not in {"enable", "disable"}
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or caller_uid != config.gateway_uid or type(caller_pid) is not int or caller_pid <= 1
+            or not isinstance(request.get("nonce"), str) or not _HASH.fullmatch(request["nonce"])
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384 or not request["access_jwt"].isascii()
+            or not _HASH.fullmatch(str(request.get("core_generation")))
+            or not _HASH.fullmatch(str(request.get("ingress_nonce")))
+            or not _HASH.fullmatch(str(request.get("ingress_proof_sha256")))):
+        raise OwnerCalendarUnavailable("Calendar owner selection request is invalid")
+    inspector = __import__("hermes_installer.remote.core_gateway_inspector",
+                            fromlist=["_proc_start_ticks"])
+    started_ticks = inspector._proc_start_ticks(caller_pid)
+    retained = _consume_ingress_issue(caller_pid=caller_pid, caller_start_ticks=started_ticks,
+        nonce=request["ingress_nonce"], proof_sha256=request["ingress_proof_sha256"],
+        peer=(peer_pid, peer_uid, peer_gid), core_generation=request["core_generation"], config=config)
+    deadline = min(time.monotonic() + MAX_CALL_SECONDS, retained.expires_monotonic)
+    _read_config_current(config)
+    live = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    pidfd, start_ticks, _ = _check_unit_process(config, unit=CORE_GATEWAY_UNIT,
+        pid=caller_pid, deadline=deadline)
+    try:
+        if (start_ticks != retained.caller_start_ticks
+                or live["proof_sha256"] != retained.proof_sha256
+                or request["core_generation"] != live["core_generation"]):
+            raise OwnerCalendarUnavailable("Calendar owner ingress changed")
+    finally:
+        os.close(pidfd)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(inspector._learning_jwks(config, deadline=deadline)),
+        deadline_monotonic=deadline)
+    owner_hash = hashlib.sha256(principal.subject.encode("utf-8", "strict")).hexdigest()
+    if (principal.email.casefold() not in config.allowed_emails
+            or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest()
+                != principal.token_fingerprint):
+        raise OwnerCalendarUnavailable("Calendar owner selection is not current")
+    existing = list(load_calendar_registrations())
+    if request["action"] == "disable":
+        updated = [row for row in existing if row["owner_subject_sha256"] != owner_hash]
+        write_calendar_registrations(updated)
+        return {"schema": 1, "nonce": request["nonce"], "ok": True, "state": "disabled"}
+    selected, _enrollment = _current_published_calendar_source(config)
+    calendar_ref = secrets.token_urlsafe(32)
+    calendar = {"calendar_ref": calendar_ref, "calendar_id": selected["calendar_id"],
+        "label": selected["calendar_label"]}
+    args = {"calendarId": selected["calendar_id"]}
+    confirmed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    consent = {"schema": 1, "owner_subject_sha256": owner_hash,
+        "action": "read-only-calendar-dashboard", "confirmed_at": confirmed_at,
+        "core_generation": selected["authority_core_sha256"],
+        "connection_generation_sha256": selected["connection_generation_sha256"],
+        "source_binding_sha256": selected["source_binding_sha256"],
+        "canonical_arguments_sha256": hashlib.sha256(_canonical(args)).hexdigest()}
+    record = _validate_registration({"schema": 1,
+        "owner_subject_sha256": owner_hash,
+        "connection_id": selected["connection_id"],
+        "generation_sha256": selected["generation_sha256"],
+        "connection_generation_sha256": selected["connection_generation_sha256"],
+        "mcp_generation": selected["mcp_generation"],
+        "source_binding_sha256": selected["source_binding_sha256"],
+        "provider_principal_id": selected["provider_principal_id"],
+        "credential_consumer_uid": selected["credential_consumer_uid"],
+        "credential_ref": selected["credential_ref"],
+        "credential_scope": selected["credential_scope"],
+        "endpoint": GOOGLE_CALENDAR_ENDPOINT, "tool_name": GOOGLE_LIST_EVENTS_TOOL,
+        "input_schema_sha256": selected["input_schema_sha256"],
+        "output_schema_sha256": selected["output_schema_sha256"],
+        "invocation_class": CALENDAR_INVOCATION_CLASS,
+        "calendars": [calendar], "selected_calendar_ref": calendar_ref,
+        "provider_identity_label": None, "owner_ui_consent": consent,
+        "native_binding_id": selected["native_binding_id"]})
+    updated = [row for row in existing if row["owner_subject_sha256"] != owner_hash]
+    updated.append(record)
+    if not _calendar_source_is_current(config, record):
+        raise OwnerCalendarUnavailable("Calendar source changed before consent was stored")
+    _read_config_current(config)
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    if current["proof_sha256"] != retained.proof_sha256 or time.monotonic() >= deadline:
+        raise OwnerCalendarUnavailable("Calendar owner consent expired before storage")
+    write_calendar_registrations(updated)
+    return {"schema": 1, "nonce": request["nonce"], "ok": True, "state": "selected"}
+
+
 def perform_owner_calendar_read(*, config: Any, request: Mapping[str, Any],
                                 caller_pid: int, caller_uid: int, caller_gid: int,
                                 peer_pid: int, peer_uid: int, peer_gid: int) -> dict[str, Any]:
@@ -544,7 +819,7 @@ def perform_owner_calendar_read(*, config: Any, request: Mapping[str, Any],
         schema=1, invocation_class=CALENDAR_INVOCATION_CLASS,
         request_nonce=request["nonce"], owner_subject_sha256=owner_hash,
         connection_id=registration["connection_id"],
-        connection_generation_sha256=registration["generation_sha256"],
+        connection_generation_sha256=registration["connection_generation_sha256"],
         source_binding_sha256=registration["source_binding_sha256"],
         calendar_ref=calendar_row["calendar_ref"], canonical_arguments_sha256=canonical_args_hash,
         provider_principal_id=registration["provider_principal_id"],
@@ -563,10 +838,12 @@ def perform_owner_calendar_read(*, config: Any, request: Mapping[str, Any],
             live_rows = load_calendar_registrations()
             matching = [row for row in live_rows if row["connection_id"] == registration["connection_id"]]
             if (len(matching) != 1 or _canonical(matching[0]) != _canonical(registration)
+                    or not _calendar_source_is_current(config, registration)
                     or not invocation.is_current(registration=matching[0], now=time.monotonic(),
                                                  ingress_expiry=retained.expires_monotonic)):
                 raise OwnerCalendarUnavailable("Calendar connection changed during the read")
-            token = vault.resolve_reference(registration["credential_ref"], peer_uid=0,
+            token = vault.resolve_reference(registration["credential_ref"],
+                peer_uid=registration["credential_consumer_uid"],
                 required_scope=registration["credential_scope"],
                 principal_id=registration["provider_principal_id"])
             if leg == "initialize":
@@ -631,7 +908,7 @@ def perform_owner_calendar_read(*, config: Any, request: Mapping[str, Any],
                 record = RootCalendarReadResult(
                     schema=1, owner_subject_sha256=owner_hash,
                     connection_id=registration["connection_id"],
-                    connection_generation_sha256=registration["generation_sha256"],
+                    connection_generation_sha256=registration["connection_generation_sha256"],
                     source_binding_sha256=registration["source_binding_sha256"],
                     opaque_calendar_ref=calendar_row["calendar_ref"], tool_name=GOOGLE_LIST_EVENTS_TOOL,
                     canonical_arguments_sha256=canonical_args_hash,
