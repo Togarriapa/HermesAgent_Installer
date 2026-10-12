@@ -17,6 +17,9 @@ def register(ctx):
         CoreNativeObservationClient,
         register_native_resources_observer,
     )
+    from hermes_installer.remote.core_lifecycle_startup import (
+        register_lifecycle_startup_probe,
+    )
     from hermes_installer.remote.jarvis_final_effects import install_jarvis_final_effect_middleware
     from hermes_installer.remote.jarvis_project_context_engine import (
         install_current_project_context_middleware,
@@ -24,6 +27,11 @@ def register(ctx):
     from hermes_installer.native_invocations import install_pinned_tool_executor_dispatch_bridge
 
     client = CoreNativeObservationClient()
+    # The pinned official Gateway exposes this fixed server registration seam.
+    # Keep the one-use lifecycle RPC inside the selected Core plugin process;
+    # the handler itself still requires a Root-enrolled handle and actual peer.
+    from tui_gateway import server as gateway_server
+    register_lifecycle_startup_probe(gateway_server, client=client)
     obsidian_binding = None
     obsidian_store = None
     try:
