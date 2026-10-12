@@ -234,6 +234,23 @@ def test_extension_snapshot_rejects_unbounded_native_inventory():
         build_extension_snapshot(skills=[], plugins=[{}] * 513, mcps=[])
 
 
+def test_extension_snapshot_renders_449_native_skills_without_claiming_unknown_provenance():
+    names = [f"resource-skill-{index:03d}" for index in range(396)]
+    names.extend(f"unclassified-skill-{index:03d}" for index in range(53))
+    snapshot = build_extension_snapshot(
+        skills=[{"category": "general", "names": names}], plugins=[], mcps=[],
+        skill_catalog=set(names[:396]))
+    rows = [row for row in snapshot["items"] if row["kind"] == "skills"]
+    resources = [row for row in rows if row["source"] == "bundledResources"]
+    unknown = [row for row in rows if row["source"] == "unknown"]
+
+    assert len(rows) == 449
+    assert len(resources) == 396
+    assert all(row["removable"] is False for row in resources)
+    assert len(unknown) == 53
+    assert all(row["removable"] is False for row in unknown)
+
+
 @pytest.mark.parametrize(("source", "provenance", "label"), [
     ("bundled", "builtin", "Hermes files"),
     ("user", "useradded", "files"),
