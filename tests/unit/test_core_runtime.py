@@ -19,7 +19,7 @@ import pytest
 from hermes_installer import core_runtime as core
 
 
-def _exec_start_pre(unit_bytes):
+def _exec_start_pre(unit_bytes, *, credential_mutations=None):
     """Run the generated ExecStartPre with systemd-like credential files."""
     if os.geteuid() != 0:
         raise AssertionError("the Pi startup-guard fixture requires root to model admin")
@@ -41,14 +41,34 @@ def _exec_start_pre(unit_bytes):
             credentials.append((name, Path(source)))
         for name, source in credentials:
             target = cred_dir / name
-            target.write_bytes(source.read_bytes())
+            try:
+                content = source.read_bytes()
+            except OSError:
+                return 125
+            target.write_bytes(content)
             target.chmod(0o400)
             os.chown(target, admin.pw_uid, admin.pw_gid)
+        for name, mutation in (credential_mutations or {}).items():
+            target = cred_dir / name
+            if mutation[0] == "remove":
+                target.unlink()
+            elif mutation[0] == "bytes":
+                target.write_bytes(mutation[1])
+                target.chmod(0o400)
+                os.chown(target, admin.pw_uid, admin.pw_gid)
+            elif mutation[0] == "mode":
+                target.chmod(mutation[1])
+        os.chown(cred_dir, admin.pw_uid, admin.pw_gid)
+        os.chmod(cred_dir, 0o500)
         argv = shlex.split(line.partition("=")[2])
         env = {"CREDENTIALS_DIRECTORY": str(cred_dir), "PATH": "/usr/bin:/bin"}
+        def become_admin():
+            os.setgroups([])
+            os.setgid(admin.pw_gid)
+            os.setuid(admin.pw_uid)
         result = subprocess.run(
             argv, cwd="/", env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            check=False,
+            check=False, preexec_fn=become_admin,
         )
         return result.returncode
     finally:
@@ -573,6 +593,7 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch):
     from hermes_installer.remote import obsidian_owner_lifecycle as obsidian
 
     runtime = tmp_path / "runtime"
+    tmp_path.chmod(0o755)
     home = tmp_path / "home" / "admin" / ".hermes"
     unit_dir = tmp_path / "etc" / "systemd" / "system"
     libexec = tmp_path / "usr" / "local" / "libexec"
@@ -601,8 +622,10 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch):
     artifact_old, artifact_new = "d" * 64, "e" * 64
     old_launcher = core._launcher(adapter_source=old_source)
     new_launcher = core._launcher(adapter_source=new_source)
-    old_unit = core._unit(adapter_source=old_source, cohort_gate=True)
-    new_unit = core._unit(adapter_source=new_source, cohort_gate=True)
+    old_unit = core._unit(adapter_source=old_source, cohort_gate=True,
+                          backup_generation=old_adapter)
+    new_unit = core._unit(adapter_source=new_source, cohort_gate=True,
+                          backup_generation=old_adapter)
     core.LAUNCHER.write_bytes(new_launcher)
     core.LAUNCHER.chmod(0o755)
     core.UNIT.write_bytes(new_unit)
@@ -614,8 +637,21 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch):
         str(old_source), old_adapter, hashlib.sha256(old_unit).hexdigest(),
         hashlib.sha256(old_launcher).hexdigest())
     token_sha = hashlib.sha256(token).hexdigest()
-    backup = {"path": str(core.ADAPTER_UPDATE_BACKUPS / old_adapter),
-              "source_generation": old_adapter, "files": {}}
+    backup_directory = core.ADAPTER_UPDATE_BACKUPS / old_adapter
+    backup_directory.mkdir(mode=0o700)
+    backup_contents = {name: ("proof:" + name + "\n").encode()
+                       for name in core._ADAPTER_UPDATE_BACKUP_MEMBERS}
+    backup_files = {name: hashlib.sha256(content).hexdigest()
+                    for name, content in backup_contents.items()}
+    for name, content in backup_contents.items():
+        path = backup_directory / name
+        path.write_bytes(content)
+        path.chmod(0o600)
+    manifest_raw = core._canonical_json(backup_files)
+    (backup_directory / "manifest.json").write_bytes(manifest_raw)
+    (backup_directory / "manifest.json").chmod(0o600)
+    backup = {"path": str(backup_directory),
+              "source_generation": old_adapter, "files": backup_files}
     journal = {
         "schema": 1, "state": "installed", "service": core.SERVICE,
         "adapter_migration_state": "active", "adapter_source": str(new_source),
@@ -703,7 +739,6 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch):
 def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resources(tmp_path, monkeypatch):
     unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(tmp_path, monkeypatch)
     assert _exec_start_pre(unit) == 0
-
     # A reboot during any incomplete phase must fail closed even when the
     # systemd unit and launcher already contain the new source recipe.
     for phase in ("prepared", "resources-rebound", "rolling-back"):
@@ -729,6 +764,25 @@ def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resource
     assert _exec_start_pre(unit) == 0
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
+def test_m1_boot_gate_checks_actual_backup_manifest_members_and_admin_execution(tmp_path, monkeypatch):
+    unit, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(tmp_path, monkeypatch)
+    lines = unit.decode().splitlines()
+    assert "User=admin" in lines
+    assert not any(line.startswith("ExecStartPre=+") for line in lines)
+    assert _exec_start_pre(unit) == 0
+    manifest_credential = "adapter-backup-manifest"
+    member_credential = "adapter-backup-journal"
+    for mutations in (
+        {manifest_credential: ("remove",)},
+        {manifest_credential: ("bytes", b"{}\n")},
+        {member_credential: ("remove",)},
+        {member_credential: ("bytes", b"corrupt retained journal\n")},
+        {member_credential: ("mode", 0o600)},
+    ):
+        assert _exec_start_pre(unit, credential_mutations=mutations) != 0
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="cohort rollback custody requires the enrolled Pi root actor")
 def test_m1_rollback_refuses_owner_resources_edit_before_any_restore_effect(tmp_path, monkeypatch):
     _unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(tmp_path, monkeypatch)
@@ -738,7 +792,8 @@ def test_m1_rollback_refuses_owner_resources_edit_before_any_restore_effect(tmp_
         "resources-record.json": b"prior-resources\n",
         "overlay-record.json": b"",
         "obsidian-registration.json": b"",
-        "unit": core._unit(adapter_source=Path(cohort["old_source"]), cohort_gate=True),
+        "unit": core._unit(adapter_source=Path(cohort["old_source"]), cohort_gate=True,
+                            backup_generation=cohort["old_adapter_generation"]),
         "launcher": core._launcher(adapter_source=Path(cohort["old_source"])),
         "primary-record.json": b"",
     }

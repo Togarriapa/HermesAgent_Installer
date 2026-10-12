@@ -2180,7 +2180,18 @@ export PYTHONPATH={pythonpath}
 cd /home/admin/.hermes/workspaces/jarvis-core
 exec /home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python -P -m hermes_cli.main serve --isolated --host 127.0.0.1 --port 8766
 """.encode("ascii")
-def _core_start_guard_code(adapter_source=None,cohort_gate=False):
+_ADAPTER_UPDATE_BACKUP_MEMBERS=("journal.json","unit","launcher","plugin-selection.json",
+ "resources-record.json","overlay-record.json","primary-record.json",
+ "obsidian-registration.json","cohort.json")
+
+def _journal_adapter_backup_generation(record):
+ reference=record.get("adapter_update_backup") if type(record) is dict else None
+ generation=reference.get("source_generation") if type(reference) is dict else None
+ if not isinstance(generation,str) or re.fullmatch(r"[0-9a-f]{64}",generation) is None:
+  raise CoreRuntimeError("journaled adapter update backup generation is unavailable")
+ return generation
+
+def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generation=None):
  """Validate systemd's journal snapshot and the exact fixed service recipe."""
  expected_source=str(adapter_source or ADAPTER_SOURCE)
  base_code=("import hashlib,json,os,stat; "
@@ -2202,8 +2213,12 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False):
          "active_update_ok=(backup_ok and d.get('adapter_update_previous_source')!=source); "
          "phase_ok=(native_ok and (state is None or (state=='starting' and starting_ok) or (state=='active' and active_update_ok))); "
          "files=(("+repr(str(UNIT))+",0,0,0o644,d.get('unit_sha256')),("+repr(str(LAUNCHER))+",0,0,0o755,d.get('launcher_sha256'))); "
-         "ok=(ok and len(raw)==js.st_size and token and hashlib.sha256(token).hexdigest()==d.get('token_sha256') and d.get('schema')==1 and d.get('service')==service and d.get('state') in ('installed','active') and d.get('adapter_migration_state') in (None,'active') and phase_ok and all(valid(p,u,g,m,h) for p,u,g,m,h in files)); ")
+         "ok=(ok and os.geteuid()==1000 and len(raw)==js.st_size and token and hashlib.sha256(token).hexdigest()==d.get('token_sha256') and d.get('schema')==1 and d.get('service')==service and d.get('state') in ('installed','active') and d.get('adapter_migration_state') in (None,'active') and phase_ok and all(valid(p,u,g,m,h) for p,u,g,m,h in files)); ")
  if cohort_gate:
+  if not isinstance(backup_generation,str) or re.fullmatch(r"[0-9a-f]{64}",backup_generation) is None:
+   raise CoreRuntimeError("cohort service recipe requires its fixed retained-backup generation")
+  # Keep systemd's credential names fixed and pass only root-owned files from
+  # the immutable generation directory. The service still runs as admin.
   gate_code=("import hashlib,json,os,stat; "
     "cp=os.path.join(base,'adapter-update-cohort'); rp=os.path.join(base,'resources-discovery'); "
     "cs=os.stat(cp,follow_symlinks=False); rs=os.stat(rp,follow_symlinks=False); "
@@ -2216,21 +2231,33 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False):
     "rp_ok=(stat.S_ISREG(rs.st_mode) and stat.S_IMODE(rs.st_mode)==0o400 and rs.st_nlink==1 and 0<len(rr)==rs.st_size<=16384); "
     "phase=c.get('phase'); starting=phase in ('source-starting','bindings-verified'); expected_j=c.get('starting_journal_sha256') if starting else c.get('new_journal_sha256'); expected_r=c.get('starting_resources_record_sha256') if starting else c.get('new_resources_record_sha256'); "
     "reconstruction=c.get('reconstruction'); reconstruction_ok=(isinstance(reconstruction,dict) and hashlib.sha256(canonical(reconstruction)).hexdigest()==c.get('reconstruction_sha256') and reconstruction.get('cohort_transaction_id')==c.get('cohort_transaction_id') and reconstruction.get('phase')==phase and reconstruction.get('old_core_source_generation')==c.get('old_core_source_generation') and reconstruction.get('new_core_source_generation')==c.get('new_core_source_generation') and reconstruction.get('old_source_recipe_sha256')==c.get('old_source_recipe_sha256') and reconstruction.get('new_source_recipe_sha256')==c.get('new_source_recipe_sha256')); "
-    "cohort_ok=(cp_ok and rp_ok and canonical(c)==cr and set(c)==keys and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home' and c.get('owner_generation_backup_name')=='.jarvis-resources-skills-helper-transition-'+c.get('cohort_transaction_id') and phase in ('source-starting','bindings-verified','committed') and reconstruction_ok and c.get('new_source')==source and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==recipe(source,d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256')) and expected_j==hashlib.sha256(raw).hexdigest() and expected_r==hashlib.sha256(rr).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(raw).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256') and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and d.get('adapter_update_target_source')==source and d.get('adapter_update_target_generation')==d.get('adapter_generation') and ((starting and d.get('adapter_update_state')=='starting') or (phase=='committed' and d.get('adapter_update_state')=='active')) and hashlib.sha256(open('/etc/systemd/system/hermes-jarvis-core.service','rb').read()).hexdigest()==c.get('new_unit_sha256') and hashlib.sha256(open('/usr/local/libexec/hermes-jarvis-core-launcher','rb').read()).hexdigest()==c.get('new_launcher_sha256')); "
+    "backup=d.get('adapter_update_backup'); backup_members="+repr(list(_ADAPTER_UPDATE_BACKUP_MEMBERS))+"; "
+    "backup_generation="+repr(backup_generation)+"; "
+    "backup_manifest_name='adapter-backup-manifest'; "
+    "backup_manifest_path=os.path.join(base,backup_manifest_name); backup_manifest_stat=os.stat(backup_manifest_path,follow_symlinks=False); backup_raw=open(backup_manifest_path,'rb').read(4097); "
+    "backup_files=(backup.get('files') if isinstance(backup,dict) else None); "
+    "backup_ok=(isinstance(backup,dict) and backup.get('source_generation')==backup_generation and backup.get('path')=="+repr(str(ADAPTER_UPDATE_BACKUPS))+"+'/'+backup_generation and set(backup_files or {})==set(backup_members) and backup_raw==canonical(backup_files) and stat.S_ISREG(backup_manifest_stat.st_mode) and (backup_manifest_stat.st_uid,backup_manifest_stat.st_gid)==(1000,1000) and stat.S_IMODE(backup_manifest_stat.st_mode)==0o400 and backup_manifest_stat.st_nlink==1 and len(backup_raw)==backup_manifest_stat.st_size); "
+    "backup_valid=lambda n,h:(lambda p,s,b:stat.S_ISREG(s.st_mode) and (s.st_uid,s.st_gid)==(1000,1000) and stat.S_IMODE(s.st_mode)==0o400 and s.st_nlink==1 and 0<s.st_size<=262144 and len(b)==s.st_size and hashlib.sha256(b).hexdigest()==h)(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),os.stat(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),follow_symlinks=False),open(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),'rb').read(262145)); "
+    "backup_ok=backup_ok and all(backup_valid(name,backup_files.get(name)) for name in backup_members) and hashlib.sha256(backup_raw).hexdigest()==hashlib.sha256(canonical(backup_files)).hexdigest(); "
+    "cohort_ok=(backup_ok and cp_ok and rp_ok and canonical(c)==cr and set(c)==keys and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home' and c.get('owner_generation_backup_name')=='.jarvis-resources-skills-helper-transition-'+c.get('cohort_transaction_id') and phase in ('source-starting','bindings-verified','committed') and reconstruction_ok and c.get('new_source')==source and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==recipe(source,d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256')) and expected_j==hashlib.sha256(raw).hexdigest() and expected_r==hashlib.sha256(rr).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(raw).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256') and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and d.get('adapter_update_target_source')==source and d.get('adapter_update_target_generation')==d.get('adapter_generation') and ((starting and d.get('adapter_update_state')=='starting') or (phase=='committed' and d.get('adapter_update_state')=='active')) and hashlib.sha256(open('/etc/systemd/system/hermes-jarvis-core.service','rb').read()).hexdigest()==c.get('new_unit_sha256') and hashlib.sha256(open('/usr/local/libexec/hermes-jarvis-core-launcher','rb').read()).hexdigest()==c.get('new_launcher_sha256')); "
     "ok=ok and cohort_ok; ")
  else:
   gate_code=""
  return base_code+gate_code+"raise SystemExit(0 if ok else 1)"
-def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False):
+def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False,backup_generation=None):
  a=pwd.getpwnam("admin")
  if a.pw_uid!=1000 or a.pw_gid!=1000 or a.pw_dir!="/home/admin": raise CoreRuntimeError("admin identity mismatch")
  guard=""
  if startup_guard:
-  guard=(f'ExecStartPre={PYTHON} -I -S -c "{_core_start_guard_code(adapter_source,cohort_gate)}"\n'
+  guard=(f'ExecStartPre={PYTHON} -I -S -c "{_core_start_guard_code(adapter_source,cohort_gate,backup_generation)}"\n'
          f'LoadCredential=core-ownership-journal:{JOURNAL}\n')
   if cohort_gate:
    guard+=(f'LoadCredential=adapter-update-cohort:{ADAPTER_UPDATE_COHORT}\n'
            f'LoadCredential=resources-discovery:{RESOURCES_RECORD}\n')
+   for name in _ADAPTER_UPDATE_BACKUP_MEMBERS:
+    credential="adapter-backup-"+name.removesuffix(".json").replace(".","-")
+    guard+=(f'LoadCredential={credential}:{ADAPTER_UPDATE_BACKUPS/backup_generation/name}\n')
+   guard+=(f'LoadCredential=adapter-backup-manifest:{ADAPTER_UPDATE_BACKUPS/backup_generation/"manifest.json"}\n')
  return f"""[Unit]
 Description=Jarvis isolated Hermes core
 After=network-online.target
@@ -2278,7 +2305,8 @@ def _journal():
    if (ps.st_uid,ps.st_gid,stat.S_IMODE(ps.st_mode),ps.st_nlink)!=(uid,gid,mode,1): raise CoreRuntimeError("owned service file metadata changed")
    if p==UNIT and guarded_old:
     if _projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)!=_unit(
-        adapter_source=old_scope.old_source,cohort_gate=True):
+        adapter_source=old_scope.old_source,cohort_gate=True,
+        backup_generation=old_scope.old_adapter_generation):
      raise CoreRuntimeError("physical guarded old unit differs")
    elif not (d["state"]=="retiring" and d.get("cleanup_allow_partial")) and _digest(p)!=d.get(k):
     raise CoreRuntimeError("owned service file changed")
@@ -2309,7 +2337,8 @@ def _journal():
   expected_units={hashlib.sha256(_unit(adapter_source=adapter_source)).hexdigest(),
       hashlib.sha256(_unit(startup_guard=False,adapter_source=adapter_source)).hexdigest()}
   if d.get("adapter_migration_state")=="active" and d.get("adapter_update_cohort_transaction_id") and not guarded_old:
-   expected_units.add(hashlib.sha256(_unit(adapter_source=adapter_source,cohort_gate=True)).hexdigest())
+   expected_units.add(hashlib.sha256(_unit(adapter_source=adapter_source,cohort_gate=True,
+    backup_generation=_journal_adapter_backup_generation(d))).hexdigest())
   if d["state"]!="retiring" and not guarded_old and (d["unit_sha256"] not in expected_units or
       hashlib.sha256(_launcher(adapter_source=adapter_source)).hexdigest()!=d["launcher_sha256"]):
    raise CoreRuntimeError("owned service recipe differs from the reviewed source")
@@ -2415,7 +2444,8 @@ def _issue_guarded_old_read(*,cohort,cohort_raw,record,journal_raw,old_unit,
      or hashlib.sha256(journal_raw).hexdigest()!=cohort.get("old_journal_sha256")
      or hashlib.sha256(old_unit).hexdigest()!=cohort.get("old_unit_sha256")
      or hashlib.sha256(old_launcher).hexdigest()!=cohort.get("old_launcher_sha256")
-     or hashlib.sha256(_unit(adapter_source=cohort["old_source"],cohort_gate=True)).hexdigest()
+     or hashlib.sha256(_unit(adapter_source=cohort["old_source"],cohort_gate=True,
+       backup_generation=cohort["old_adapter_generation"])).hexdigest()
         !=cohort.get("guarded_old_unit_sha256")
      or hashlib.sha256(old_launcher).hexdigest()!=record.get("launcher_sha256")
      or record.get("adapter_source")!=cohort.get("old_source")
@@ -2469,7 +2499,8 @@ def _validate_guarded_old_read(value):
    and row.get("adapter_source")==value.old_source
    and row.get("adapter_generation")==value.old_adapter_generation
    and row.get("core_source_generation")==value.old_core_source_generation
-   and unit==_unit(adapter_source=value.old_source,cohort_gate=True)
+   and unit==_unit(adapter_source=value.old_source,cohort_gate=True,
+      backup_generation=value.old_adapter_generation)
    and hashlib.sha256(unit).hexdigest()==value.guarded_old_unit_sha256
    and hashlib.sha256(launcher).hexdigest()==value.old_launcher_sha256
    and _adapter_recipe_sha256(value.old_source,value.old_adapter_generation,
@@ -3015,7 +3046,8 @@ def _read_active_adapter_runtime():
  allowed_units={_unit(adapter_source=old_source),
                 _unit(startup_guard=False,adapter_source=old_source)}
  if record.get("adapter_update_cohort_transaction_id"):
-  allowed_units.add(_unit(adapter_source=old_source,cohort_gate=True))
+  allowed_units.add(_unit(adapter_source=old_source,cohort_gate=True,
+   backup_generation=_journal_adapter_backup_generation(record)))
  if files[UNIT] not in allowed_units or files[LAUNCHER]!=_launcher(adapter_source=old_source):
   raise CoreRuntimeError("journal-owned native core recipe differs")
  if b"LoadCredential=adapter-update-cohort:" in files[UNIT]:
@@ -3095,8 +3127,10 @@ def _read_adapter_update_backup(reference):
  old_source=Path(prior.get("adapter_source",""))
  _validate_adapter_generation_path(old_source)
  allowed_prior_units={_unit(adapter_source=old_source),
-                      _unit(startup_guard=False,adapter_source=old_source),
-                      _unit(adapter_source=old_source,cohort_gate=True)}
+                      _unit(startup_guard=False,adapter_source=old_source)}
+ if prior.get("adapter_update_cohort_transaction_id"):
+  allowed_prior_units.add(_unit(adapter_source=old_source,cohort_gate=True,
+   backup_generation=_journal_adapter_backup_generation(prior)))
  if contents["unit"] not in allowed_prior_units or contents["launcher"]!=_launcher(adapter_source=old_source):
   raise CoreRuntimeError("prior adapter update backup is not the fixed service recipe")
  return prior,contents
@@ -3588,8 +3622,10 @@ def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
   raise CoreRuntimeError("Obsidian registration or vault changed during source cohort recovery")
  unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
  old_source=Path(prior["adapter_source"])
- allowed_units={contents["unit"],_unit(adapter_source=old_source,cohort_gate=True),
-                _unit(adapter_source=Path(cohort["new_source"]),cohort_gate=True)}
+ allowed_units={contents["unit"],_unit(adapter_source=old_source,cohort_gate=True,
+   backup_generation=cohort["old_adapter_generation"]),
+                _unit(adapter_source=Path(cohort["new_source"]),cohort_gate=True,
+   backup_generation=cohort["old_adapter_generation"])}
  if unit not in allowed_units:
   raise CoreRuntimeError("current unit is outside the exact guarded source recipes")
  launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
@@ -3637,7 +3673,9 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
  # Keep the deny-by-default cohort guard in place while restoring the old
  # launcher and journal. Restore the exact former unit last, so reboot can
  # never combine a guardless launcher with the new/preparing journal.
- guarded=_unit(adapter_source=Path(prior["adapter_source"]),cohort_gate=True)
+ guarded=_unit(adapter_source=Path(prior["adapter_source"]),cohort_gate=True,
+  backup_generation=cohort["old_adapter_generation"] if cohort is not None else
+   _journal_adapter_backup_generation(prior))
  _atomic_replace(UNIT,guarded,0o644,ROOT_UID,ROOT_UID)
  _run(["systemctl","daemon-reload"])
  if (_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)!=guarded
@@ -3982,14 +4020,14 @@ def _update_owned_core_adapter_locked():
      or not native.verify_same_materialization_transition(old_manifest,old_generation_files,
        new_manifest,new_generation_files)):
   raise CoreRuntimeError("composed A0→A1 pair is not an exact helper-only transition")
- new_unit=_unit(adapter_source=ADAPTER_SOURCE,cohort_gate=True)
+ new_unit=_unit(adapter_source=ADAPTER_SOURCE,cohort_gate=True,backup_generation=old_adapter)
  new_launcher=_launcher(adapter_source=ADAPTER_SOURCE)
  old_unit=old_files[UNIT]; old_launcher=old_files[LAUNCHER]
  new_unit_sha=hashlib.sha256(new_unit).hexdigest(); new_launcher_sha=hashlib.sha256(new_launcher).hexdigest()
  old_unit_sha=hashlib.sha256(old_unit).hexdigest(); old_launcher_sha=hashlib.sha256(old_launcher).hexdigest()
  old_recipe=_adapter_recipe_sha256(str(old_source),old_adapter,old_unit_sha,old_launcher_sha)
  new_recipe=_adapter_recipe_sha256(str(ADAPTER_SOURCE),new_adapter,new_unit_sha,new_launcher_sha)
- guarded_old_unit=_unit(adapter_source=old_source,cohort_gate=True)
+ guarded_old_unit=_unit(adapter_source=old_source,cohort_gate=True,backup_generation=old_adapter)
  guarded_old_unit_sha=hashlib.sha256(guarded_old_unit).hexdigest()
  guarded_old_recipe=_adapter_recipe_sha256(str(old_source),old_adapter,
   guarded_old_unit_sha,old_launcher_sha)
@@ -4514,4 +4552,5 @@ def rollback():
  _sync_directory(JOURNAL.parent)
  return "journal-owned core service files removed; Hermes home, PM runtime, and workspace preserved"
 __all__=["CoreRuntimeError","install_or_resume","migrate_owned_core_to_adapter_path",
-         "recover_owned_core_from_adapter_migration","refresh_resources_discovery","rollback","status"]
+         "recover_owned_core_from_adapter_migration","refresh_resources_discovery",
+         "rollback","status","update_owned_core_adapter"]

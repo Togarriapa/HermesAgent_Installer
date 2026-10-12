@@ -1019,10 +1019,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Obsidian owner preparation unavailable ({type(exc).__name__}).", file=sys.stderr)
             return 4
     if arguments and arguments[0] == "core-service":
-        core_actions = {"install", "resume", "status", "rollback",
+        core_actions = {"install", "resume", "status", "rollback", "adapter-update",
                         "primary-prompt-adopt", "primary-prompt-status", "primary-prompt-rollback"}
         if len(arguments) != 2 or arguments[1] not in core_actions:
-            print("Use exactly: core-service {install|resume|status|rollback|primary-prompt-adopt|primary-prompt-status|primary-prompt-rollback}.", file=sys.stderr)
+            print("Use exactly: core-service {install|resume|status|rollback|adapter-update|primary-prompt-adopt|primary-prompt-status|primary-prompt-rollback}.", file=sys.stderr)
             return 2
         if arguments[1] == "status":
             from .core_runtime import status
@@ -1039,14 +1039,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 4
         try:
             _require_root_linux()
-            from .core_runtime import CoreRuntimeError, install_or_resume, rollback
+            from .core_runtime import CoreRuntimeError, install_or_resume, rollback, update_owned_core_adapter
             if arguments[1] in {"primary-prompt-adopt", "primary-prompt-rollback"}:
                 from .primary_prompt_manager import adopt_primary_prompt, rollback_primary_prompt
                 result = (adopt_primary_prompt() if arguments[1] == "primary-prompt-adopt"
                           else rollback_primary_prompt())
                 print(json.dumps(result, sort_keys=True, separators=(",", ":")), file=sys.stderr)
             else:
-                message = rollback() if arguments[1] == "rollback" else install_or_resume()
+                if arguments[1] == "adapter-update":
+                    message = update_owned_core_adapter()
+                else:
+                    message = rollback() if arguments[1] == "rollback" else install_or_resume()
                 print(message, file=sys.stderr)
             return 0
         except Exception as exc:
