@@ -2225,3 +2225,10 @@ Verified private-draft origins SHALL persist in bounded protected root journal d
 #### Scenario: Restart, missing lineage or origin-cap limit
 - **WHEN** runtime restarts, native origin input/output cannot be verified or the bounded journal is full
 - **THEN** current lookup/registration/bytes are revalidated or provenance remains pending; no retrospective file-only authority, silent history eviction or expired call/child revival occurs.
+
+### Requirement: Calendar connection provenance without invented account identity
+An actual Calendar read SHALL bind authenticated owner, protected selected connection/resource, verified native read schema and observed response through current root custody. Connection/enrollment/calendar references SHALL NOT imply verified provider email or calendar ownership; unknown identity SHALL be labeled honestly without substituting for required read authorization.
+
+#### Scenario: Successful read with unknown provider email
+- **WHEN** an authorized selected connection reads actual events but no provider identity observation exists
+- **THEN** the view may show those bounded events as that connection's read, labels account identity unknown and does not claim same-email linkage or native methods absent from verified source.
