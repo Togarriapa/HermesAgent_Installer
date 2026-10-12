@@ -1051,6 +1051,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     current.interimResults = false;
     current.lang = byId("speech-language").value;
     let transcriptReceived = false;
+    let recognitionStarted = false;
     const captureEligible = () => byId("speech-consent").checked
       && !ui.input.disabled && !byId("main-content").hidden
       && document.visibilityState === "visible";
@@ -1127,6 +1128,18 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       stopRecognition(messages[event.error] || "Speech input stopped. You can continue by typing.");
       setAssistantState("error", "Voice input unavailable");
     };
+    current.onstart = () => {
+      if (recognition !== current) return;
+      if (!captureEligible()) { stopRecognition(); return; }
+      recognitionStarted = true;
+      if (mode === "wake") {
+        setAssistantState("listening", "Foreground wake phrase active");
+        showVoiceStatus("Listening for “Jarvis” in this visible Chat tab. Browser speech recognition may process audio outside Jarvis.");
+      } else {
+        setAssistantState("listening", "Listening once · review before sending");
+        showVoiceStatus("Listening once. Your speech will not be sent until you review and submit the text.");
+      }
+    };
     current.onend = () => {
       if (recognition !== current) return;
       if (!captureEligible()) { stopRecognition(); return; }
@@ -1137,9 +1150,14 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ui.voiceStop.hidden = true;
       ui.voiceWake.setAttribute("aria-pressed", "false");
       ui.voiceWake.textContent = "Enable foreground wake phrase";
-      setAssistantState("ready", "Ready for your message");
-      if (mode === "wake") showVoiceStatus("Foreground wake listening ended. You can enable it again or use push-to-talk.");
-      else if (!transcriptReceived) showVoiceStatus("Listening ended without a transcript. You can type your message instead.");
+      if (recognitionStarted) {
+        setAssistantState("ready", "Ready for your message");
+        if (mode === "wake") showVoiceStatus("Foreground wake listening ended. You can enable it again or use push-to-talk.");
+        else if (!transcriptReceived) showVoiceStatus("Listening ended without a transcript. You can type your message instead.");
+      } else {
+        setAssistantState("ready", "Ready for your message");
+        showVoiceStatus("Speech input did not start. Check microphone permission or type your message instead.");
+      }
     };
     recognition = current;
     recognitionMode = mode;
@@ -1148,14 +1166,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     ui.voiceStop.hidden = false;
     ui.voiceWake.setAttribute("aria-pressed", String(mode === "wake"));
     ui.voiceWake.textContent = mode === "wake" ? "Stop foreground wake phrase" : "Enable foreground wake phrase";
-    if (mode === "wake") {
-      byId("voice-wake-controls").hidden = false;
-      setAssistantState("listening", "Foreground wake phrase active");
-      showVoiceStatus("Listening for “Jarvis” in this visible Chat tab. Browser speech recognition may process audio outside Jarvis.");
-    } else {
-      setAssistantState("listening", "Listening once · review before sending");
-      showVoiceStatus("Listening once. Your speech will not be sent until you review and submit the text.");
-    }
+    if (mode === "wake") byId("voice-wake-controls").hidden = false;
+    setAssistantState("checking", "Requesting browser microphone access");
+    showVoiceStatus("Starting browser speech recognition. If prompted, allow microphone access; you can stop or type instead.");
     try { current.start(); }
     catch (_) {
       stopRecognition("Could not start speech input. Check microphone access or type your message.");

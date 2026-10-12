@@ -750,6 +750,84 @@ FEATURE_API
         self.assertIn('byId("voice-handsfree-send").checked && !existingDraft', source)
         self.assertIn("ui.form.requestSubmit()", source)
         self.assertIn("Foreground wake listening ended", source)
+    def test_browser_voice_states_follow_fake_permission_start_and_cancel_events(self):
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        start = client.index("  function startRecognition(mode = \"ptt\") {")
+        end = client.index("\n  function clearError()", start)
+        function_source = client[start:end]
+        harness = r'''const assert = require("node:assert/strict");
+const elements = new Map();
+function element(id) {
+  if (!elements.has(id)) elements.set(id, {checked:false, hidden:false, disabled:false,
+    value:"", maxLength:8000, dataset:{}, attrs:{}, setAttribute(k,v){this.attrs[k]=v;}});
+  return elements.get(id);
+}
+const ui = {input:element("input"), voiceInput:element("voice-input"),
+  voiceStop:element("voice-stop"), voiceWake:element("voice-wake"), form:{requestSubmit(){throw Error("unexpected submit");}}};
+element("speech-consent").checked = true;
+element("main-content").hidden = false;
+element("speech-language").value = "en-US";
+element("voice-wake-controls");
+const states = [];
+let visibleStatus = "";
+let voiceSupported = true, activeTurnId = null, recognition = null, recognitionMode = "", wakePhraseHeard = false;
+const document = {visibilityState:"visible"};
+const instances = [];
+class FakeRecognition {
+  constructor(){ instances.push(this); }
+  start() {}
+  abort(){ this.aborted = true; }
+}
+const window = {SpeechRecognition:FakeRecognition};
+const byId = element;
+const pushToTalkEnabled = () => element("speech-consent").checked;
+const stopSpeech = () => {};
+const showVoiceStatus = (message) => { visibleStatus = message; };
+const setAssistantState = (state, label) => { states.push({state,label}); };
+function stopRecognition(message = "") {
+  const current = recognition; recognition = null; recognitionMode = ""; wakePhraseHeard = false;
+  ui.voiceStop.hidden = true; ui.voiceInput.dataset.listening = "false";
+  if (current) { current.onresult = current.onerror = current.onend = current.onstart = null; current.abort(); }
+  if (message && current) showVoiceStatus(message);
+  if (current && !activeTurnId) setAssistantState("ready", "Ready for your message");
+}
+FUNCTION_SOURCE
+startRecognition("ptt");
+assert.equal(states[states.length - 1].state, "checking", "permission/startup must not claim listening");
+assert.match(visibleStatus, /Starting browser speech recognition/);
+const denied = instances[instances.length - 1];
+denied.onerror({error:"not-allowed"});
+assert.equal(states[states.length - 1].state, "error", "permission denial must surface as an error");
+assert.match(visibleStatus, /permission was denied/);
+assert.equal(ui.input.disabled, false, "typed chat remains available after denial");
+
+states.length = 0; visibleStatus = "";
+startRecognition("ptt");
+const started = instances[instances.length - 1];
+assert.equal(states[states.length - 1].state, "checking");
+started.onstart();
+assert.equal(states[states.length - 1].state, "listening", "listening begins only on the browser start event");
+assert.match(visibleStatus, /Listening once/);
+started.onend();
+assert.equal(states[states.length - 1].state, "ready", "browser end returns the assistant to idle");
+assert.equal(ui.voiceStop.hidden, true);
+
+states.length = 0;
+startRecognition("wake");
+const wake = instances[instances.length - 1];
+assert.equal(wake.continuous, true, "wake mode requests foreground continuous recognition");
+assert.equal(states[states.length - 1].state, "checking");
+stopRecognition("Foreground wake listening stopped.");
+assert.equal(wake.aborted, true, "explicit stop aborts the active recognizer");
+assert.match(visibleStatus, /stopped/);
+assert.equal(element("speech-consent").checked, true, "stop does not silently revoke explicit page consent");
+'''.replace("FUNCTION_SOURCE", function_source)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "jarvis-voice-lifecycle-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_voice_and_appearance_preferences_are_local_bounded_and_do_not_persist_consent(self):
         _content_type, page = reviewed_chat_asset("/chat")
