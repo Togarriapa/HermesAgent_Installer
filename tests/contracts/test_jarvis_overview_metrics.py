@@ -176,7 +176,11 @@ def test_overview_presence_is_gated_by_fresh_core_witness():
     assert "Ready · standby." in js
     assert "setTimeout(recheckCoreFreshness" in js
     assert "stage.dataset.coreState = 'unverified'" in js
-    assert '.overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"])' in css
+    assert '.overview-stage[data-in-viewport="true"][data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"])' in css
+    assert '[data-feature-root="overview"] .overview-stage:not([data-in-viewport="true"]) .reactor-orbit{animation:none!important;transform:none!important}' in css
+    assert 'html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage .reactor-orbit' in css
+    assert '@media(prefers-reduced-motion:reduce){[data-feature-root="overview"] .reactor-dial,[data-feature-root="overview"] .reactor-orbit-inner,[data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}' in css
+    assert 'html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-orbit-inner{animation:none!important;transform:none!important}' in css
     assert '[data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-dial' in css
     assert '[data-feature-root="overview"] .quick-actions{display:flex;flex-wrap:wrap;overflow:visible' in css
 
