@@ -81,6 +81,10 @@ class ManualJarvisSkillsTests(unittest.TestCase):
         (home / "skills" / "user-owned" / "SKILL.md").write_text("user bytes\n", encoding="utf-8")
         return home
 
+    def helper_pipe(self):
+        target = Path("/home/admin/.hermes/skills") / manual_skills._GENERATION
+        return patch.object(manual_skills, "_verify_helper_transition_origin", return_value=target)
+
     def test_helper_only_transition_preserves_full_generation_and_retains_old_backup(self):
         with tempfile.TemporaryDirectory() as directory:
             home = self.make_home(Path(directory))
@@ -97,20 +101,24 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             install_manual_jarvis_skills(old_archive, hermes_home=home,
                                          expected_sha256=old_sha)
 
-            result = manual_skills.install_same_materialization_transition(
-                self.bundle, old_archive, hermes_home=home,
-                next_sha256=next_sha, previous_sha256=old_sha,
-                shared_manifest_sha256=manual_skills._same_materialization_digests(
-                    new_manifest, new_files)[0],
-                shared_materialization_sha256=manual_skills._same_materialization_digests(
-                    new_manifest, new_files)[1],
-                shared_member_count=manual_skills._same_materialization_digests(
-                    new_manifest, new_files)[2])
+            origin = self.helper_pipe()
+            with origin:
+                result = manual_skills.install_same_materialization_transition(
+                    self.bundle, old_archive, hermes_home=home,
+                    next_sha256=next_sha, previous_sha256=old_sha,
+                    shared_manifest_sha256=manual_skills._same_materialization_digests(
+                        new_manifest, new_files)[0],
+                    shared_materialization_sha256=manual_skills._same_materialization_digests(
+                        new_manifest, new_files)[1],
+                    shared_member_count=manual_skills._same_materialization_digests(
+                        new_manifest, new_files)[2],
+                    backup_name=".jarvis-resources-skills-helper-transition-" + "a" * 32)
 
             target = home / "skills" / manual_skills._GENERATION
             backup = Path(result["previous_generation_backup"])
             self.assertEqual(result["state"], "staged")
             self.assertEqual(result["artifact_sha256"], next_sha)
+            self.assertEqual(backup.name, ".jarvis-resources-skills-helper-transition-" + "a" * 32)
             self.assertEqual((home / "SOUL.md").read_bytes(), b"# Jarvis\n")
             manual_skills._verify_owned_generation(target, new_files, next_sha)
             manual_skills._verify_owned_generation(backup, old_files, old_sha)
@@ -154,18 +162,87 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             shared_manifest, shared_tree, shared_count = manual_skills._same_materialization_digests(
                 new_manifest, new_files)
 
-            with self.assertRaisesRegex(manual_skills.ManualJarvisSkillsError,
-                                        "proof digest differs"):
+            origin = self.helper_pipe()
+            with origin, self.assertRaisesRegex(
+                    manual_skills.ManualJarvisSkillsError, "proof digest differs"):
                 manual_skills.install_same_materialization_transition(
                     self.bundle, old_archive, hermes_home=home,
                     next_sha256=self.digest, previous_sha256=old_sha,
                     shared_manifest_sha256=shared_manifest,
                     shared_materialization_sha256="0" * 64,
-                    shared_member_count=shared_count)
+                    shared_member_count=shared_count,
+                    backup_name=".jarvis-resources-skills-helper-transition-" + "b" * 32)
 
             self.assertEqual({name: (target / name).read_bytes() for name in old_files}, before)
             self.assertFalse(any(path.name.startswith(".jarvis-resources-skills-")
                                  for path in home.iterdir()))
+
+    def test_helper_transition_restore_exchanges_only_the_exact_retained_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = self.make_home(Path(directory))
+            old_archive = _archive_with_helper(self.bundle, b"old helper bytes; retained, never executed")
+            old_sha = hashlib.sha256(old_archive).hexdigest()
+            old_manifest, old_files, _ = manual_skills._read_transition_archive(old_archive, old_sha)
+            new_manifest, new_files, _ = manual_skills._read_transition_archive(self.bundle, self.digest)
+            shared = manual_skills._same_materialization_digests(new_manifest, new_files)
+            manual_skills.install_manual_jarvis_skills(
+                old_archive, hermes_home=home, expected_sha256=old_sha)
+            backup_name = ".jarvis-resources-skills-helper-transition-" + "c" * 32
+            origin = self.helper_pipe()
+            with origin:
+                staged = manual_skills.install_same_materialization_transition(
+                    self.bundle, old_archive, hermes_home=home,
+                    next_sha256=self.digest, previous_sha256=old_sha,
+                    shared_manifest_sha256=shared[0],
+                    shared_materialization_sha256=shared[1],
+                    shared_member_count=shared[2], backup_name=backup_name)
+            current_path = home / "skills" / manual_skills._GENERATION
+            retained_path = home / backup_name
+            self.assertEqual(staged["previous_generation_backup"], str(retained_path))
+            with origin:
+                restored = manual_skills.restore_same_materialization_generation(
+                    self.bundle, old_archive, hermes_home=home,
+                    current_sha256=self.digest, restore_sha256=old_sha,
+                    backup_name=backup_name, shared_manifest_sha256=shared[0],
+                    shared_materialization_sha256=shared[1], shared_member_count=shared[2])
+            self.assertEqual(restored["state"], "restored")
+            manual_skills._verify_owned_generation(current_path, old_files, old_sha)
+            manual_skills._verify_owned_generation(retained_path, new_files, self.digest)
+            self.assertEqual({name: (current_path / name).read_bytes() for name in old_files}, old_files)
+            self.assertEqual({name: (retained_path / name).read_bytes() for name in new_files}, new_files)
+
+    def test_helper_transition_restore_refuses_changed_retained_backup_before_exchange(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = self.make_home(Path(directory))
+            old_archive = _archive_with_helper(self.bundle, b"old helper bytes")
+            old_sha = hashlib.sha256(old_archive).hexdigest()
+            old_manifest, old_files, _ = manual_skills._read_transition_archive(old_archive, old_sha)
+            new_manifest, new_files, _ = manual_skills._read_transition_archive(self.bundle, self.digest)
+            shared = manual_skills._same_materialization_digests(new_manifest, new_files)
+            manual_skills.install_manual_jarvis_skills(
+                old_archive, hermes_home=home, expected_sha256=old_sha)
+            backup_name = ".jarvis-resources-skills-helper-transition-" + "d" * 32
+            origin = self.helper_pipe()
+            with origin:
+                manual_skills.install_same_materialization_transition(
+                    self.bundle, old_archive, hermes_home=home,
+                    next_sha256=self.digest, previous_sha256=old_sha,
+                    shared_manifest_sha256=shared[0],
+                    shared_materialization_sha256=shared[1],
+                    shared_member_count=shared[2], backup_name=backup_name)
+            backup = home / backup_name
+            (backup / "foreign-edit").write_bytes(b"must be preserved")
+            current = home / "skills" / manual_skills._GENERATION
+            before = {name: (current / name).read_bytes() for name in new_files}
+            with patch.object(manual_skills, "_verify_helper_transition_origin", return_value=current), \
+                    self.assertRaises(manual_skills.ManualJarvisSkillsError):
+                manual_skills.restore_same_materialization_generation(
+                    self.bundle, old_archive, hermes_home=home,
+                    current_sha256=self.digest, restore_sha256=old_sha,
+                    backup_name=backup_name, shared_manifest_sha256=shared[0],
+                    shared_materialization_sha256=shared[1], shared_member_count=shared[2])
+            self.assertEqual({name: (current / name).read_bytes() for name in new_files}, before)
+            self.assertEqual((backup / "foreign-edit").read_bytes(), b"must be preserved")
 
     def test_import_bundled_migration_main_reads_retained_archive_from_stdin(self):
         previous_archive = b"exact retained prior Resources archive"

@@ -21,7 +21,9 @@ import base64
 import time
 import os
 import sqlite3
+import contextvars
 from types import SimpleNamespace
+from contextlib import contextmanager
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1067,6 +1069,219 @@ _MISSION_AUTHORIZATION_SEAL = object()
 _NATIVE_CHILD_AUTHORIZATION_SEAL = object()
 _MASTER_PLANNING_COMPLETION_SEAL = object()
 _MASTER_REVIEW_COMPLETION_SEAL = object()
+_LIFECYCLE_STARTUP_COHORT_SEAL = object()
+_LIFECYCLE_STARTUP_CONTEXT_SEAL = object()
+_LIFECYCLE_STARTUP_COMPLETION_SEAL = object()
+_LIFECYCLE_STARTUP_PROMPT_PREFIX = "Reply with exactly JARVIS-STARTUP-"
+_LIFECYCLE_STARTUP_PROMPT_SUFFIX = ". Do not use tools."
+
+
+@dataclass(frozen=True, slots=True)
+class RootLifecycleStartupCohort:
+    """Root-process cohort identity used only to enroll one private startup probe."""
+
+    transaction_id: str
+    starting_journal_sha256: str
+    cohort_sha256: str
+    core_generation: str
+    old_adapter_generation: str
+    new_adapter_generation: str
+    core_source_generation: str
+    generation_a1_sha256: str
+    js_sha256: str
+    rs_sha256: str
+    u1_sha256: str
+    l1_sha256: str
+    primary_source_sha256: str
+    active_soul_sha256: str
+    native_inventory_sha256: str
+    peer_pid: int
+    peer_uid: int
+    peer_gid: int
+    peer_start_ticks: str
+    boot_id: str
+    invocation_id: str
+    provider: str
+    api_mode: str
+    base_url: str
+    model: str
+    account_fingerprint: str
+    issued_monotonic: float
+    deadline_monotonic: float
+    _seal: object = field(repr=False, compare=False)
+
+    def is_root_selected(self) -> bool:
+        try:
+            return bool(
+                type(self) is RootLifecycleStartupCohort
+                and self._seal is _LIFECYCLE_STARTUP_COHORT_SEAL
+                and isinstance(self.transaction_id, str) and _ID.fullmatch(self.transaction_id)
+                and all(_HASH.fullmatch(getattr(self, name) or "") for name in (
+                    "starting_journal_sha256", "cohort_sha256", "core_generation", "old_adapter_generation",
+                    "new_adapter_generation", "core_source_generation", "generation_a1_sha256",
+                    "js_sha256", "rs_sha256", "u1_sha256", "l1_sha256",
+                    "primary_source_sha256", "active_soul_sha256",
+                    "native_inventory_sha256", "account_fingerprint"))
+                and (type(self.peer_pid) is int and self.peer_pid > 1
+                     and type(self.peer_uid) is int and self.peer_uid > 0
+                     and type(self.peer_gid) is int and self.peer_gid >= 0
+                     and isinstance(self.peer_start_ticks, str) and self.peer_start_ticks.isdecimal()
+                     and isinstance(self.boot_id, str) and re.fullmatch(r"[0-9a-fA-F-]{32,36}", self.boot_id)
+                     and isinstance(self.invocation_id, str) and re.fullmatch(r"[0-9a-fA-F-]{32,36}", self.invocation_id))
+                and self.provider == _CODEX_PROVIDER and self.api_mode == _CODEX_MODE
+                and self.base_url == _CODEX_ENDPOINT
+                and isinstance(self.model, str) and _ID.fullmatch(self.model)
+                and type(self.issued_monotonic) in {int, float}
+                and type(self.deadline_monotonic) in {int, float}
+                and self.issued_monotonic <= time.monotonic() < self.deadline_monotonic
+                and self.deadline_monotonic - self.issued_monotonic <= 120.0)
+        except Exception:
+            return False
+
+
+def make_root_lifecycle_startup_cohort(**values: Any) -> RootLifecycleStartupCohort:
+    """Construct the private enrollment input from CoreRuntime's guarded cohort."""
+    required = {
+        "transaction_id", "starting_journal_sha256", "cohort_sha256", "core_generation",
+        "old_adapter_generation", "new_adapter_generation", "core_source_generation",
+        "generation_a1_sha256", "js_sha256", "rs_sha256", "u1_sha256", "l1_sha256", "primary_source_sha256",
+        "active_soul_sha256", "native_inventory_sha256", "peer_pid", "peer_uid", "peer_gid",
+        "peer_start_ticks", "boot_id", "invocation_id", "provider", "api_mode", "base_url",
+        "model", "account_fingerprint", "issued_monotonic", "deadline_monotonic",
+    }
+    if set(values) != required:
+        raise CoreNativeObservationUnavailable("startup cohort has an unknown schema")
+    cohort = RootLifecycleStartupCohort(**values, _seal=_LIFECYCLE_STARTUP_COHORT_SEAL)
+    if not cohort.is_root_selected():
+        raise CoreNativeObservationUnavailable("guarded starting cohort is stale or malformed")
+    return cohort
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleStartupProbeContext:
+    probe_handle: str
+    probe_id: str
+    session_id: str
+    nonce: str
+    deadline_monotonic: float
+    cohort_sha256: str
+    core_generation: str
+    core_source_generation: str
+    generation_a1_sha256: str
+    js_sha256: str
+    rs_sha256: str
+    u1_sha256: str
+    l1_sha256: str
+    primary_source_sha256: str
+    active_soul_sha256: str
+    native_inventory_sha256: str
+    provider: str
+    api_mode: str
+    base_url: str
+    model: str
+    account_fingerprint: str
+    _seal: object = field(repr=False, compare=False)
+    _terminal: list[dict[str, str]] = field(default_factory=list, repr=False, compare=False)
+
+    def is_root_issued(self) -> bool:
+        return bool(type(self) is LifecycleStartupProbeContext
+            and self._seal is _LIFECYCLE_STARTUP_CONTEXT_SEAL
+            and _OPAQUE.fullmatch(self.probe_handle or "")
+            and _ID.fullmatch(self.probe_id or "") and _ID.fullmatch(self.session_id or "")
+            and re.fullmatch(r"[0-9a-f]{32}", self.nonce or "")
+            and _HASH.fullmatch(self.cohort_sha256 or "")
+            and _HASH.fullmatch(self.core_generation or "")
+            and _HASH.fullmatch(self.core_source_generation or "")
+            and _HASH.fullmatch(self.generation_a1_sha256 or "")
+            and _HASH.fullmatch(self.js_sha256 or "")
+            and _HASH.fullmatch(self.rs_sha256 or "")
+            and _HASH.fullmatch(self.u1_sha256 or "")
+            and _HASH.fullmatch(self.l1_sha256 or "")
+            and _HASH.fullmatch(self.primary_source_sha256 or "")
+            and _HASH.fullmatch(self.active_soul_sha256 or "")
+            and _HASH.fullmatch(self.native_inventory_sha256 or "")
+            and self.provider == _CODEX_PROVIDER and self.api_mode == _CODEX_MODE
+            and self.base_url == _CODEX_ENDPOINT and _ID.fullmatch(self.model or "")
+            and _HASH.fullmatch(self.account_fingerprint or "")
+            and type(self.deadline_monotonic) in {int, float}
+            and time.monotonic() < self.deadline_monotonic)
+
+
+@dataclass(frozen=True, slots=True)
+class CoreVerifiedLifecycleStartupCompletion:
+    """Single-use Root seal for one actual native/provider startup completion."""
+
+    schema: int
+    purpose: str
+    probe_handle: str
+    completion_handle: str
+    transaction_id: str
+    starting_journal_sha256: str
+    cohort_sha256: str
+    core_generation: str
+    old_adapter_generation: str
+    new_adapter_generation: str
+    core_source_generation: str
+    generation_a1_sha256: str
+    js_sha256: str
+    rs_sha256: str
+    u1_sha256: str
+    l1_sha256: str
+    primary_source_sha256: str
+    active_soul_sha256: str
+    native_inventory_sha256: str
+    peer_pid: int
+    peer_uid: int
+    peer_gid: int
+    peer_start_ticks: str
+    boot_id: str
+    invocation_id: str
+    probe_id: str
+    session_id: str
+    turn_id: str
+    api_request_id: str
+    provider_request_sha256: str
+    provider_response_sha256: str
+    provider_response_text_sha256: str
+    native_response_sha256: str
+    prompt_sha256: str
+    provider: str
+    api_mode: str
+    base_url: str
+    model: str
+    account_fingerprint: str
+    tools_sha256: str
+    deadline_monotonic: float
+    _seal: object = field(repr=False, compare=False)
+
+    def is_root_verified(self) -> bool:
+        return bool(type(self) is CoreVerifiedLifecycleStartupCompletion
+                and self._seal is _LIFECYCLE_STARTUP_COMPLETION_SEAL
+            and type(self.schema) is int and self.schema == 1
+            and self.purpose == "lifecycle-startup"
+            and _OPAQUE.fullmatch(self.probe_handle or "")
+            and _OPAQUE.fullmatch(self.completion_handle or "")
+            and _ID.fullmatch(self.transaction_id or "")
+            and all(_HASH.fullmatch(getattr(self, name) or "") for name in (
+                "starting_journal_sha256", "cohort_sha256", "core_generation", "old_adapter_generation",
+                "new_adapter_generation", "core_source_generation", "generation_a1_sha256",
+                "js_sha256", "rs_sha256", "u1_sha256", "l1_sha256",
+                "primary_source_sha256", "active_soul_sha256",
+                "native_inventory_sha256", "provider_request_sha256", "provider_response_sha256",
+                "provider_response_text_sha256", "native_response_sha256", "prompt_sha256",
+                "account_fingerprint", "tools_sha256"))
+            and type(self.peer_pid) is int and self.peer_pid > 1
+            and type(self.peer_uid) is int and self.peer_uid > 0
+            and type(self.peer_gid) is int and self.peer_gid >= 0
+            and isinstance(self.peer_start_ticks, str) and self.peer_start_ticks.isdecimal()
+            and isinstance(self.boot_id, str) and re.fullmatch(r"[0-9a-fA-F-]{32,36}", self.boot_id)
+            and isinstance(self.invocation_id, str) and re.fullmatch(r"[0-9a-fA-F-]{32,36}", self.invocation_id)
+            and self.provider == _CODEX_PROVIDER and self.api_mode == _CODEX_MODE
+            and self.base_url == _CODEX_ENDPOINT
+            and all(_ID.fullmatch(getattr(self, name) or "") for name in (
+                "probe_id", "session_id", "turn_id", "api_request_id", "model"))
+            and type(self.deadline_monotonic) in {int, float}
+            and time.monotonic() < self.deadline_monotonic)
 _SELECTED_SOURCE_DELIVERY_SEAL = object()
 
 
@@ -1851,6 +2066,43 @@ class RootVerifiedNativeChildAuthorization:
                                 for key in ("provider", "api_mode", "base_url", "model"))
         except (TypeError, AttributeError):
             return False
+
+
+_CURRENT_LIFECYCLE_STARTUP_PROBE: contextvars.ContextVar[LifecycleStartupProbeContext | None] = \
+    contextvars.ContextVar("hermes_lifecycle_startup_probe", default=None)
+_CURRENT_LIFECYCLE_STARTUP_IDENTITY: contextvars.ContextVar[str | None] = \
+    contextvars.ContextVar("hermes_lifecycle_startup_identity", default=None)
+_CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256: contextvars.ContextVar[str | None] = \
+    contextvars.ContextVar("hermes_lifecycle_startup_instructions_sha256", default=None)
+
+
+@contextmanager
+def lifecycle_startup_probe_scope(context: LifecycleStartupProbeContext, *, identity: str,
+                                  expected_instructions: str):
+    if type(context) is not LifecycleStartupProbeContext or not context.is_root_issued():
+        raise CoreNativeObservationUnavailable("Root lifecycle probe context is required")
+    if (not isinstance(identity, str) or not identity
+            or not isinstance(expected_instructions, str) or not expected_instructions
+            or identity not in expected_instructions):
+        raise CoreNativeObservationUnavailable("loaded Jarvis primary identity is required")
+    expected_sha256 = hashlib.sha256(expected_instructions.encode("utf-8", "strict")).hexdigest()
+    token = _CURRENT_LIFECYCLE_STARTUP_PROBE.set(context)
+    identity_token = _CURRENT_LIFECYCLE_STARTUP_IDENTITY.set(identity)
+    instructions_token = _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.set(expected_sha256)
+    try:
+        yield context
+    finally:
+        _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.reset(instructions_token)
+        _CURRENT_LIFECYCLE_STARTUP_IDENTITY.reset(identity_token)
+        _CURRENT_LIFECYCLE_STARTUP_PROBE.reset(token)
+
+
+def take_lifecycle_startup_terminal(context: LifecycleStartupProbeContext) -> dict[str, str]:
+    if type(context) is not LifecycleStartupProbeContext or not context.is_root_issued():
+        raise CoreNativeObservationUnavailable("Root lifecycle probe context is required")
+    if len(context._terminal) != 1:
+        raise CoreNativeObservationUnavailable("actual lifecycle provider terminal is missing or ambiguous")
+    return context._terminal.pop()
         fixed_names = frozenset(
             {"web_search", "web_extract", "skills_list", "skill_view"} | _OBSIDIAN_READ_TOOL_NAMES
             if getattr(mode, "value", None) == "expert-read-research" else set()
@@ -1996,6 +2248,8 @@ class CoreNativeObservationClient:
 
     def _rpc(self, operation: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         if operation not in {
+            "claim-lifecycle-startup-probe", "register-lifecycle-startup-attempt",
+            "register-lifecycle-startup-response",
             "register-attempt", "register-response",
             "register-tool-call", "prepare-dispatch", "consume-dispatch",
             "authorize-mission-dispatch", "admit-native-child",
@@ -2056,6 +2310,108 @@ class CoreNativeObservationClient:
             raise
         except Exception:
             raise CoreNativeObservationUnavailable("protected core observer is unavailable") from None
+
+    def claim_lifecycle_startup_probe(self, probe_handle: str) -> LifecycleStartupProbeContext:
+        """Claim one Root-enrolled probe from this process over the protected socket."""
+        if not isinstance(probe_handle, str) or not _OPAQUE.fullmatch(probe_handle):
+            raise CoreNativeObservationUnavailable("startup probe handle is malformed")
+        row = self._rpc("claim-lifecycle-startup-probe", {"probe_handle": probe_handle})
+        fields = {
+            "schema", "nonce", "ok", "probe_handle", "probe_id", "session_id", "startup_nonce",
+            "deadline_monotonic", "cohort_sha256", "core_source_generation",
+            "core_generation", "generation_a1_sha256", "js_sha256", "rs_sha256",
+            "u1_sha256", "l1_sha256", "primary_source_sha256", "active_soul_sha256",
+            "native_inventory_sha256", "provider", "api_mode", "base_url", "model",
+            "account_fingerprint",
+        }
+        if set(row) != fields or row.get("probe_handle") != probe_handle:
+            raise CoreNativeObservationUnavailable("Root startup probe context has an unknown schema")
+        try:
+            context = LifecycleStartupProbeContext(
+                probe_handle=probe_handle, probe_id=row["probe_id"], session_id=row["session_id"],
+                nonce=row["startup_nonce"], deadline_monotonic=row["deadline_monotonic"],
+                cohort_sha256=row["cohort_sha256"],
+                core_generation=row["core_generation"],
+                core_source_generation=row["core_source_generation"],
+                generation_a1_sha256=row["generation_a1_sha256"],
+                js_sha256=row["js_sha256"], rs_sha256=row["rs_sha256"],
+                u1_sha256=row["u1_sha256"], l1_sha256=row["l1_sha256"],
+                primary_source_sha256=row["primary_source_sha256"],
+                active_soul_sha256=row["active_soul_sha256"],
+                native_inventory_sha256=row["native_inventory_sha256"],
+                provider=row["provider"], api_mode=row["api_mode"], base_url=row["base_url"],
+                model=row["model"], account_fingerprint=row["account_fingerprint"],
+                _seal=_LIFECYCLE_STARTUP_CONTEXT_SEAL,
+            )
+        except (KeyError, TypeError, ValueError):
+            raise CoreNativeObservationUnavailable("Root startup probe context is malformed") from None
+        if (row.get("ok") is not True or type(row.get("schema")) is not int
+                or row.get("schema") != 1 or not context.is_root_issued()):
+            raise CoreNativeObservationUnavailable("Root startup probe is stale or malformed")
+        return context
+
+    def register_lifecycle_startup_attempt(
+        self, context: LifecycleStartupProbeContext, *, turn_id: str, api_request_id: str,
+        provider: str, api_mode: str, base_url: str, model: str, account_fingerprint: str,
+        request_sha256: str, prompt_sha256: str, tool_names: tuple[str, ...], retry_count: int,
+    ) -> str:
+        if (type(context) is not LifecycleStartupProbeContext or not context.is_root_issued()
+                or provider != context.provider or api_mode != context.api_mode
+                or base_url.rstrip("/") != context.base_url or model != context.model
+                or account_fingerprint != context.account_fingerprint
+                or type(retry_count) is not int or retry_count != 0
+                or type(tool_names) is not tuple or tool_names
+                or prompt_sha256 != hashlib.sha256(
+                    (_LIFECYCLE_STARTUP_PROMPT_PREFIX + context.nonce
+                     + _LIFECYCLE_STARTUP_PROMPT_SUFFIX).encode("ascii")).hexdigest()):
+            raise CoreNativeObservationUnavailable("Codex attempt is outside the fixed lifecycle probe")
+        row = self._rpc("register-lifecycle-startup-attempt", {
+            "probe_handle": context.probe_handle, "probe_id": context.probe_id,
+            "session_id": context.session_id, "turn_id": _require_id(turn_id, "turn ID"),
+            "api_request_id": _require_id(api_request_id, "API request ID"),
+            "provider": provider, "api_mode": api_mode, "base_url": context.base_url,
+            "model": model, "account_fingerprint": account_fingerprint,
+            "request_sha256": _require_hash(request_sha256, "request digest"),
+            "prompt_sha256": prompt_sha256, "tool_names": [], "retry_count": 0,
+        })
+        attempt_handle = row.get("attempt_handle")
+        if (set(row) != {"schema", "nonce", "ok", "attempt_handle"}
+                or type(row.get("schema")) is not int or row.get("schema") != 1
+                or row.get("ok") is not True
+                or not isinstance(attempt_handle, str) or not _OPAQUE.fullmatch(attempt_handle)):
+            raise CoreNativeObservationUnavailable("Root lifecycle attempt receipt is malformed")
+        return attempt_handle
+
+    def register_lifecycle_startup_response(
+        self, context: LifecycleStartupProbeContext, *, attempt_handle: str,
+        turn_id: str, api_request_id: str, request_sha256: str,
+        response_sha256: str, response_text: str | None,
+        completed: bool, tool_call_count: int,
+    ) -> str:
+        if (type(context) is not LifecycleStartupProbeContext or not context.is_root_issued()
+                or not _OPAQUE.fullmatch(attempt_handle or "") or type(completed) is not bool
+                or completed is not True or type(tool_call_count) is not int or tool_call_count != 0
+                or not isinstance(response_text, str) or not 1 <= len(response_text) <= 1024
+                or any(ord(char) < 0x20 and char not in "\n\t" for char in response_text)):
+            raise CoreNativeObservationUnavailable("lifecycle provider terminal is incomplete")
+        response_text_sha256 = hashlib.sha256(response_text.encode("utf-8", "strict")).hexdigest()
+        row = self._rpc("register-lifecycle-startup-response", {
+            "probe_handle": context.probe_handle, "attempt_handle": attempt_handle,
+            "turn_id": _require_id(turn_id, "turn ID"),
+            "api_request_id": _require_id(api_request_id, "API request ID"),
+            "request_sha256": _require_hash(request_sha256, "request digest"),
+            "response_sha256": _require_hash(response_sha256, "response digest"),
+            "response_text": response_text,
+            "response_text_sha256": _require_hash(response_text_sha256, "response text digest"),
+            "completed": True, "tool_call_count": 0,
+        })
+        handle = row.get("completion_handle")
+        if (set(row) != {"schema", "nonce", "ok", "completion_handle"}
+                or type(row.get("schema")) is not int or row.get("schema") != 1
+                or row.get("ok") is not True
+                or not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)):
+            raise CoreNativeObservationUnavailable("Root lifecycle completion handle is malformed")
+        return handle
 
     def register_attempt(self, *, session_id: str, turn_id: str, api_request_id: str,
                          provider: str, model: str, base_url: str, api_mode: str,
@@ -3436,6 +3792,8 @@ class RootCoreNativeObservationRegistry:
         self._planning_completions: dict[str, dict[str, Any]] = {}
         self._master_review_completions: dict[str, dict[str, Any]] = {}
         self._expert_completions: dict[str, dict[str, Any]] = {}
+        self._lifecycle_startup_probes: dict[str, dict[str, Any]] = {}
+        self._lifecycle_startup_attempts: dict[str, dict[str, Any]] = {}
         self._team_completion_evidence: dict[str, dict[str, Any]] = {}
         self._team_bindings: dict[str, RootSelectedTeamBinding] = {}
         self._team_messages: dict[str, dict[str, Any]] = {}
@@ -3716,6 +4074,158 @@ class RootCoreNativeObservationRegistry:
         if owner is None or not self._activity_store_ok:
             return
         self._prune_activity_window()
+
+    def enroll_lifecycle_startup_probe(self, *, cohort: RootLifecycleStartupCohort) -> str:
+        """Enroll one exact guarded-new process for one fixed startup chat attempt."""
+        if (type(cohort) is not RootLifecycleStartupCohort or not cohort.is_root_selected()
+                or self._closed or os.geteuid() != 0):
+            raise CoreNativeObservationUnavailable("current guarded-new cohort is required")
+        try:
+            from .core_gateway_inspector import (
+                CORE_SERVICE_UNIT, _boot_id, _current_core_source, _proc_start_ticks,
+                _unit_properties,
+            )
+            now = time.monotonic()
+            props = _unit_properties(CORE_SERVICE_UNIT, deadline=cohort.deadline_monotonic)
+            if (int(props.get("MainPID", "0")) != cohort.peer_pid
+                    or props.get("InvocationID") != cohort.invocation_id
+                    or _boot_id() != cohort.boot_id
+                    or _proc_start_ticks(cohort.peer_pid) != cohort.peer_start_ticks
+                    or _current_core_source(self._config, deadline=cohort.deadline_monotonic)
+                       != cohort.core_source_generation
+                    or now >= cohort.deadline_monotonic):
+                raise ValueError
+            pidfd = os.pidfd_open(cohort.peer_pid, 0)
+            poller = select.poll()
+            poller.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
+            if poller.poll(0):
+                os.close(pidfd)
+                raise ValueError
+            handle = secrets.token_urlsafe(32)
+            probe_id = secrets.token_urlsafe(24)
+            session_id = secrets.token_urlsafe(24)
+            nonce = secrets.token_hex(16)
+            expected_text_sha256 = hashlib.sha256(
+                (_LIFECYCLE_STARTUP_PROMPT_PREFIX + nonce).encode("ascii")).hexdigest()
+            with self._lock:
+                if len(self._lifecycle_startup_probes) >= 8 or handle in self._lifecycle_startup_probes:
+                    os.close(pidfd)
+                    raise ValueError
+                self._lifecycle_startup_probes[handle] = {
+                    "cohort": cohort, "pidfd": pidfd, "probe_id": probe_id,
+                    "session_id": session_id, "nonce": nonce,
+                    "expected_text_sha256": expected_text_sha256,
+                    "expiry": cohort.deadline_monotonic, "claimed_peer": None,
+                    "attempt_handle": None, "completion_handle": None,
+                    "consumed": False,
+                }
+            return handle
+        except Exception:
+            raise CoreNativeObservationUnavailable("guarded startup probe enrollment failed") from None
+
+    def consume_lifecycle_startup_completion(
+        self, *, probe_handle: str, completion_handle: str,
+        native_response_sha256: str,
+    ) -> CoreVerifiedLifecycleStartupCompletion:
+        """Consume a provider observation only after the actual native terminal agrees."""
+        if (not _OPAQUE.fullmatch(probe_handle or "")
+                or not _OPAQUE.fullmatch(completion_handle or "")
+                or not _HASH.fullmatch(native_response_sha256 or "")):
+            raise CoreNativeObservationUnavailable("startup completion reference is malformed")
+        try:
+            with self._lock:
+                row = self._lifecycle_startup_probes.get(probe_handle)
+                now = time.monotonic()
+                if (not isinstance(row, dict) or row.get("consumed") is True
+                        or row.get("completion_handle") != completion_handle
+                        or now >= row.get("expiry", 0)):
+                    raise ValueError
+                provider = row.get("provider_terminal")
+                cohort = row.get("cohort")
+                if (not isinstance(provider, dict)
+                        or type(cohort) is not RootLifecycleStartupCohort
+                        or not cohort.is_root_selected()
+                        or native_response_sha256 != provider.get("response_text_sha256")
+                        or not self._lifecycle_startup_peer_current(row, cohort)):
+                    raise ValueError
+                proof = CoreVerifiedLifecycleStartupCompletion(
+                    schema=1, purpose="lifecycle-startup",
+                    probe_handle=probe_handle, completion_handle=completion_handle,
+                    transaction_id=cohort.transaction_id,
+                    starting_journal_sha256=cohort.starting_journal_sha256,
+                    cohort_sha256=cohort.cohort_sha256,
+                    core_generation=cohort.core_generation,
+                    old_adapter_generation=cohort.old_adapter_generation,
+                    new_adapter_generation=cohort.new_adapter_generation,
+                    core_source_generation=cohort.core_source_generation,
+                    generation_a1_sha256=cohort.generation_a1_sha256,
+                    js_sha256=cohort.js_sha256, rs_sha256=cohort.rs_sha256,
+                    u1_sha256=cohort.u1_sha256, l1_sha256=cohort.l1_sha256,
+                    primary_source_sha256=cohort.primary_source_sha256,
+                    active_soul_sha256=cohort.active_soul_sha256,
+                    native_inventory_sha256=cohort.native_inventory_sha256,
+                    peer_pid=cohort.peer_pid, peer_uid=cohort.peer_uid,
+                    peer_gid=cohort.peer_gid, peer_start_ticks=cohort.peer_start_ticks,
+                    boot_id=cohort.boot_id,
+                    invocation_id=cohort.invocation_id, probe_id=row["probe_id"],
+                    session_id=row["session_id"], turn_id=provider["turn_id"],
+                    api_request_id=provider["api_request_id"],
+                    provider_request_sha256=provider["request_sha256"],
+                    provider_response_sha256=provider["response_sha256"],
+                    provider_response_text_sha256=provider["response_text_sha256"],
+                    native_response_sha256=native_response_sha256,
+                    prompt_sha256=provider["prompt_sha256"],
+                    provider=cohort.provider, api_mode=cohort.api_mode,
+                    base_url=cohort.base_url, model=cohort.model,
+                    account_fingerprint=cohort.account_fingerprint,
+                    tools_sha256=hashlib.sha256(b"[]").hexdigest(),
+                    deadline_monotonic=cohort.deadline_monotonic,
+                    _seal=_LIFECYCLE_STARTUP_COMPLETION_SEAL,
+                )
+                if not proof.is_root_verified():
+                    raise ValueError
+                row["consumed"] = True
+                return proof
+        except Exception:
+            raise CoreNativeObservationUnavailable("startup completion is stale, mismatched or replayed") from None
+
+    def _lifecycle_startup_peer_current(self, row: Mapping[str, Any],
+                                        cohort: RootLifecycleStartupCohort) -> bool:
+        try:
+            from .core_gateway_inspector import (
+                CORE_SERVICE_UNIT, _boot_id, _current_core_source, _proc_start_ticks,
+                _unit_properties,
+            )
+            poller = select.poll()
+            poller.register(row["pidfd"], select.POLLIN | select.POLLHUP | select.POLLERR)
+            if (poller.poll(0) or time.monotonic() >= min(
+                    cohort.deadline_monotonic, row["expiry"])
+                    or _boot_id() != cohort.boot_id
+                    or _proc_start_ticks(cohort.peer_pid) != cohort.peer_start_ticks):
+                return False
+            props = _unit_properties(CORE_SERVICE_UNIT, deadline=cohort.deadline_monotonic)
+            return (int(props.get("MainPID", "0")) == cohort.peer_pid
+                    and props.get("InvocationID") == cohort.invocation_id
+                    and _current_core_source(self._config, deadline=cohort.deadline_monotonic)
+                       == cohort.core_source_generation)
+        except Exception:
+            return False
+
+    def _lifecycle_startup_request_current(self, request: Mapping[str, Any],
+                                          peer: tuple[int, int, int]) -> bool:
+        try:
+            handle = request.get("probe_handle")
+            if not isinstance(handle, str):
+                attempt = self._lifecycle_startup_attempts.get(request.get("attempt_handle"))
+                handle = attempt.get("probe_handle") if isinstance(attempt, dict) else None
+            row = self._lifecycle_startup_probes.get(handle)
+            cohort = row.get("cohort") if isinstance(row, dict) else None
+            return bool(row is not None and type(cohort) is RootLifecycleStartupCohort
+                and row.get("claimed_peer") == peer
+                and peer == (cohort.peer_pid, cohort.peer_uid, cohort.peer_gid)
+                and self._lifecycle_startup_peer_current(row, cohort))
+        except Exception:
+            return False
         row = child.get("activity")
         if row is None:
             binding = owner.mission_binding
@@ -4438,6 +4948,16 @@ class RootCoreNativeObservationRegistry:
             raise CoreNativeObservationUnavailable("spent mission preflight is unavailable") from None
 
     def _prune(self, now: float) -> None:
+        for handle, row in list(self._lifecycle_startup_probes.items()):
+            if row["expiry"] <= now:
+                self._lifecycle_startup_probes.pop(handle, None)
+                try:
+                    os.close(row["pidfd"])
+                except Exception:
+                    pass
+        for handle, row in list(self._lifecycle_startup_attempts.items()):
+            if row["expiry"] <= now:
+                self._lifecycle_startup_attempts.pop(handle, None)
         for handle, row in list(self._obsidian_bindings.items()):
             if row["expiry"] <= now:
                 self._obsidian_bindings.pop(handle, None)
@@ -5263,6 +5783,114 @@ class RootCoreNativeObservationRegistry:
         with self._lock:
             self._ensure_open()
             self._prune(time.monotonic())
+            if op == "claim-lifecycle-startup-probe":
+                if set(request) != {"schema", "op", "nonce", "probe_handle"}:
+                    raise ValueError("lifecycle startup claim schema mismatch")
+                handle = request["probe_handle"]
+                row = self._lifecycle_startup_probes.get(handle)
+                if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
+                        or row is None or row.get("claimed_peer") is not None
+                        or not self._lifecycle_startup_peer_current(row, row["cohort"])
+                        or peer != (row["cohort"].peer_pid, row["cohort"].peer_uid,
+                                    row["cohort"].peer_gid)):
+                    raise ValueError("lifecycle probe is unavailable to this native peer")
+                cohort = row["cohort"]
+                row["claimed_peer"] = peer
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "probe_handle": handle, "probe_id": row["probe_id"],
+                    "session_id": row["session_id"], "startup_nonce": row["nonce"],
+                    "deadline_monotonic": cohort.deadline_monotonic,
+                    "cohort_sha256": cohort.cohort_sha256,
+                    "core_generation": cohort.core_generation,
+                    "core_source_generation": cohort.core_source_generation,
+                    "generation_a1_sha256": cohort.generation_a1_sha256,
+                    "js_sha256": cohort.js_sha256, "rs_sha256": cohort.rs_sha256,
+                    "u1_sha256": cohort.u1_sha256, "l1_sha256": cohort.l1_sha256,
+                    "primary_source_sha256": cohort.primary_source_sha256,
+                    "active_soul_sha256": cohort.active_soul_sha256,
+                    "native_inventory_sha256": cohort.native_inventory_sha256,
+                    "provider": cohort.provider, "api_mode": cohort.api_mode,
+                    "base_url": cohort.base_url, "model": cohort.model,
+                    "account_fingerprint": cohort.account_fingerprint}
+            if op == "register-lifecycle-startup-attempt":
+                required = {"schema", "op", "nonce", "probe_handle", "probe_id", "session_id",
+                    "turn_id", "api_request_id", "provider", "api_mode", "base_url", "model",
+                    "account_fingerprint", "request_sha256", "prompt_sha256", "tool_names",
+                    "retry_count"}
+                if set(request) != required:
+                    raise ValueError("lifecycle attempt schema mismatch")
+                row = self._lifecycle_startup_probes.get(request["probe_handle"])
+                cohort = row.get("cohort") if isinstance(row, dict) else None
+                expected_prompt = (hashlib.sha256((_LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
+                    + _LIFECYCLE_STARTUP_PROMPT_SUFFIX).encode("ascii")).hexdigest()
+                    if isinstance(row, dict) else None)
+                if (row is None or type(cohort) is not RootLifecycleStartupCohort
+                        or row.get("claimed_peer") != peer or row.get("attempt_handle") is not None
+                        or request["probe_id"] != row["probe_id"]
+                        or request["session_id"] != row["session_id"]
+                        or request["provider"] != cohort.provider
+                        or request["api_mode"] != cohort.api_mode
+                        or request["base_url"] != cohort.base_url
+                        or request["model"] != cohort.model
+                        or request["account_fingerprint"] != cohort.account_fingerprint
+                        or request["prompt_sha256"] != expected_prompt
+                        or request["tool_names"] != []
+                        or type(request["retry_count"]) is not int or request["retry_count"] != 0
+                        or not _HASH.fullmatch(request.get("request_sha256", ""))
+                        or not _ID.fullmatch(request.get("turn_id", ""))
+                        or not _ID.fullmatch(request.get("api_request_id", ""))
+                        or not self._lifecycle_startup_peer_current(row, cohort)):
+                    raise ValueError("lifecycle provider attempt differs from enrolled cohort")
+                attempt_handle = secrets.token_urlsafe(32)
+                row["attempt_handle"] = attempt_handle
+                self._lifecycle_startup_attempts[attempt_handle] = {
+                    "probe_handle": request["probe_handle"], "peer": peer,
+                    "turn_id": request["turn_id"], "api_request_id": request["api_request_id"],
+                    "request_sha256": request["request_sha256"],
+                    "prompt_sha256": request["prompt_sha256"],
+                    "expiry": min(cohort.deadline_monotonic, time.monotonic() + 120.0),
+                }
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                        "attempt_handle": attempt_handle}
+            if op == "register-lifecycle-startup-response":
+                required = {"schema", "op", "nonce", "probe_handle", "attempt_handle",
+                    "turn_id", "api_request_id", "request_sha256", "response_sha256",
+                    "response_text", "response_text_sha256", "completed", "tool_call_count"}
+                if set(request) != required:
+                    raise ValueError("lifecycle response schema mismatch")
+                row = self._lifecycle_startup_probes.get(request["probe_handle"])
+                attempt = self._lifecycle_startup_attempts.get(request["attempt_handle"])
+                cohort = row.get("cohort") if isinstance(row, dict) else None
+                text = request.get("response_text")
+                if (row is None or attempt is None or type(cohort) is not RootLifecycleStartupCohort
+                        or row.get("claimed_peer") != peer or row.get("completion_handle") is not None
+                        or attempt.get("probe_handle") != request["probe_handle"]
+                        or attempt.get("peer") != peer or attempt.get("expiry", 0) <= time.monotonic()
+                        or attempt.get("turn_id") != request["turn_id"]
+                        or attempt.get("api_request_id") != request["api_request_id"]
+                        or attempt.get("request_sha256") != request["request_sha256"]
+                        or request.get("completed") is not True
+                        or type(request.get("tool_call_count")) is not int
+                        or request.get("tool_call_count") != 0
+                        or not isinstance(text, str) or not 1 <= len(text) <= 1024
+                        or hashlib.sha256(text.encode("utf-8", "strict")).hexdigest()
+                           != request.get("response_text_sha256")
+                        or text != _LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
+                        or not _HASH.fullmatch(request.get("response_sha256", ""))
+                        or not self._lifecycle_startup_peer_current(row, cohort)):
+                    raise ValueError("lifecycle terminal differs from exact startup challenge")
+                completion_handle = secrets.token_urlsafe(32)
+                row["completion_handle"] = completion_handle
+                row["provider_terminal"] = {
+                    "turn_id": attempt["turn_id"], "api_request_id": attempt["api_request_id"],
+                    "request_sha256": attempt["request_sha256"],
+                    "prompt_sha256": attempt["prompt_sha256"],
+                    "response_sha256": request["response_sha256"],
+                    "response_text_sha256": request["response_text_sha256"],
+                }
+                self._lifecycle_startup_attempts.pop(request["attempt_handle"], None)
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                        "completion_handle": completion_handle}
             if op == "bind-obsidian-native-vault":
                 if set(request) != {"schema", "op", "nonce"}:
                     raise ValueError("Obsidian startup binding schema mismatch")
@@ -7536,7 +8164,20 @@ class RootCoreNativeObservationRegistry:
         request = _read_frame(connection)
         nonce = request.get("nonce") if isinstance(request, dict) else None
         try:
-            if request.get("op") == "bind-obsidian-native-vault":
+            operation = request.get("op")
+            if isinstance(operation, str) and operation.startswith("claim-lifecycle-startup-"):
+                handle = request.get("probe_handle")
+                row = self._lifecycle_startup_probes.get(handle)
+                cohort = row.get("cohort") if isinstance(row, dict) else None
+                if (type(cohort) is not RootLifecycleStartupCohort
+                        or peer_pid != cohort.peer_pid or peer_uid != cohort.peer_uid
+                        or peer_gid != cohort.peer_gid
+                        or not self._lifecycle_startup_peer_current(row, cohort)):
+                    raise PermissionError("selected new Core peer custody did not verify")
+            elif isinstance(operation, str) and operation.startswith("register-lifecycle-startup-"):
+                if not self._lifecycle_startup_request_current(request, (peer_pid, peer_uid, peer_gid)):
+                    raise PermissionError("claimed startup peer custody did not verify")
+            elif operation == "bind-obsidian-native-vault":
                 if self._custody.verify_current_core_peer(self._config, connection) is not True:
                     raise PermissionError("current Core startup peer custody did not verify")
             else:
@@ -7576,6 +8217,13 @@ class RootCoreNativeObservationRegistry:
             self._master_review_sessions.clear()
             self._master_review_completions.clear()
             self._expert_completions.clear()
+            for row in self._lifecycle_startup_probes.values():
+                try:
+                    os.close(row["pidfd"])
+                except Exception:
+                    pass
+            self._lifecycle_startup_probes.clear()
+            self._lifecycle_startup_attempts.clear()
             self._team_completion_evidence.clear()
             self._team_messages.clear()
             self._team_bindings.clear()
@@ -7778,9 +8426,99 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 content=[SimpleNamespace(type="output_text", text=message)])],
         )
 
+    def observe_lifecycle_startup(event: Mapping[str, Any], context: LifecycleStartupProbeContext) -> Any:
+        next_call, request = event.get("next_call"), event.get("request")
+        if (not callable(next_call) or not isinstance(request, dict)
+                or type(context) is not LifecycleStartupProbeContext
+                or not context.is_root_issued()):
+            return denied_response()
+        try:
+            route = (event.get("provider"), event.get("api_mode"),
+                     str(event.get("base_url", "")).rstrip("/"))
+            if route != (context.provider, context.api_mode, context.base_url):
+                return denied_response()
+            if event.get("model") != context.model or event.get("middleware_trace"):
+                return denied_response()
+            session_id = event.get("session_id")
+            turn_id = _require_id(event.get("turn_id"), "lifecycle turn ID")
+            api_request_id = _require_id(event.get("api_request_id"), "lifecycle request ID")
+            if session_id != context.session_id:
+                return denied_response()
+            prompt_digest = _native_prompt_sha256(request)
+            expected_prompt = hashlib.sha256(
+                (_LIFECYCLE_STARTUP_PROMPT_PREFIX + context.nonce
+                 + _LIFECYCLE_STARTUP_PROMPT_SUFFIX).encode("ascii")).hexdigest()
+            identity = _CURRENT_LIFECYCLE_STARTUP_IDENTITY.get()
+            expected_instructions_sha256 = _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.get()
+            instructions = request.get("instructions")
+            if (prompt_digest != expected_prompt or not isinstance(identity, str)
+                    or not isinstance(instructions, str)
+                    or not isinstance(expected_instructions_sha256, str)
+                    or hashlib.sha256(instructions.encode("utf-8", "strict")).hexdigest()
+                       != expected_instructions_sha256
+                    or identity not in instructions):
+                return denied_response()
+            input_items = request.get("input")
+            if (not isinstance(input_items, list) or len(input_items) != 1
+                    or not isinstance(input_items[0], Mapping)
+                    or input_items[0].get("type") != "message"
+                    or input_items[0].get("role") != "user"
+                    or _request_tool_names(request) != ()):
+                return denied_response()
+            request_key = (context.session_id, api_request_id)
+            with lineage_lock:
+                if request_key in request_attempts:
+                    return denied_response()
+                request_attempts[request_key] = None
+                request_attempts.move_to_end(request_key)
+                while len(request_attempts) > 64:
+                    request_attempts.popitem(last=False)
+            account = _codex_account_fingerprint(resolve_credentials)
+            if account != context.account_fingerprint:
+                return denied_response()
+            provider_request = no_tool_request(request)
+            attempt_handle = client.register_lifecycle_startup_attempt(
+                context, turn_id=turn_id, api_request_id=api_request_id,
+                provider=route[0], api_mode=route[1], base_url=route[2], model=context.model,
+                account_fingerprint=account, request_sha256=_hash(provider_request),
+                prompt_sha256=prompt_digest, tool_names=(), retry_count=0)
+            with lineage_lock:
+                request_attempts[request_key] = None
+            response = next_call(provider_request)
+            if (_codex_account_fingerprint(resolve_credentials) != account
+                    or getattr(response, "status", None) != "completed"
+                    or getattr(response, "error", None) is not None
+                    or getattr(response, "incomplete_details", None) is not None):
+                return denied_response()
+            calls = _response_tool_calls(response)
+            output_text = getattr(response, "output_text", None)
+            if (calls or not isinstance(output_text, str) or not 1 <= len(output_text) <= 1024
+                    or output_text != _LIFECYCLE_STARTUP_PROMPT_PREFIX + context.nonce):
+                return denied_response()
+            response_bytes = _canonical(response.model_dump(mode="json"))
+            if not 1 <= len(response_bytes) <= MAX_FRAME:
+                return denied_response()
+            response_sha256 = hashlib.sha256(response_bytes).hexdigest()
+            completion_handle = client.register_lifecycle_startup_response(
+                context, attempt_handle=attempt_handle, turn_id=turn_id,
+                api_request_id=api_request_id, request_sha256=_hash(provider_request),
+                response_sha256=response_sha256, response_text=output_text,
+                completed=True, tool_call_count=0)
+            context._terminal.append({
+                "completion_handle": completion_handle,
+                "response_text_sha256": hashlib.sha256(
+                    output_text.encode("utf-8", "strict")).hexdigest(),
+            })
+            return response
+        except Exception:
+            return denied_response()
+
     def observe(**event: Any) -> Any:
         next_call = event.get("next_call")
         request = event.get("request")
+        lifecycle_context = _CURRENT_LIFECYCLE_STARTUP_PROBE.get()
+        if lifecycle_context is not None:
+            return observe_lifecycle_startup(event, lifecycle_context)
         route = (event.get("provider"), event.get("api_mode"), event.get("base_url"))
         if route != (_CODEX_PROVIDER, _CODEX_MODE, _CODEX_ENDPOINT):
             if isinstance(request, dict) and callable(next_call):

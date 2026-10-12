@@ -44,6 +44,8 @@ _CONTEXT_SOURCES = {"local_estimate", "provider_usage", "provider_usage_plus_est
 _CONTEXT_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+ -]{0,159}$")
 _MAX_CONTEXT_TOKENS = 2_000_000
 _EXTENSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@/-]{0,159}$", re.ASCII)
+_LIFECYCLE_PROBE_HANDLE = re.compile(r"^[A-Za-z0-9_-]{32,128}$", re.ASCII)
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 
 
 def _safe_extension_identifier(value: Any) -> bool:
@@ -143,9 +145,13 @@ class CoreRpcClient:
                                      allowed_group=self._token_group_gid)
         return f"ws://127.0.0.1:{CORE_PORT}{CORE_PATH}?token={quote(token, safe='')}"
 
-    async def _connect(self):
+    async def _connect(self, *, total_timeout: float | None = None):
         from aiohttp import ClientSession, ClientTimeout, WSMsgType
-        client = ClientSession(timeout=ClientTimeout(total=self._timeout_seconds, connect=2))
+        timeout = self._timeout_seconds if total_timeout is None else total_timeout
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not 0.1 <= timeout <= 120.0):
+            raise JarvisChatDenied("official core request deadline is invalid")
+        client = ClientSession(timeout=ClientTimeout(total=timeout, connect=2))
         try:
             ws = await client.ws_connect(self._url(), heartbeat=15,
                                          max_msg_size=MAX_RPC_FRAME_BYTES,
@@ -233,6 +239,53 @@ class CoreRpcClient:
         finally:
             await ws.close()
             await client.close()
+
+    async def lifecycle_startup_probe(self, probe_handle: str) -> dict[str, Any]:
+        """Run the one root-enrolled native startup probe on the fixed core RPC.
+
+        This intentionally has no generic method, prompt, profile, model, or
+        timeout parameter. Root creates ``probe_handle`` in protected memory;
+        the handler consumes it once and returns only a bounded completion
+        reference and response digest. The 120 second ceiling is the lifecycle
+        contract, independent of the ordinary chat client's shorter timeout.
+        """
+        if (not isinstance(probe_handle, str)
+                or _LIFECYCLE_PROBE_HANDLE.fullmatch(probe_handle) is None):
+            raise JarvisChatDenied("startup probe handle is malformed")
+        client, ws, ws_types = await self._connect(total_timeout=120.0)
+        request_id = secrets.token_hex(12)
+        deadline = asyncio.get_running_loop().time() + 120.0
+        try:
+            await ws.send_json({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "jarvis.lifecycle_startup_probe",
+                "params": {"probe_handle": probe_handle},
+            })
+            result = await self._receive(
+                ws, ws_types, expected_id=request_id, deadline=deadline)
+            if (set(result) != {"schema", "probe_handle", "completion_handle",
+                                "status", "response_sha256"}
+                    or type(result.get("schema")) is not int or result["schema"] != 1
+                    or result.get("probe_handle") != probe_handle
+                    or not isinstance(result.get("completion_handle"), str)
+                    or _LIFECYCLE_PROBE_HANDLE.fullmatch(result["completion_handle"]) is None
+                    or result.get("status") != "completed"
+                    or not isinstance(result.get("response_sha256"), str)
+                    or _SHA256_HEX.fullmatch(result["response_sha256"]) is None):
+                raise JarvisChatDenied("startup probe result was invalid")
+            return result
+        except JarvisChatDenied:
+            raise
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise JarvisChatDenied("official core startup probe failed") from None
+        finally:
+            try:
+                await ws.close()
+            finally:
+                await client.close()
 
     async def get_model_provider_status(self) -> dict[str, Any]:
         """Read the pinned gateway's sanitized provider/model status.

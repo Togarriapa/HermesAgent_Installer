@@ -58,6 +58,8 @@ LEGACY_MATERIALIZED_ARTIFACT_SHA256 = "f73463c641ac3744007ee8395b663802d5c916f59
 _HELPER_ARCHIVE_PATH = "manual_stage_jarvis_skills.py"
 _ROOT_RUNUSER = Path("/usr/sbin/runuser")
 _IMPORTER_MODULE = "hermes_installer.registry.manual_jarvis_skills"
+_JARVIS_HOME = Path("/home/admin/.hermes")
+_HELPER_BACKUP_NAME = re.compile(r"^\.jarvis-resources-skills-helper-transition-[0-9a-f]{32}$")
 
 
 class ManualJarvisSkillsError(RuntimeError):
@@ -794,6 +796,7 @@ def _install_manual_jarvis_skills(
     transition_shared_manifest_sha256: str | None = None,
     transition_shared_materialization_sha256: str | None = None,
     transition_shared_member_count: int | None = None,
+    transition_backup_name: str | None = None,
 ) -> dict[str, Any]:
     """Atomically add one revision-namespaced skill generation to a user's Hermes home.
 
@@ -923,7 +926,21 @@ def _install_manual_jarvis_skills(
                 "profiles_preserved_internal": sorted(row["source_id"] for row in manifest["profile_members"]),
             }
 
-    temp = Path(tempfile.mkdtemp(prefix=".jarvis-resources-skills-", dir=home_input))
+    if migration_kind == "helper-only":
+        if (not isinstance(transition_backup_name, str)
+                or _HELPER_BACKUP_NAME.fullmatch(transition_backup_name) is None):
+            raise ManualJarvisSkillsError("helper transition backup identity is invalid")
+        temp = home_input / transition_backup_name
+        try:
+            os.mkdir(temp, 0o700)
+        except FileExistsError:
+            raise ManualJarvisSkillsError("helper transition backup identity already exists") from None
+        temp_info = temp.lstat()
+        if (not stat.S_ISDIR(temp_info.st_mode) or temp_info.st_uid != os.geteuid()
+                or temp_info.st_gid != os.getegid() or stat.S_IMODE(temp_info.st_mode) != 0o700):
+            raise ManualJarvisSkillsError("helper transition backup directory custody differs")
+    else:
+        temp = Path(tempfile.mkdtemp(prefix=".jarvis-resources-skills-", dir=home_input))
     exchanged = False
     preserve_temp = False
     try:
@@ -1042,9 +1059,10 @@ def install_same_materialization_transition(
     next_archive: bytes, previous_archive: bytes, *, hermes_home: str | Path,
     next_sha256: str, previous_sha256: str,
     shared_manifest_sha256: str, shared_materialization_sha256: str,
-    shared_member_count: int,
+    shared_member_count: int, backup_name: str,
 ) -> dict[str, Any]:
     """Install only a parsed helper-only update; preserve the old tree as backup."""
+    _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
     return _install_manual_jarvis_skills(
         next_archive, hermes_home=hermes_home, expected_sha256=next_sha256,
         replace_owned_from_archive=previous_archive,
@@ -1052,7 +1070,70 @@ def install_same_materialization_transition(
         migration_kind="helper-only",
         transition_shared_manifest_sha256=shared_manifest_sha256,
         transition_shared_materialization_sha256=shared_materialization_sha256,
-        transition_shared_member_count=shared_member_count)
+        transition_shared_member_count=shared_member_count,
+        transition_backup_name=backup_name)
+
+
+def restore_same_materialization_generation(
+    current_archive: bytes, restore_archive: bytes, *, hermes_home: str | Path,
+    current_sha256: str, restore_sha256: str, backup_name: str,
+    shared_manifest_sha256: str, shared_materialization_sha256: str,
+    shared_member_count: int,
+) -> dict[str, Any]:
+    """Restore A0 from its exact retained exchange directory after cohort abort."""
+    _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
+    current_manifest, current_files, current_helper = _read_transition_archive(
+        current_archive, current_sha256)
+    restore_manifest, restore_files, _restore_helper = _read_transition_archive(
+        restore_archive, restore_sha256)
+    if (not verify_same_materialization_transition(
+            restore_manifest, restore_files, current_manifest, current_files)
+            or current_helper != Path(__file__).read_bytes()
+            or _same_materialization_digests(current_manifest, current_files)
+                != (shared_manifest_sha256, shared_materialization_sha256, shared_member_count)):
+        raise ManualJarvisSkillsError("restore pair is not the exact reviewed helper-only transition")
+    home_input = Path(hermes_home)
+    if (not home_input.is_absolute() or home_input != _JARVIS_HOME
+            or home_input.resolve(strict=True) != home_input):
+        raise ManualJarvisSkillsError("restore home is not the fixed Jarvis home")
+    home_info = home_input.lstat()
+    if (not stat.S_ISDIR(home_info.st_mode) or stat.S_ISLNK(home_info.st_mode)
+            or home_info.st_uid != os.geteuid() or home_info.st_gid != os.getegid()):
+        raise ManualJarvisSkillsError("restore home custody differs")
+    if _HELPER_BACKUP_NAME.fullmatch(backup_name) is None:
+        raise ManualJarvisSkillsError("restore backup identity is invalid")
+    target = home_input / "skills" / _GENERATION
+    backup = home_input / backup_name
+    _verify_owned_generation(target, current_files, current_sha256)
+    _verify_owned_generation(backup, restore_files, restore_sha256)
+    _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
+    # Reprove both directories immediately before the single atomic exchange.
+    _verify_owned_generation(target, current_files, current_sha256)
+    _verify_owned_generation(backup, restore_files, restore_sha256)
+    _exchange_directories(target, backup)
+    try:
+        _verify_owned_generation(target, restore_files, restore_sha256)
+        _verify_owned_generation(backup, current_files, current_sha256)
+    except BaseException:
+        try:
+            _exchange_directories(target, backup)
+            _verify_owned_generation(target, current_files, current_sha256)
+            _verify_owned_generation(backup, restore_files, restore_sha256)
+        except BaseException:
+            # Preserve both complete trees if an atomic reverse exchange fails.
+            pass
+        raise
+    skills_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                        | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        os.fsync(skills_fd)
+    finally:
+        os.close(skills_fd)
+    return {
+        "state": "restored", "artifact_sha256": restore_sha256,
+        "generation_path": str(target), "retained_generation_backup": str(backup),
+        "retained_artifact_sha256": current_sha256,
+    }
 
 
 def _proc_identity(pid: int) -> tuple[int, str, bytes, tuple[int, ...]]:
@@ -1346,6 +1427,18 @@ def main(argv: list[str] | None = None) -> int:
     transition.add_argument("--shared-manifest-sha256", required=True)
     transition.add_argument("--shared-materialization-sha256", required=True)
     transition.add_argument("--shared-member-count", required=True, type=int)
+    transition.add_argument("--backup-name", required=True)
+    restore = sub.add_parser(
+        "restore-helper-transition",
+        help="restore the exact retained prior generation from an authorized helper transition",
+    )
+    restore.add_argument("--home", required=True)
+    restore.add_argument("--current-sha256", required=True)
+    restore.add_argument("--restore-sha256", required=True)
+    restore.add_argument("--shared-manifest-sha256", required=True)
+    restore.add_argument("--shared-materialization-sha256", required=True)
+    restore.add_argument("--shared-member-count", required=True, type=int)
+    restore.add_argument("--backup-name", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
@@ -1401,6 +1494,30 @@ def main(argv: list[str] | None = None) -> int:
             result = install_same_materialization_transition(
                 next_archive, previous_archive, hermes_home=args.home,
                 next_sha256=args.next_sha256, previous_sha256=args.previous_sha256,
+                shared_manifest_sha256=args.shared_manifest_sha256,
+                shared_materialization_sha256=args.shared_materialization_sha256,
+                shared_member_count=args.shared_member_count,
+                backup_name=args.backup_name)
+        elif args.command == "restore-helper-transition":
+            target = _verify_helper_transition_origin(args)
+            incoming = sys.stdin.buffer.read(2 * _ARTIFACT_LIMIT + 16 + 1)
+            if len(incoming) < 16 or len(incoming) > 2 * _ARTIFACT_LIMIT + 16:
+                raise ManualJarvisSkillsError("helper-only restore input is outside its bound")
+            current_size, restore_size = struct.unpack(">QQ", incoming[:16])
+            if (not 0 < current_size <= _ARTIFACT_LIMIT
+                    or not 0 < restore_size <= _ARTIFACT_LIMIT
+                    or len(incoming) != 16 + current_size + restore_size):
+                raise ManualJarvisSkillsError("helper-only restore framing differs")
+            current_archive = incoming[16:16 + current_size]
+            restore_archive = incoming[16 + current_size:]
+            current_manifest, current_files, _current_helper = _read_transition_archive(
+                current_archive, args.current_sha256)
+            _verify_owned_generation(target, current_files, args.current_sha256)
+            result = restore_same_materialization_generation(
+                current_archive, restore_archive, hermes_home=args.home,
+                current_sha256=args.current_sha256,
+                restore_sha256=args.restore_sha256,
+                backup_name=args.backup_name,
                 shared_manifest_sha256=args.shared_manifest_sha256,
                 shared_materialization_sha256=args.shared_materialization_sha256,
                 shared_member_count=args.shared_member_count)
