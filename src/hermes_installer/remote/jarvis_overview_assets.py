@@ -382,6 +382,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
   let ecosystemPollTimer = null;
   let ecosystemGeneration = 0;
   let ecosystemRefreshing = false;
+  let ecosystemHasSnapshot = false;
   let lastObservation = null;
   let coreFreshnessTimer = null;
   let coreFreshUntil = 0;
@@ -494,6 +495,11 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
     if (!ecosystemCard) return;
     ecosystemCard.dataset.ecosystemState = reason === 'hidden' || reason === 'offline' || reason === 'stale' ? 'stale' : 'unavailable';
     ecosystemCard.dataset.activityFlow = 'idle';
+    if (!ecosystemHasSnapshot) {
+      $('[data-expert-identity]').textContent = 'Instance names and states are unavailable.';
+      $('[data-selected-team]').textContent = 'Team membership is unavailable.';
+      $('[data-ecosystem-summary]').textContent = 'No current native instance summary is available.';
+    }
     $('[data-ecosystem-status]').textContent = reason === 'offline'
       ? 'Offline · native Expert activity is unverified.'
       : reason === 'hidden' ? 'Dashboard paused · native Expert activity is unverified.'
@@ -516,6 +522,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
       const coreVerified = root.dataset.coreState === 'verified'
         && document.visibilityState === 'visible' && navigator.onLine !== false;
       renderNativeEcosystem(page, coreVerified);
+      ecosystemHasSnapshot = true;
     } catch (_error) {
       if (overviewScopeIsCurrent(mountScope, generation, ecosystemGeneration, stopped)) {
         invalidateHandoffs('unavailable');

@@ -300,3 +300,48 @@ assert.equal(JSON.stringify(related).includes('private-recipient'), false, 'priv
         path.write_text("const assert = require('node:assert/strict');\n" + helper_harness + harness, encoding="utf-8")
         result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_overview_ecosystem_first_load_failure_is_explicit_and_retains_prior_data():
+    js = FEATURE_ASSETS.mount_js
+    assert "invalidateHandoffs('unavailable')" in js
+    start = js.index('  function invalidateHandoffs(reason) {')
+    end = js.index('\n  async function refreshEcosystem()', start)
+    invalidate = js[start:end]
+    harness = r'''const elements = {
+  '[data-ecosystem-status]': {textContent:'Loading'},
+  '[data-expert-identity]': {textContent:'Loading'},
+  '[data-selected-team]': {textContent:'Loading'},
+  '[data-ecosystem-summary]': {textContent:'Loading'},
+};
+let ecosystemGeneration = 0;
+let ecosystemRefreshing = true;
+let ecosystemHasSnapshot = false;
+const ecosystemCard = {dataset:{}};
+function $(selector) { return elements[selector]; }
+'''
+    checks = r'''
+invalidateHandoffs('unavailable');
+assert.equal(ecosystemCard.dataset.ecosystemState, 'unavailable');
+assert.equal(elements['[data-ecosystem-status]'].textContent, 'Current native Expert activity is unverified.');
+assert.equal(elements['[data-expert-identity]'].textContent, 'Instance names and states are unavailable.');
+assert.equal(elements['[data-selected-team]'].textContent, 'Team membership is unavailable.');
+assert.equal(elements['[data-ecosystem-summary]'].textContent, 'No current native instance summary is available.');
+assert.equal(ecosystemRefreshing, false);
+ecosystemHasSnapshot = true;
+elements['[data-expert-identity]'].textContent = '1 observed native instance.';
+elements['[data-selected-team]'].textContent = 'Team Alpha';
+elements['[data-ecosystem-summary]'].textContent = '1 completed execution';
+invalidateHandoffs('unavailable');
+assert.equal(elements['[data-expert-identity]'].textContent, '1 observed native instance.');
+assert.equal(elements['[data-selected-team]'].textContent, 'Team Alpha');
+assert.equal(elements['[data-ecosystem-summary]'].textContent, '1 completed execution');
+'''
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "overview-ecosystem-failure-harness.js"
+        path.write_text(
+            "const assert = require('node:assert/strict');\n" + harness + invalidate + checks,
+            encoding="utf-8",
+        )
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
