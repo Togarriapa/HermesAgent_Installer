@@ -2232,3 +2232,14 @@ An actual Calendar read SHALL bind authenticated owner, protected selected conne
 #### Scenario: Successful read with unknown provider email
 - **WHEN** an authorized selected connection reads actual events but no provider identity observation exists
 - **THEN** the view may show those bounded events as that connection's read, labels account identity unknown and does not claim same-email linkage or native methods absent from verified source.
+
+### Requirement: Reachable distinct owner-UI Calendar producer
+Calendar reads SHALL use an implemented finite owner-ingress producer in the existing root Inspector with protected connection selection, existing opaque credential custody, a sealed owner-ui-calendar-read invocation and actual fixed source-known HTTPS list_events transport/result. A UI click SHALL NOT impersonate an observed model/native tool call or weaken the separate native dispatcher.
+
+#### Scenario: No AuthorityClient bridge or connection credential
+- **WHEN** the Inspector has no model-observation bridge or live Calendar connection authorization is absent
+- **THEN** the distinct owner-UI producer remains the implementation path without fake native receipts/third daemon, and absent account effects stay truthful pending while other rollout proceeds.
+
+#### Scenario: Transport scope/currentness fails
+- **WHEN** owner/connection/calendar/source/credential scope, exact fixed request/result or original ingress/revocation lease cannot be verified before network/output
+- **THEN** read denies/pends with no copied secret, arbitrary RPC/URL, automatic repeated effect or lease restamping.
