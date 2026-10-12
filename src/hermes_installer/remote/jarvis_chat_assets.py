@@ -2040,7 +2040,7 @@ FEATURE_CSS_CHUNK_PATHS = (
     "/chat/assets/features-knowledge.css",
 )
 _FEATURE_CHUNK_IDS = (
-    ("missions", "bots", "activity", "native-controls"),
+    ("missions", "bots", "activity", "native-controls", "settings-admin"),
     ("resources-learning", "native-inventory", "files", "models-settings", "overview", "calendar"),
     ("integrations", "context", "second-brain", "extensions", "projects", "profiles-admin"),
 )
@@ -2063,7 +2063,7 @@ def _compose_feature_assets() -> None:
         "native-controls": "resources", "native-inventory": "resources",
         "profiles-admin": "resources", "resources-learning": "resources",
         "second-brain": "resources", "integrations": "system", "models-settings": "system",
-        "calendar": "system",
+        "calendar": "system", "settings-admin": "system",
     }
     panels: list[str] = []
     css_fragments: dict[str, list[str]] = {path: [] for path in FEATURE_CSS_CHUNK_PATHS}

@@ -144,6 +144,8 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('data-view="settings"', system_menu)
         self.assertEqual(system_menu.count('data-view="calendar"'), 1)
         self.assertEqual(system_menu.count(">Calendar</button>"), 1)
+        self.assertEqual(system_menu.count('data-view="settings-admin"'), 1)
+        self.assertEqual(system_menu.count(">Agent settings</button>"), 1)
         self.assertIn('Conversation model · session only', markup)
         self.assertEqual(markup.count('data-view="overview"'), 1)
         self.assertEqual(markup.count('data-view="integrations"'), 1)
