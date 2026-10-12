@@ -5,7 +5,7 @@ from .jarvis_feature_contract import JarvisFeatureAssets
 
 
 _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
-  <section class="overview-stage" data-activity="unknown" aria-label="Jarvis activity">
+  <section class="overview-stage" data-activity="unknown" data-in-viewport="false" aria-label="Jarvis activity">
     <aside class="overview-rail" aria-label="Recent accepted turn outcomes">
       <div class="overview-readout"><span>Accepted · 7 days</span><strong data-metric="total">Unknown</strong><small>Owner turns</small></div>
       <div class="overview-readout"><span>Completed</span><strong data-metric="completed">Unknown</strong><small>Observed outcomes</small></div>
@@ -191,8 +191,8 @@ _CSS += """
 @keyframes jarvis-reactor-turn{to{transform:rotate(1turn)}}
 @keyframes jarvis-reactor-reverse{to{transform:rotate(-1turn)}}
 @keyframes jarvis-reactor-pulse{0%,100%{opacity:.62;stroke-width:1.1}50%{opacity:1;stroke-width:2}}
-[data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-orbit-inner{transform-box:view-box;transform-origin:120px 120px;animation:jarvis-reactor-turn 22s linear infinite}
-[data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial{transform-box:view-box;transform-origin:120px 120px;animation:jarvis-reactor-reverse 36s linear infinite}
+[data-feature-root="overview"] .overview-stage[data-in-viewport="true"][data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-orbit-inner{transform-box:view-box;transform-origin:120px 120px;animation:jarvis-reactor-turn 22s linear infinite}
+[data-feature-root="overview"] .overview-stage[data-in-viewport="true"][data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial{transform-box:view-box;transform-origin:120px 120px;animation:jarvis-reactor-reverse 36s linear infinite}
 [data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-activity="quiet"] .reactor-orbit-inner{animation-duration:44s}
 [data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-activity="quiet"] .reactor-dial{animation-duration:72s}
 [data-feature-root="overview"] .overview-toolbar{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.65rem 0;border-top:1px solid rgba(117,191,199,.15);border-bottom:1px solid rgba(117,191,199,.15)}
@@ -269,8 +269,7 @@ _CSS += """
  [data-feature-root="overview"] .overview-readout strong{font-size:1.35rem}
 }
 @media(hover:hover) and (pointer:fine){[data-feature-root="overview"] .quick-actions button:hover,[data-feature-root="overview"] .overview-toolbar button:hover{border-color:rgba(88,228,235,.52);background:rgba(18,76,85,.45);color:#f2ffff}[data-feature-root="overview"] .command-form button:hover{filter:brightness(1.12)}}
-@media(prefers-reduced-motion:reduce){html:not([data-jarvis-motion="full"]) [data-feature-root="overview"] .reactor-dial,html:not([data-jarvis-motion="full"]) [data-feature-root="overview"] .reactor-orbit-inner,html:not([data-jarvis-motion="full"]) [data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}html:not([data-jarvis-motion="full"]) [data-feature-root="overview"] *{transition-duration:0s!important;transition-delay:0s!important}}
-@media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] [data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-orbit-inner{animation:jarvis-reactor-turn 22s linear infinite!important}html[data-jarvis-motion="full"] [data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial{animation:jarvis-reactor-reverse 36s linear infinite!important}}
+@media(prefers-reduced-motion:reduce){[data-feature-root="overview"] .reactor-dial,[data-feature-root="overview"] .reactor-orbit-inner,[data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}[data-feature-root="overview"] *{transition-duration:0s!important;transition-delay:0s!important}}
 [data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-orbit-outer{stroke:#dbb66f;opacity:.45}
 html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-dial,html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-orbit-inner,html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}
 /* A fresh response is necessary, but it is not sufficient while hidden/offline. */
@@ -278,15 +277,17 @@ html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-st
 html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage .reactor-orbit,
 [data-feature-root="overview"]:not([data-network-online="true"]) .overview-stage .reactor-dial,
 [data-feature-root="overview"]:not([data-network-online="true"]) .overview-stage .reactor-orbit{animation:none!important;transform:none!important}
-@media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"]:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial,html[data-jarvis-motion="full"]:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-orbit{animation:none!important;transform:none!important}}
-@media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] [data-feature-root="overview"]:not([data-network-online="true"]) .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial,html[data-jarvis-motion="full"] [data-feature-root="overview"]:not([data-network-online="true"]) .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-orbit{animation:none!important;transform:none!important}}
+[data-feature-root="overview"] .overview-stage:not([data-in-viewport="true"]) .reactor-dial,
+[data-feature-root="overview"] .overview-stage:not([data-in-viewport="true"]) .reactor-orbit{animation:none!important;transform:none!important}
 """
 
 _MOUNT = r"""function mount(container, api) {
   const root = container.querySelector('[data-feature-root="overview"]') || container;
   const $ = (selector) => root.querySelector(selector);
   const refreshButton = $('[data-refresh]');
+  const stage = $('.overview-stage');
   let stopped = false;
+  let stageObserver = null;
   let lastObservation = null;
   let coreFreshnessTimer = null;
   let coreFreshUntil = 0;
@@ -294,6 +295,7 @@ _MOUNT = r"""function mount(container, api) {
   let refreshGeneration = 0;
   root.dataset.pageVisible = String(document.visibilityState === 'visible');
   root.dataset.networkOnline = 'checking';
+  stage.dataset.inViewport = 'false';
   function node(tag, value) { const item = document.createElement(tag); item.textContent = value; return item; }
   function number(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
   function format(value) { return value === null ? 'Unknown' : value.toLocaleString(); }
@@ -416,6 +418,15 @@ _MOUNT = r"""function mount(container, api) {
     const dispatch = data && data.resources && data.resources.dispatch || {};
     $('[data-dispatch]').textContent = `Dispatched identities: ${dispatch.state === 'observed' ? format(number(dispatch.count)) : 'Unavailable'}. ${dispatch.reason || ''}`;
   }
+  if (typeof IntersectionObserver === 'function') {
+    stageObserver = new IntersectionObserver((entries) => {
+      if (stopped) return;
+      for (const entry of entries) {
+        if (entry.target === stage) stage.dataset.inViewport = String(entry.isIntersecting && entry.intersectionRatio > 0);
+      }
+    }, {threshold: 0});
+    stageObserver.observe(stage);
+  }
   async function refresh() {
     if (stopped) return;
     if (document.visibilityState !== 'visible' || navigator.onLine === false) {
@@ -517,7 +528,7 @@ _MOUNT = r"""function mount(container, api) {
   document.addEventListener('visibilitychange',onVisibilityChange);
   window.addEventListener('offline',onNetworkChange);
   window.addEventListener('online',onNetworkChange);
-  return function cleanup() { stopped=true; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',onVisibilityChange); window.removeEventListener('offline',onNetworkChange); window.removeEventListener('online',onNetworkChange); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
+  return function cleanup() { stopped=true; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); if (stageObserver) stageObserver.disconnect(); stage.dataset.inViewport='false'; refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',onVisibilityChange); window.removeEventListener('offline',onNetworkChange); window.removeEventListener('online',onNetworkChange); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
 }"""
 
 _UNMOUNT = "function unmount() {}"
