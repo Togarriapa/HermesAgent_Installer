@@ -201,6 +201,8 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
             events.append("classified")
             return receipt
 
+        client.authorize_current_tool_call = classify
+
         ctx = _Context()
         install_jarvis_final_effect_middleware(ctx, client)
         with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
@@ -238,6 +240,8 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
         client.authorize_obsidian_call_scope = lambda **kwargs: events.append("scope") or _Scope()
         client.request_final_effect = lambda **kwargs: self.fail(
             "private draft must not request final-effect approval")
+        client.authorize_current_tool_call = lambda *, observed_call: _CallerReceipt(
+            observed_call, "master_read")
 
         ctx = _Context()
         install_jarvis_final_effect_middleware(ctx, client)

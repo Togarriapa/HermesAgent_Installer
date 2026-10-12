@@ -4026,9 +4026,10 @@ class RootCoreNativeObservationRegistry:
                         or not isinstance(draft_id, str)
                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
                         or not _HASH.fullmatch(content_sha or "")
-                        or not self._obsidian_origin_store_ok
-                        or handle in self._obsidian_resolved_origin_calls):
+                        or not self._obsidian_origin_store_ok):
                     raise ValueError("Obsidian origin lookup identity or journal is unavailable")
+                if handle in self._obsidian_resolved_origin_calls:
+                    raise ValueError("Obsidian origin lookup call was already used (replayed)")
                 if len(self._obsidian_resolved_origin_calls) >= 4096:
                     self._obsidian_resolved_origin_calls = {
                         item for item in self._obsidian_resolved_origin_calls

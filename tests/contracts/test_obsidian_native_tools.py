@@ -216,7 +216,8 @@ def test_private_draft_identity_comes_from_root_context_and_not_arguments(tmp_pa
 
     with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
                return_value=dispatch), _admit_current_obsidian_call(
-            observed_call=observed, scope=scope, binding=binding):
+            observed_call=observed, scope=scope, binding=binding,
+            observer_client=_OriginObserver(store)):
         result = tool(args)
 
     assert result["executionId"] == "mission_123"
