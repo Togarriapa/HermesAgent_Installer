@@ -19,6 +19,7 @@ import json
 import secrets
 import shlex
 import time
+import unicodedata
 from pathlib import Path
 
 GATEWAY = "hermes-jarvis-core-gateway.service"
@@ -38,6 +39,7 @@ NATIVE_OBSERVER_PRESTART = (
 NATIVE_OBSERVER_READ_WRITE = "ReadWritePaths=/var/lib/hermes-installer/core-runtime"
 NATIVE_OBSERVER_SUPPLEMENTARY_GROUPS = "SupplementaryGroups=1000"
 _SOURCE_PATH = re.compile(rb"/opt/hermes-installer-core-[0-9a-f]{9,64}/src\Z")
+_APPROVED_EMAIL_UNION_MAX_BYTES = 16 * 1024
 
 
 def _wait_legacy_listener(core_runtime, *, timeout: float = 30.0) -> None:
@@ -265,9 +267,58 @@ def _atomic_fixed(path: Path, raw: bytes, *, uid: int, gid: int, mode: int) -> N
         os.close(directory)
 
 
-def _source_switch(candidate_source: Path):
+def _read_approved_email_union() -> tuple[str, ...]:
+    """Read one bounded, explicit JSON array without exposing its contents."""
+    try:
+        raw = sys.stdin.buffer.read(_APPROVED_EMAIL_UNION_MAX_BYTES + 1)
+        if type(raw) is not bytes or not raw or len(raw) > _APPROVED_EMAIL_UNION_MAX_BYTES:
+            raise ValueError
+        value = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_unique_pairs)
+        if (type(value) is not list or not 1 <= len(value) <= 32
+                or any(type(email) is not str or len(email) > 254 for email in value)):
+            raise ValueError
+        from hermes_installer.remote.config import _EMAIL
+        normalized = []
+        for email in value:
+            address = email.strip().casefold()
+            if (not address or len(address) > 254
+                    or any(unicodedata.category(char) == "Cc" for char in email)
+                    or not _EMAIL.fullmatch(address)):
+                raise ValueError
+            normalized.append(address)
+        if len(set(normalized)) != len(normalized):
+            raise ValueError
+        return tuple(normalized)
+    except (OSError, UnicodeError, ValueError, TypeError):
+        raise RuntimeError("approved email union input is invalid") from None
+
+
+def _normalized_email_list(value) -> tuple[str, ...]:
+    try:
+        if (type(value) is not list or not 1 <= len(value) <= 32
+                or any(type(email) is not str or len(email) > 254 for email in value)):
+            raise ValueError
+        from hermes_installer.remote.config import _EMAIL
+        normalized = []
+        for email in value:
+            address = email.strip().casefold()
+            if (not address or len(address) > 254
+                    or any(unicodedata.category(char) == "Cc" for char in email)
+                    or not _EMAIL.fullmatch(address)):
+                raise ValueError
+            normalized.append(address)
+        if len(set(normalized)) != len(normalized):
+            raise ValueError
+        return tuple(normalized)
+    except (ValueError, TypeError, UnicodeError):
+        raise RuntimeError("fixed Gateway email allowlist is invalid") from None
+
+
+def _source_switch(candidate_source: Path, *, read_approved_email_union: bool = False):
     from hashlib import sha256
 
+    if read_approved_email_union and os.geteuid() != 0:
+        raise RuntimeError("approved email union intake requires the fixed Root apply actor")
     if not _unit_is_exact_and_active(INSPECTOR):
         raise RuntimeError("fixed Inspector unit ownership or state is not exact and active")
     saved = {
@@ -303,6 +354,12 @@ def _source_switch(candidate_source: Path):
         FIXED_UNITS[GATEWAY]: _replace_unit_source(
             saved[FIXED_UNITS[GATEWAY]][0], gateway_source, str(candidate_source).encode("ascii")),
     }
+    if read_approved_email_union:
+        approved_union = _read_approved_email_union()
+        prior_emails = _normalized_email_list(config_value.get("allowed_emails"))
+        if not set(prior_emails).issubset(approved_union):
+            raise RuntimeError("approved email union must preserve every current member")
+        config_value["allowed_emails"] = list(approved_union)
     config_value["gateway_unit_sha256"] = sha256(new_units[FIXED_UNITS[GATEWAY]]).hexdigest()
     new_config = (json.dumps(config_value, sort_keys=True, separators=(",", ":")) + "\n").encode()
     if len(new_config) > 16 * 1024:
@@ -327,6 +384,7 @@ def _save_ingress_backup(candidate_sha: str, saved, config_raw: bytes,
         "new_gateway_sha256": hashlib.sha256(new_units[FIXED_UNITS[GATEWAY]]).hexdigest(),
         "new_inspector_sha256": hashlib.sha256(new_units[FIXED_UNITS[INSPECTOR]]).hexdigest(),
         "new_config_sha256": hashlib.sha256(new_config).hexdigest(),
+        "new_gateway_config": base64.b64encode(new_config).decode("ascii"),
         "post_core_config_sha256": None,
         "old_gateway_sha256": hashlib.sha256(saved[FIXED_UNITS[GATEWAY]][0]).hexdigest(),
         "old_inspector_sha256": hashlib.sha256(saved[FIXED_UNITS[INSPECTOR]][0]).hexdigest(),
@@ -365,6 +423,25 @@ def _save_ingress_backup(candidate_sha: str, saved, config_raw: bytes,
         os.fsync(dfd)
     finally:
         os.close(dfd)
+
+
+def _prepare_existing_owner_before_migration(new_gateway_config: bytes,
+                                            approved_union_requested: bool) -> bool:
+    """Keep the established sole-owner preparation out of multi-email adoption."""
+    try:
+        new_config = json.loads(new_gateway_config, object_pairs_hook=_unique_pairs)
+    except (ValueError, TypeError, UnicodeError):
+        raise RuntimeError("prospective Gateway config is malformed") from None
+    if (approved_union_requested and type(new_config) is dict
+            and type(new_config.get("allowed_emails")) is list
+            and len(new_config["allowed_emails"]) > 1):
+        print("Owner registration/vault state was preserved; global owner operations remain pending their existing gate.")
+        return False
+    from hermes_installer.remote.obsidian_owner_lifecycle import (
+        prepare_sole_existing_chat_owner_for_legacy_migration,
+    )
+    prepare_sole_existing_chat_owner_for_legacy_migration()
+    return True
 
 
 def _set_backup_state(state: str) -> None:
@@ -436,17 +513,26 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
     raw, _info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0, mode=0o600, maximum=128 * 1024)
     try:
         value = json.loads(raw, object_pairs_hook=_unique_pairs)
+        prospective_field_present = (type(value) is dict and "new_gateway_config" in value)
         keys = {"schema", "state", "candidate_sha", "gateway_unit", "inspector_unit",
                 "gateway_config", "gateway_mode", "gateway_gid", "old_gateway_sha256",
                 "old_inspector_sha256", "old_config_sha256", "new_gateway_sha256",
                 "new_inspector_sha256", "new_config_sha256", "post_core_config_sha256",
-                "runtime_inspector_sha256"}
-        legacy_keys = keys - {"post_core_config_sha256", "runtime_inspector_sha256"}
+                "runtime_inspector_sha256", "new_gateway_config"}
+        legacy_keys = keys - {"post_core_config_sha256", "runtime_inspector_sha256",
+                              "new_gateway_config"}
         if type(value) is dict and set(value) == legacy_keys:
             value["post_core_config_sha256"] = None
             value["runtime_inspector_sha256"] = None
+            value["new_gateway_config"] = None
+        elif (type(value) is dict and set(value) ==
+              keys - {"runtime_inspector_sha256", "new_gateway_config"}):
+            value["runtime_inspector_sha256"] = None
+            value["new_gateway_config"] = None
         elif type(value) is dict and set(value) == keys - {"runtime_inspector_sha256"}:
             value["runtime_inspector_sha256"] = None
+        elif type(value) is dict and set(value) == keys - {"new_gateway_config"}:
+            value["new_gateway_config"] = None
         if (type(value) is not dict or set(value) != keys or type(value["schema"]) is not int
                 or value["schema"] != 1 or value["candidate_sha"] != candidate_sha
                 or value["state"] not in {"prepared", "units-switched", "migrated", "recovery-required"}
@@ -458,6 +544,8 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
                     and (not isinstance(value["runtime_inspector_sha256"], str)
                          or re.fullmatch(r"[0-9a-f]{64}", value["runtime_inspector_sha256"]) is None))):
             raise ValueError
+        if prospective_field_present and value["new_gateway_config"] is None:
+            raise ValueError
         decoded = tuple(base64.b64decode(value[key], validate=True) for key in
                         ("gateway_unit", "inspector_unit", "gateway_config"))
         if any(not item or len(item) > 64 * 1024 for item in decoded):
@@ -467,9 +555,78 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
                 value["old_gateway_sha256"], value["old_inspector_sha256"],
                 value["old_config_sha256"]):
             raise ValueError
+        if value["new_gateway_config"] is not None:
+            if (not isinstance(value["new_gateway_config"], str)
+                    or len(value["new_gateway_config"]) > 4 * 16 * 1024
+                    or type(value["new_config_sha256"]) is not str
+                    or re.fullmatch(r"[0-9a-f]{64}", value["new_config_sha256"]) is None):
+                raise ValueError
+            new_config = base64.b64decode(value["new_gateway_config"], validate=True)
+            if (not new_config or len(new_config) > 16 * 1024
+                    or sha256(new_config).hexdigest() != value["new_config_sha256"]):
+                raise ValueError
         return value, *decoded
     except Exception:
         raise RuntimeError("fixed ingress rollback record is malformed") from None
+
+
+def _journaled_new_gateway_config(value: dict, old_gateway: bytes,
+                                 old_inspector: bytes, old_config: bytes,
+                                 expected_source: Path) -> bytes:
+    """Re-derive only the fixed source/unit recipe around exact journal bytes."""
+    old_source = _unit_source(old_gateway, "core_gateway")
+    if _unit_source(old_inspector, "core_gateway_inspector") != old_source:
+        raise RuntimeError("saved ingress units do not share one prior source generation")
+    switched_gateway = _replace_unit_source(
+        old_gateway, old_source, str(expected_source).encode("ascii"))
+    switched_inspector = _replace_unit_source(
+        old_inspector, old_source, str(expected_source).encode("ascii"))
+    if (hashlib.sha256(switched_gateway).hexdigest() != value["new_gateway_sha256"]
+            or hashlib.sha256(switched_inspector).hexdigest() != value["new_inspector_sha256"]):
+        raise RuntimeError("saved units do not derive the recorded candidate generation")
+    try:
+        prior = json.loads(old_config, object_pairs_hook=_unique_pairs)
+    except (ValueError, TypeError, UnicodeError):
+        raise RuntimeError("saved Gateway config is malformed") from None
+    if (type(prior) is not dict
+            or prior.get("gateway_unit_sha256") != hashlib.sha256(old_gateway).hexdigest()):
+        raise RuntimeError("saved Gateway config does not bind the saved prior unit")
+    prior["gateway_unit_sha256"] = hashlib.sha256(switched_gateway).hexdigest()
+    derived = (json.dumps(prior, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+    encoded = value.get("new_gateway_config")
+    if encoded is None:
+        # Legacy journals predate the stored prospective bytes and can resume
+        # only the original recipe, which preserves the exact old allowlist.
+        prospective = derived
+    else:
+        prospective = base64.b64decode(encoded, validate=True)
+        try:
+            recorded = json.loads(prospective, object_pairs_hook=_unique_pairs)
+        except (ValueError, TypeError, UnicodeError):
+            raise RuntimeError("saved prospective Gateway config is malformed") from None
+        if (type(recorded) is not dict
+                or prospective != (json.dumps(recorded, sort_keys=True,
+                                               separators=(",", ":")) + "\n").encode()
+                or set(recorded) != set(prior)
+                or recorded.get("gateway_unit_sha256") != prior["gateway_unit_sha256"]
+                or any(recorded.get(key) != prior.get(key)
+                       for key in set(prior) - {"gateway_unit_sha256", "allowed_emails"})):
+            raise RuntimeError("saved prospective Gateway config differs from the fixed recipe")
+        if "allowed_emails" in prior:
+            previous_emails = _normalized_email_list(prior["allowed_emails"])
+            recorded_emails = _normalized_email_list(recorded.get("allowed_emails"))
+            if (not set(previous_emails).issubset(recorded_emails)
+                    or (recorded["allowed_emails"] != prior["allowed_emails"]
+                        and recorded["allowed_emails"] != list(recorded_emails))):
+                raise RuntimeError("saved prospective Gateway config changes its approved email union")
+        elif "allowed_emails" in recorded:
+            raise RuntimeError("saved prospective Gateway config adds an unapproved email field")
+
+    if (len(prospective) > 16 * 1024
+            or hashlib.sha256(prospective).hexdigest() != value["new_config_sha256"]):
+        raise RuntimeError("saved config does not derive the recorded candidate transaction")
+    return prospective
 
 
 def _refresh_migrated_core_config(candidate_sha: str, expected_source: Path,
@@ -499,34 +656,18 @@ def _refresh_migrated_core_config(candidate_sha: str, expected_source: Path,
     if record.get("unit_sha256") != unit_sha or record.get("launcher_sha256") != launcher_sha:
         raise RuntimeError("fixed Core files differ from their current journal digests")
 
+    switched_config = _journaled_new_gateway_config(
+        value, old_gateway, old_inspector, old_config, expected_source)
     if current_sha == value["post_core_config_sha256"]:
-        existing = json.loads(current_raw, object_pairs_hook=_unique_pairs)
-        if (type(existing) is not dict or existing.get("core_unit_sha256") != unit_sha
-                or existing.get("core_launcher_sha256") != launcher_sha):
+        updated = json.loads(switched_config, object_pairs_hook=_unique_pairs)
+        updated["core_unit_sha256"] = unit_sha
+        updated["core_launcher_sha256"] = launcher_sha
+        expected_post = (json.dumps(updated, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        if (current_raw != expected_post
+                or hashlib.sha256(expected_post).hexdigest() != value["post_core_config_sha256"]):
             raise RuntimeError("recorded post-Core config does not bind current journal digests")
         return current_raw
-    old_source = _unit_source(old_gateway, "core_gateway")
-    if _unit_source(old_inspector, "core_gateway_inspector") != old_source:
-        raise RuntimeError("saved ingress units do not share one prior source generation")
-    switched_gateway = _replace_unit_source(
-        old_gateway, old_source, str(expected_source).encode("ascii"))
-    switched_inspector = _replace_unit_source(
-        old_inspector, old_source, str(expected_source).encode("ascii"))
-    if (hashlib.sha256(switched_gateway).hexdigest() != value["new_gateway_sha256"]
-            or hashlib.sha256(switched_inspector).hexdigest() != value["new_inspector_sha256"]):
-        raise RuntimeError("saved units do not derive the recorded candidate generation")
-    try:
-        updated = json.loads(old_config, object_pairs_hook=_unique_pairs)
-    except (ValueError, TypeError, UnicodeError):
-        raise RuntimeError("saved Gateway config is malformed") from None
-    if (type(updated) is not dict
-            or updated.get("gateway_unit_sha256") != hashlib.sha256(old_gateway).hexdigest()):
-        raise RuntimeError("saved Gateway config does not bind the saved prior unit")
-    updated["gateway_unit_sha256"] = hashlib.sha256(switched_gateway).hexdigest()
-    switched_config = (json.dumps(updated, sort_keys=True, separators=(",", ":")) + "\n").encode()
-    if (len(switched_config) > 16 * 1024
-            or hashlib.sha256(switched_config).hexdigest() != value["new_config_sha256"]):
-        raise RuntimeError("saved config does not derive the recorded candidate transaction")
+    updated = json.loads(switched_config, object_pairs_hook=_unique_pairs)
     if current_raw != switched_config:
         raise RuntimeError("pre-Core Gateway config bytes differ from the saved transaction")
     updated["core_unit_sha256"] = unit_sha
@@ -542,6 +683,8 @@ def _refresh_migrated_core_config(candidate_sha: str, expected_source: Path,
         value["post_core_config_sha256"] = replacement_sha
         _raw, backup_info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0, mode=0o600,
                                          maximum=128 * 1024)
+        if value.get("new_gateway_config") is None:
+            value.pop("new_gateway_config", None)
         backup_bytes = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
         _atomic_fixed(INGRESS_BACKUP, backup_bytes, uid=0, gid=0, mode=stat.S_IMODE(backup_info.st_mode))
     _atomic_fixed(GATEWAY_CONFIG, replacement, uid=0, gid=config_info.st_gid,
@@ -1096,7 +1239,11 @@ def main() -> int:
                         help="restore the exact pre-adoption Core/plugin and Inspector/Gateway cohort")
     action.add_argument("--resume", action="store_true",
                         help="resume the exact recovery-required candidate with its current journal-owned Core")
+    parser.add_argument("--approved-email-union-stdin", action="store_true",
+                        help="read a bounded approved email union on stdin during --apply")
     args = parser.parse_args()
+    if args.approved_email_union_stdin and not args.apply:
+        parser.error("--approved-email-union-stdin is available only with --apply")
     if not re.fullmatch(r"[0-9a-f]{40}", args.candidate_sha):
         parser.error("--candidate-sha must be a full lowercase 40-character Git commit SHA")
     expected_adapter_source = Path(
@@ -1178,7 +1325,9 @@ def main() -> int:
             raise RuntimeError("unexpected preexisting native-observer socket blocks adoption")
         phase = "build exact source switch and protected recovery backup"
         print("Adoption phase: " + phase, flush=True)
-        saved, old_config, config_info, new_units, new_config = _source_switch(expected_adapter_source)
+        saved, old_config, config_info, new_units, new_config = _source_switch(
+            expected_adapter_source,
+            read_approved_email_union=args.approved_email_union_stdin)
         _save_ingress_backup(args.candidate_sha, saved, old_config, config_info,
                              new_units, new_config)
         base_inspector_sha = hashlib.sha256(new_units[FIXED_UNITS[INSPECTOR]]).hexdigest()
@@ -1207,10 +1356,8 @@ def main() -> int:
                                       str(expected_adapter_source).encode("ascii"))
             phase = "prepare existing Chat owner and vault"
             print("Adoption phase: " + phase, flush=True)
-            from hermes_installer.remote.obsidian_owner_lifecycle import (
-                prepare_sole_existing_chat_owner_for_legacy_migration,
-            )
-            prepare_sole_existing_chat_owner_for_legacy_migration()
+            _prepare_existing_owner_before_migration(
+                new_config, args.approved_email_union_stdin)
 
             # Keep both public ingress units stopped through owner preparation,
             # Core migration and fresh Inspector binding to the new Core PID.
@@ -1246,9 +1393,20 @@ def main() -> int:
             _verify_gateway_tunnel(config, require_active=True)
             print(result)
             print("New Inspector and Gateway use the same verified immutable source generation.")
-            print("Selected-owner registration and fixed observer socket metadata were verified.")
+            if args.approved_email_union_stdin:
+                approved_count = len(json.loads(new_config)["allowed_emails"])
+                print(f"Approved email union accepted (count={approved_count}; current membership preserved=yes).")
+            if (args.approved_email_union_stdin
+                    and len(json.loads(new_config)["allowed_emails"]) > 1):
+                print("Fixed observer socket metadata was verified; global owner operations remain pending their existing gate.")
+            else:
+                print("Selected-owner registration and fixed observer socket metadata were verified.")
             print("Peer protocol, native tool registration, and Obsidian read/write effects remain separate Pi witnesses.")
-            print("Owner enrollment/vault preparation persist if Core/plugin rollback is needed.")
+            if (args.approved_email_union_stdin
+                    and len(json.loads(new_config)["allowed_emails"]) > 1):
+                print("Existing owner registration/vault state was preserved; no multi-principal owner operation was prepared.")
+            else:
+                print("Owner enrollment/vault preparation persist if Core/plugin rollback is needed.")
             print("Exact rollback command: rerun this helper with the same --candidate-sha and --rollback.")
             return 0
         except Exception as error:

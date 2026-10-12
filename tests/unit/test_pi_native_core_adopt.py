@@ -3,8 +3,10 @@
 These tests use in-memory fixed-file/systemd fixtures. They must be run on the
 Pi with the candidate test environment; they are not target acceptance.
 """
+import base64
 import hashlib
 import importlib.util
+import io
 import json
 import stat
 import sys
@@ -333,6 +335,233 @@ def test_switch_changes_only_two_import_roots_and_gateway_digest(monkeypatch):
     assert after["selected_data_root"] == "/home/admin/.hermes"
 
 
+def test_approved_email_union_is_bounded_normalized_and_only_changes_new_config(monkeypatch):
+    old_gateway = _unit("core_gateway")
+    prior_config = json.dumps({
+        "gateway_unit_sha256": hashlib.sha256(old_gateway).hexdigest(),
+        "allowed_emails": ["Owner@example.test"],
+        "credential_ref": "keyring:codex-primary",
+        "selected_data_root": "/home/admin/.hermes",
+    }, sort_keys=True).encode() + b"\n"
+    fixed, effects, gateway, inspector, _ = _switch_fixture(monkeypatch, config=prior_config)
+    payload = b'[" Owner@example.test ","Second@example.test","third@example.test"]'
+    monkeypatch.setattr(adopt.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(payload)))
+
+    saved, old_bytes, _info, new_units, new_bytes = adopt._source_switch(
+        Path(NEW_SOURCE.decode()), read_approved_email_union=True)
+
+    expected_gateway = gateway.replace(OLD_SOURCE, NEW_SOURCE, 1)
+    expected_inspector = inspector.replace(OLD_SOURCE, NEW_SOURCE, 1)
+    assert old_bytes == prior_config
+    assert saved[adopt.FIXED_UNITS[adopt.GATEWAY]][0] == gateway
+    assert new_units[adopt.FIXED_UNITS[adopt.GATEWAY]] == expected_gateway
+    assert new_units[adopt.FIXED_UNITS[adopt.INSPECTOR]] == expected_inspector
+    assert json.loads(new_bytes)["allowed_emails"] == [
+        "owner@example.test", "second@example.test", "third@example.test"]
+    assert fixed[adopt.GATEWAY_CONFIG][0] == prior_config
+    assert effects == []
+
+
+@pytest.mark.parametrize("payload", [
+    b'{"allowed_emails":["owner@example.test"]}',
+    b'["other@example.test"]',
+    b'["owner@example.test"," OWNER@example.test "]',
+    b'["not-an-email"]',
+    b'["owner@example.test"] trailing',
+    b'["owner@example.test"]' + b" " * adopt._APPROVED_EMAIL_UNION_MAX_BYTES,
+])
+def test_invalid_approved_email_union_refuses_before_any_system_effect(monkeypatch, payload):
+    old_gateway = _unit("core_gateway")
+    prior_config = json.dumps({
+        "gateway_unit_sha256": hashlib.sha256(old_gateway).hexdigest(),
+        "allowed_emails": ["owner@example.test"],
+        "credential_ref": "keyring:codex-primary",
+    }).encode() + b"\n"
+    fixed, effects, gateway, inspector, _ = _switch_fixture(monkeypatch, config=prior_config)
+    monkeypatch.setattr(adopt.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(payload)))
+
+    with pytest.raises(RuntimeError, match="approved email union") as error:
+        adopt._source_switch(Path(NEW_SOURCE.decode()), read_approved_email_union=True)
+
+    assert "owner@example.test" not in str(error.value)
+    assert effects == []
+    assert fixed[adopt.FIXED_UNITS[adopt.GATEWAY]][0] == gateway
+    assert fixed[adopt.FIXED_UNITS[adopt.INSPECTOR]][0] == inspector
+    assert fixed[adopt.GATEWAY_CONFIG][0] == prior_config
+
+
+def test_source_switch_without_union_keeps_existing_email_bytes_and_does_not_read_stdin(monkeypatch):
+    old_gateway = _unit("core_gateway")
+    prior_config = json.dumps({
+        "gateway_unit_sha256": hashlib.sha256(old_gateway).hexdigest(),
+        "allowed_emails": ["Owner@example.test"],
+        "credential_ref": "keyring:codex-primary",
+    }).encode() + b"\n"
+    _fixed, _effects, _gateway, _inspector, _ = _switch_fixture(monkeypatch, config=prior_config)
+
+    class NoRead:
+        def read(self, _limit):
+            pytest.fail("the no-union lane must not consume stdin")
+
+    monkeypatch.setattr(adopt.sys, "stdin", SimpleNamespace(buffer=NoRead()))
+    _saved, old_bytes, _info, _new_units, new_bytes = adopt._source_switch(
+        Path(NEW_SOURCE.decode()))
+
+    assert old_bytes == prior_config
+    assert json.loads(new_bytes)["allowed_emails"] == ["Owner@example.test"]
+
+
+def test_backup_persists_exact_prospective_config_and_original_config(tmp_path, monkeypatch):
+    parent = tmp_path / "protected"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    monkeypatch.setattr(adopt, "INGRESS_BACKUP", parent / "backup.json")
+    gateway, inspector = _unit("core_gateway"), _unit("core_gateway_inspector")
+    config = b'{"allowed_emails":["owner@example.test"]}\n'
+    new_config = b'{"allowed_emails":["owner@example.test","second@example.test"],"gateway_unit_sha256":"' + b"a" * 64 + b'"}\n'
+    saved = {adopt.FIXED_UNITS[adopt.GATEWAY]: (gateway, None),
+             adopt.FIXED_UNITS[adopt.INSPECTOR]: (inspector, None)}
+    units = {adopt.FIXED_UNITS[adopt.GATEWAY]: gateway + b"candidate\n",
+             adopt.FIXED_UNITS[adopt.INSPECTOR]: inspector + b"candidate\n"}
+    info = SimpleNamespace(st_mode=stat.S_IFREG | 0o440, st_gid=981)
+
+    adopt._save_ingress_backup("a" * 40, saved, config, info, units, new_config)
+    value = json.loads((parent / "backup.json").read_bytes())
+
+    assert base64.b64decode(value["gateway_config"]) == config
+    assert base64.b64decode(value["new_gateway_config"]) == new_config
+    assert value["new_config_sha256"] == hashlib.sha256(new_config).hexdigest()
+
+
+def test_legacy_backup_resume_derives_only_the_original_email_recipe():
+    candidate = "a" * 40
+    source = Path(f"/opt/hermes-installer-core-{candidate[:9]}/src")
+    old_gateway, old_inspector = _unit("core_gateway"), _unit("core_gateway_inspector")
+    old_config = json.dumps({
+        "gateway_unit_sha256": hashlib.sha256(old_gateway).hexdigest(),
+        "allowed_emails": ["owner@example.test"],
+        "credential_ref": "keyring:codex-primary",
+    }, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    new_gateway = old_gateway.replace(OLD_SOURCE, str(source).encode("ascii"), 1)
+    new_inspector = old_inspector.replace(OLD_SOURCE, str(source).encode("ascii"), 1)
+    expected_value = json.loads(old_config)
+    expected_value["gateway_unit_sha256"] = hashlib.sha256(new_gateway).hexdigest()
+    expected = (json.dumps(expected_value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    record = {"new_gateway_sha256": hashlib.sha256(new_gateway).hexdigest(),
+              "new_inspector_sha256": hashlib.sha256(new_inspector).hexdigest(),
+              "new_config_sha256": hashlib.sha256(expected).hexdigest()}
+
+    resumed = adopt._journaled_new_gateway_config(
+        record, old_gateway, old_inspector, old_config, source)
+
+    assert resumed == expected
+    assert json.loads(resumed)["allowed_emails"] == ["owner@example.test"]
+
+
+def test_recorded_new_config_cannot_add_unapproved_members_or_change_other_fields():
+    candidate = "b" * 40
+    source = Path(f"/opt/hermes-installer-core-{candidate[:9]}/src")
+    old_gateway, old_inspector = _unit("core_gateway"), _unit("core_gateway_inspector")
+    old_config = json.dumps({
+        "gateway_unit_sha256": hashlib.sha256(old_gateway).hexdigest(),
+        "allowed_emails": ["owner@example.test"],
+        "credential_ref": "keyring:codex-primary",
+    }, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    new_gateway = old_gateway.replace(OLD_SOURCE, str(source).encode("ascii"), 1)
+    new_inspector = old_inspector.replace(OLD_SOURCE, str(source).encode("ascii"), 1)
+    prior = json.loads(old_config)
+    prior["gateway_unit_sha256"] = hashlib.sha256(new_gateway).hexdigest()
+    prior["allowed_emails"] = ["other@example.test"]
+    prospective = (json.dumps(prior, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    record = {"new_gateway_sha256": hashlib.sha256(new_gateway).hexdigest(),
+              "new_inspector_sha256": hashlib.sha256(new_inspector).hexdigest(),
+              "new_config_sha256": hashlib.sha256(prospective).hexdigest(),
+              "new_gateway_config": base64.b64encode(prospective).decode("ascii")}
+
+    with pytest.raises(RuntimeError, match="approved email union"):
+        adopt._journaled_new_gateway_config(
+            record, old_gateway, old_inspector, old_config, source)
+
+
+def test_backup_reader_binds_exact_prospective_config_digest(monkeypatch):
+    old_gateway, old_inspector = _unit("core_gateway"), _unit("core_gateway_inspector")
+    old_config = b'{"gateway_unit_sha256":"old"}\n'
+    next_config = b'{"allowed_emails":["owner@example.test","member@example.test"]}\n'
+    candidate = "c" * 40
+    value = {
+        "schema": 1, "state": "prepared", "candidate_sha": candidate,
+        "gateway_unit": base64.b64encode(old_gateway).decode(),
+        "inspector_unit": base64.b64encode(old_inspector).decode(),
+        "gateway_config": base64.b64encode(old_config).decode(),
+        "gateway_mode": 0o440, "gateway_gid": 981,
+        "old_gateway_sha256": hashlib.sha256(old_gateway).hexdigest(),
+        "old_inspector_sha256": hashlib.sha256(old_inspector).hexdigest(),
+        "old_config_sha256": hashlib.sha256(old_config).hexdigest(),
+        "new_gateway_sha256": "1" * 64, "new_inspector_sha256": "2" * 64,
+        "new_config_sha256": hashlib.sha256(next_config).hexdigest(),
+        "new_gateway_config": base64.b64encode(next_config).decode(),
+        "post_core_config_sha256": None, "runtime_inspector_sha256": None,
+    }
+    info = SimpleNamespace(st_mode=stat.S_IFREG | 0o600)
+    monkeypatch.setattr(adopt, "_read_fixed", lambda *_args, **_kwargs:
+                        ((json.dumps(value, sort_keys=True) + "\n").encode(), info))
+
+    loaded, _old_gateway, _old_inspector, _old_config = adopt._backup_value(candidate)
+    assert base64.b64decode(loaded["new_gateway_config"]) == next_config
+
+    value["new_gateway_config"] = None
+    with pytest.raises(RuntimeError, match="rollback record is malformed"):
+        adopt._backup_value(candidate)
+    value["new_gateway_config"] = base64.b64encode(next_config + b"\n").decode()
+    with pytest.raises(RuntimeError, match="rollback record is malformed"):
+        adopt._backup_value(candidate)
+    value.pop("new_gateway_config")
+    legacy_loaded, *_ = adopt._backup_value(candidate)
+    assert legacy_loaded["new_gateway_config"] is None
+
+
+@pytest.mark.parametrize("action", ["--rollback", "--resume"])
+def test_union_input_flag_is_denied_for_resume_or_rollback_before_source_effects(monkeypatch, action):
+    monkeypatch.setattr(adopt.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(adopt.sys, "argv", [
+        str(HELPER_PATH), "--candidate-sha", "d" * 40,
+        action, "--approved-email-union-stdin"])
+    with pytest.raises(SystemExit):
+        adopt.main()
+
+
+@pytest.mark.parametrize("union_requested,registration_exists,expected", [
+    (True, True, False), (True, False, False), (False, True, True)])
+def test_multi_email_adoption_preserves_owner_registration_and_keeps_gate_pending(
+        monkeypatch, capsys, union_requested, registration_exists, expected):
+    calls = []
+    state = {"registration": b"exact prior registration" if registration_exists else None,
+             "vault": b"exact existing vault bytes"}
+    owner_module = ModuleType("hermes_installer.remote.obsidian_owner_lifecycle")
+    def prepare_owner():
+        calls.append("sole-owner-preparation")
+        state["registration"] = b"rewritten registration"
+        state["vault"] = b"rewritten vault"
+    owner_module.prepare_sole_existing_chat_owner_for_legacy_migration = prepare_owner
+    monkeypatch.setitem(__import__("sys").modules,
+                        owner_module.__name__, owner_module)
+    emails = (["owner@example.test", "member@example.test", "third@example.test"]
+              if union_requested else ["owner@example.test"])
+    prospective = json.dumps({"allowed_emails": emails}, sort_keys=True,
+                              separators=(",", ":")).encode() + b"\n"
+
+    prepared = adopt._prepare_existing_owner_before_migration(prospective, union_requested)
+
+    assert prepared is expected
+    assert calls == ([] if union_requested else ["sole-owner-preparation"])
+    if union_requested:
+        assert state == {"registration": b"exact prior registration" if registration_exists else None,
+                         "vault": b"exact existing vault bytes"}
+        output = capsys.readouterr().out
+        assert "preserved" in output and "pending" in output
+        assert "owner@example.test" not in output
+
+
 def test_runtime_inspector_recipe_preserves_primary_group_and_adds_only_fixed_paths():
     raw = _unit("core_gateway_inspector")
     repaired = adopt._runtime_repaired_inspector(raw)
@@ -381,10 +610,13 @@ def test_core_config_resume_refresh_is_journal_bound_and_commit_before_write(mon
                              "core_unit_sha256": "2" * 64,
                              "core_launcher_sha256": "3" * 64,
                              "credential_ref": "keyring:codex-primary",
+                             "allowed_emails": ["owner@example.test"],
                              "selected_data_root": "/home/admin/.hermes"},
                             sort_keys=True, separators=(",", ":")).encode() + b"\n"
     switched_value = json.loads(old_config)
     switched_value["gateway_unit_sha256"] = hashlib.sha256(switched_gateway).hexdigest()
+    switched_value["allowed_emails"] = ["owner@example.test", "member@example.test",
+                                         "third@example.test"]
     switched = (json.dumps(switched_value, sort_keys=True, separators=(",", ":")) + "\n").encode()
     assert old_config != switched
     core_unit, launcher = b"current owned unit", b"current owned launcher"
@@ -393,6 +625,7 @@ def test_core_config_resume_refresh_is_journal_bound_and_commit_before_write(mon
               "new_gateway_sha256": hashlib.sha256(switched_gateway).hexdigest(),
               "new_inspector_sha256": hashlib.sha256(switched_inspector).hexdigest(),
               "new_config_sha256": hashlib.sha256(switched).hexdigest(),
+              "new_gateway_config": base64.b64encode(switched).decode("ascii"),
               "post_core_config_sha256": None}
     files = {adopt.GATEWAY_CONFIG: switched}
     info = SimpleNamespace(st_mode=stat.S_IFREG | 0o440, st_gid=981)
@@ -437,9 +670,16 @@ def test_core_config_resume_refresh_is_journal_bound_and_commit_before_write(mon
             files[path] = raw
 
     monkeypatch.setattr(adopt, "_atomic_fixed", atomic_fixed)
+    class NoUnionInput:
+        def read(self, _limit):
+            pytest.fail("resume must use the exact journaled config without new input")
+
+    monkeypatch.setattr(adopt.sys, "stdin", SimpleNamespace(buffer=NoUnionInput()))
     first = adopt._refresh_migrated_core_config(candidate, source, Core)
     assert json.loads(first) == {**json.loads(switched), "core_unit_sha256": unit_sha,
                                  "core_launcher_sha256": launcher_sha}
+    assert json.loads(first)["allowed_emails"] == [
+        "owner@example.test", "member@example.test", "third@example.test"]
     assert writes == [adopt.INGRESS_BACKUP, adopt.GATEWAY_CONFIG]
     assert backup["post_core_config_sha256"] == hashlib.sha256(first).hexdigest()
     assert adopt._refresh_migrated_core_config(candidate, source, Core) == first
@@ -534,6 +774,55 @@ def test_failed_old_file_restore_keeps_all_ingress_stopped(monkeypatch, failed_w
     assert files[adopt.FIXED_UNITS[adopt.GATEWAY]] in {old_gateway, new_gateway}
     assert files[adopt.FIXED_UNITS[adopt.INSPECTOR]] in {old_inspector, new_inspector}
     assert files[adopt.GATEWAY_CONFIG] in {old_config, new_config}
+
+
+def test_union_rollback_restores_exact_original_one_email_config(monkeypatch):
+    old_gateway, old_inspector = _unit("core_gateway"), _unit("core_gateway_inspector")
+    new_gateway = old_gateway.replace(OLD_SOURCE, NEW_SOURCE, 1)
+    new_inspector = old_inspector.replace(OLD_SOURCE, NEW_SOURCE, 1)
+    old_config = json.dumps({
+        "gateway_unit_sha256": hashlib.sha256(old_gateway).hexdigest(),
+        "allowed_emails": ["Owner@example.test"],
+        "credential_ref": "keyring:codex-primary",
+    }, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    new_config = json.dumps({
+        "gateway_unit_sha256": hashlib.sha256(new_gateway).hexdigest(),
+        "allowed_emails": ["owner@example.test", "member@example.test",
+                            "third@example.test"],
+        "credential_ref": "keyring:codex-primary",
+    }, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    files = {adopt.FIXED_UNITS[adopt.GATEWAY]: new_gateway,
+             adopt.FIXED_UNITS[adopt.INSPECTOR]: new_inspector,
+             adopt.GATEWAY_CONFIG: new_config}
+    states = {name: "active" for name in (adopt.INSPECTOR, adopt.GATEWAY, adopt.TUNNEL)}
+    info = SimpleNamespace(st_mode=stat.S_IFREG | 0o440, st_gid=981)
+    monkeypatch.setattr(adopt, "_unit_is_fixed", lambda _name: True)
+    monkeypatch.setattr(adopt, "_read_fixed", lambda path, **_kwargs: (files[path], info))
+    monkeypatch.setattr(adopt, "_atomic_fixed", lambda path, raw, **_kwargs:
+                        files.__setitem__(path, raw))
+    monkeypatch.setattr(adopt, "_unit_state", lambda name: states[name])
+    monkeypatch.setattr(adopt, "_unit_is_exact_and_active", lambda name: states[name] == "active")
+    monkeypatch.setattr(adopt, "_verify_inspector_process", lambda *_args: None)
+    monkeypatch.setattr(adopt, "_verify_gateway_tunnel", lambda *_args, **_kwargs: {
+        adopt.GATEWAY: True, adopt.TUNNEL: True})
+    monkeypatch.setattr(adopt, "_run", lambda *args, **_kwargs:
+                        states.__setitem__(args[2], "inactive") if args[1] == "stop" else
+                        states.__setitem__(args[2], "active") if args[1] == "start" else "")
+    gateway_module = ModuleType("hermes_installer.remote.core_gateway")
+    gateway_module.CoreGatewayConfig = SimpleNamespace(load=lambda **_kwargs: object())
+    monkeypatch.setitem(__import__("sys").modules, gateway_module.__name__, gateway_module)
+    journal = {
+        "new_gateway_sha256": hashlib.sha256(new_gateway).hexdigest(),
+        "new_inspector_sha256": hashlib.sha256(new_inspector).hexdigest(),
+        "new_config_sha256": hashlib.sha256(new_config).hexdigest(),
+        "post_core_config_sha256": None,
+        "gateway_gid": 981, "gateway_mode": 0o440,
+    }
+
+    assert adopt._restore_old_ingress(journal, old_gateway, old_inspector, old_config)
+    assert files[adopt.FIXED_UNITS[adopt.GATEWAY]] == old_gateway
+    assert files[adopt.FIXED_UNITS[adopt.INSPECTOR]] == old_inspector
+    assert files[adopt.GATEWAY_CONFIG] == old_config
 
 
 @pytest.mark.parametrize("failed_start", [adopt.INSPECTOR, adopt.GATEWAY, adopt.TUNNEL])
