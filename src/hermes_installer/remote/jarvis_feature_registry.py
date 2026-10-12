@@ -119,6 +119,14 @@ def _route_shape(route: tuple[str, str]) -> tuple[str, str]:
     return method, re.sub(r"\{[a-z][a-z0-9_]*\}", "{}", path)
 
 
+def _has_unreviewed_shared_routes(feature_id: str,
+                                 declared_routes: set[tuple[str, str]],
+                                 registered_routes: set[tuple[str, str]]) -> bool:
+    """Compare exact method/path templates against the fixed shared-route allowlist."""
+    allowed = _SHARED_INSTALLER_READS.get(feature_id, set()) & registered_routes
+    return declared_routes & registered_routes != allowed
+
+
 def _validate_feature_asset_routes(assets: tuple[JarvisFeatureAssets, ...]) -> None:
     """Allow GET/POST pairs inside a feature; only identical GETs may cross features."""
     all_routes: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
@@ -174,10 +182,14 @@ def install_jarvis_feature_routes(app, service) -> None:
             installer, routes = installers[feature_id]
             if {_route_shape(route) for route in routes} != declared:
                 raise ValueError("dashboard feature asset and installer routes differ")
-            registered = {_route_shape((route.method, route.resource.canonical))
-                          for route in app.router.routes()}
-            expected_existing_shared = _SHARED_INSTALLER_READS.get(feature_id, set()) & registered
-            if declared & registered != expected_existing_shared:
+            # Use exact method/path templates here. Normalizing variable names is
+            # useful for collision detection, but would make a legitimate allowlist
+            # entry such as ``{turn_id}`` fail against its normalized ``{}`` shape.
+            declared_exact = set(asset.api_routes)
+            registered_exact = {
+                (route.method, route.resource.canonical) for route in app.router.routes()
+            }
+            if _has_unreviewed_shared_routes(feature_id, declared_exact, registered_exact):
                 raise ValueError("feature reused an unreviewed shared route")
         else:
             owner, routes = owners[feature_id]

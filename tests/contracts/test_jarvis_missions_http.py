@@ -294,3 +294,19 @@ def test_features_may_share_only_the_same_read_only_route():
             feature("one", (("GET", "/chat/api/items/{id}"),)),
             feature("two", (("GET", "/chat/api/items/{item_id}"),)),
         ))
+
+
+def test_installer_shared_route_allowlist_uses_exact_templates_and_methods():
+    inherited_events = ("GET", "/chat/api/turns/{turn_id}/events")
+    assert not jarvis_feature_registry._has_unreviewed_shared_routes(
+        "missions", {inherited_events}, {inherited_events})
+
+    # Shape normalization is appropriate for ambiguity checks, but cannot turn a
+    # different placeholder template or HTTP method into the reviewed route.
+    renamed_parameter = ("GET", "/chat/api/turns/{id}/events")
+    assert jarvis_feature_registry._route_shape(renamed_parameter) == \
+        jarvis_feature_registry._route_shape(inherited_events)
+    assert jarvis_feature_registry._has_unreviewed_shared_routes(
+        "missions", {renamed_parameter}, {inherited_events})
+    assert jarvis_feature_registry._has_unreviewed_shared_routes(
+        "missions", {("POST", inherited_events[1])}, {inherited_events})
