@@ -397,7 +397,7 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
 def _refresh_migrated_core_config(candidate_sha: str, expected_source: Path,
                                   core_runtime) -> bytes:
     """CAS-update only Core digests from the exact active migration journal."""
-    value, _gateway, _inspector, switched_config = _backup_value(candidate_sha)
+    value, old_gateway, old_inspector, old_config = _backup_value(candidate_sha)
     if value["state"] not in {"migrated", "recovery-required"}:
         raise RuntimeError("adoption backup is not in a resumable Core-migrated state")
     current_raw, config_info = _read_fixed(GATEWAY_CONFIG, uid=0, gid=981,
@@ -427,11 +427,30 @@ def _refresh_migrated_core_config(candidate_sha: str, expected_source: Path,
                 or existing.get("core_launcher_sha256") != launcher_sha):
             raise RuntimeError("recorded post-Core config does not bind current journal digests")
         return current_raw
+    old_source = _unit_source(old_gateway, "core_gateway")
+    if _unit_source(old_inspector, "core_gateway_inspector") != old_source:
+        raise RuntimeError("saved ingress units do not share one prior source generation")
+    switched_gateway = _replace_unit_source(
+        old_gateway, old_source, str(expected_source).encode("ascii"))
+    switched_inspector = _replace_unit_source(
+        old_inspector, old_source, str(expected_source).encode("ascii"))
+    if (hashlib.sha256(switched_gateway).hexdigest() != value["new_gateway_sha256"]
+            or hashlib.sha256(switched_inspector).hexdigest() != value["new_inspector_sha256"]):
+        raise RuntimeError("saved units do not derive the recorded candidate generation")
+    try:
+        updated = json.loads(old_config, object_pairs_hook=_unique_pairs)
+    except (ValueError, TypeError, UnicodeError):
+        raise RuntimeError("saved Gateway config is malformed") from None
+    if (type(updated) is not dict
+            or updated.get("gateway_unit_sha256") != hashlib.sha256(old_gateway).hexdigest()):
+        raise RuntimeError("saved Gateway config does not bind the saved prior unit")
+    updated["gateway_unit_sha256"] = hashlib.sha256(switched_gateway).hexdigest()
+    switched_config = (json.dumps(updated, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    if (len(switched_config) > 16 * 1024
+            or hashlib.sha256(switched_config).hexdigest() != value["new_config_sha256"]):
+        raise RuntimeError("saved config does not derive the recorded candidate transaction")
     if current_raw != switched_config:
         raise RuntimeError("pre-Core Gateway config bytes differ from the saved transaction")
-    updated = json.loads(current_raw, object_pairs_hook=_unique_pairs)
-    if type(updated) is not dict:
-        raise RuntimeError("fixed Gateway config is malformed")
     updated["core_unit_sha256"] = unit_sha
     updated["core_launcher_sha256"] = launcher_sha
     replacement = (json.dumps(updated, sort_keys=True, separators=(",", ":")) + "\n").encode()

@@ -100,14 +100,25 @@ def test_switch_changes_only_two_import_roots_and_gateway_digest(monkeypatch):
 def test_core_config_resume_refresh_is_journal_bound_and_commit_before_write(monkeypatch):
     candidate = "d" * 40
     source = Path(f"/opt/hermes-installer-core-{candidate[:9]}/src")
-    switched = json.dumps({"gateway_unit_sha256": "1" * 64, "core_unit_sha256": "2" * 64,
-                           "core_launcher_sha256": "3" * 64,
-                           "credential_ref": "keyring:codex-primary",
-                           "selected_data_root": "/home/admin/.hermes"},
-                          sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    old_gateway = _unit("core_gateway")
+    old_inspector = _unit("core_gateway_inspector")
+    switched_gateway = old_gateway.replace(OLD_SOURCE, str(source).encode("ascii"), 1)
+    switched_inspector = old_inspector.replace(OLD_SOURCE, str(source).encode("ascii"), 1)
+    old_config = json.dumps({"gateway_unit_sha256": hashlib.sha256(old_gateway).hexdigest(),
+                             "core_unit_sha256": "2" * 64,
+                             "core_launcher_sha256": "3" * 64,
+                             "credential_ref": "keyring:codex-primary",
+                             "selected_data_root": "/home/admin/.hermes"},
+                            sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    switched_value = json.loads(old_config)
+    switched_value["gateway_unit_sha256"] = hashlib.sha256(switched_gateway).hexdigest()
+    switched = (json.dumps(switched_value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    assert old_config != switched
     core_unit, launcher = b"current owned unit", b"current owned launcher"
     unit_sha, launcher_sha = hashlib.sha256(core_unit).hexdigest(), hashlib.sha256(launcher).hexdigest()
     backup = {"state": "recovery-required", "candidate_sha": candidate,
+              "new_gateway_sha256": hashlib.sha256(switched_gateway).hexdigest(),
+              "new_inspector_sha256": hashlib.sha256(switched_inspector).hexdigest(),
               "new_config_sha256": hashlib.sha256(switched).hexdigest(),
               "post_core_config_sha256": None}
     files = {adopt.GATEWAY_CONFIG: switched}
@@ -131,7 +142,7 @@ def test_core_config_resume_refresh_is_journal_bound_and_commit_before_write(mon
 
     monkeypatch.setattr(adopt, "INGRESS_BACKUP", Path("/fixture/backup.json"))
     monkeypatch.setattr(adopt, "_backup_value",
-                        lambda sha: (backup, b"gateway", b"inspector", switched)
+                        lambda sha: (backup, old_gateway, old_inspector, old_config)
                         if sha == candidate else pytest.fail("candidate mismatch"))
 
     def read_fixed(path, **_kwargs):
