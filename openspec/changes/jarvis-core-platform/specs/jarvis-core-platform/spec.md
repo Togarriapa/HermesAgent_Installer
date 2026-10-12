@@ -2338,7 +2338,12 @@ Within R0200..R0205, server identity SHALL derive from verified Access issuer/co
 - **THEN** valid access persists, old records remain owned/readable or explicitly preserved pending ambiguous recovery, stale private view state clears and another principal cannot obtain history/private knowledge; no silent empty replacement or email-based reassignment occurs.
 
 ### Requirement: Device-qualified Android companion and assistant roadmap
-R0140/R0203 SHALL qualify protected text/foreground voice on identified stock devices with consent, transcript/text fallback, stop and privacy. Native assistant/hotword SHALL qualify separately per build. Research SHALL NOT authorize OS flashing, launcher/kiosk enrollment, background/biometric capture or broader phone control.
+R0140/R0200..R0203 SHALL qualify protected text/foreground voice and opt-in individually revocable device-bound pairing with automatic credential refresh on identified stock devices. Normal paired use SHALL require no hourly/daily interactive OTP. Native assistant/hotword SHALL qualify separately per build. Research SHALL NOT authorize OS flashing, launcher/kiosk enrollment, background/biometric capture or broader phone control.
+
+#### Scenario: Paired Android/tablet continuity and withdrawal
+- **WHEN** a genuinely authenticated person opts into native personal-device pairing
+- **THEN** protected device-bound credentials and bounded automatic refresh support normal use without hourly/daily interactive OTP; actual device restart, refresh and individual revocation require target evidence. The applied 720-hour global web Access duration is separate convenience, not proof of native pairing.
+- **AND** logout, lost-device revocation or renewal failure denies further admission and exposes exact reauthentication/recovery steps while preserving history/knowledge. Refresh cannot revive old turns/effects, widen owner authority or alter original 600-second turn and short lease ceilings; native pairing remains unimplemented/unqualified until evidenced.
 
 #### Scenario: Unsupported hotword, uncertain speaker or offline device
 - **WHEN** native role/recognition/background support is unqualified, speaker identity is uncertain or current network/authentication is absent

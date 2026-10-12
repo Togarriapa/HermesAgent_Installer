@@ -152,6 +152,8 @@ The direct user mandate refines existing R0203/RT-T266.3/VD-T266.5: every featur
 
 ## Trust this device: bounded authentication convenience
 
+M5 within R0200..R0203 explicitly includes opt-in individually revocable native Android/tablet device-bound pairing and bounded automatic credential refresh, without hourly/daily interactive OTP during normal paired use. Logout, lost-device revocation and renewal failure require exact denial/reauthentication recovery evidence. Root verified/applied the 720-hour global web Access application/policy duration; that convenience does not implement native pairing, which remains pending. Existing turn/lease ceilings and owner permissions persist; M1 remains first.
+
 The direct request adds a narrow R0200/R0201/R0203 substep within HI-T266.2/RT-T266.3/VD-T266.5: after genuine Cloudflare authentication, offer explicit off-by-default “Trust this device” for a personal browser/device through a supported native mechanism, reducing repeated login where feasible. Research a bounded 30-day target, exact per-device opt-in/readback and forget/logout/revocation behavior before enabling it. Cloudflare duration controls alone do not prove a per-device trust API; unavailable per-device behavior stays explicit/pending and no account/application-wide TTL change is disguised as a device choice. The operations guide records official sources and their limits. JWT-before-bytes, original run/lease ceilings and all 219/62/18/eight OPEN acceptance groups remain unchanged. No Cloudflare/device/account mutation is performed by this refinement; native/acceptance work proceeds independently.
 
 ## Current dependency audit: exact Obsidian execution and promotion timing

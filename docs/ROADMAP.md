@@ -27,6 +27,8 @@ Later M1 checkpoint from Root: current0cb1670-member artifact and protected nati
 
 Milestone dependencies concern useful slices, not changes to the eight broad task-group graph. Groups stay OPEN until their complete obligations are qualified. HA/phone enrollment, free-route eligibility, unavailable accounts, huge models and paid calling are capability blockers, not blockers for independent Core/UI/adapter implementation. Where targets are absent, finish safe code, fixtures, docs and executable qualification steps without claiming the effect.
 
+M5/R0200..R0203 requires explicit native Android/tablet individually revocable device-bound pairing and bounded automatic credential refresh: normal paired use has no hourly/daily interactive OTP. Qualify restart/refresh, logout, lost-device revocation and renewal-failure denial with exact reauthentication/recovery, preserving data and existing owner/600-second turn/short lease boundaries. Root verified/applied the 720-hour global web Access application/policy duration as browser convenience; native pairing/refresh remains unimplemented and unqualified. M1 stays first.
+
 ## Actual parallel work after specification validation
 
 | Lane / model | Next bounded work | Shared ownership and stopping condition |

@@ -183,6 +183,8 @@ VD-T266.5/R0203 predeployment evidence: bind review to exact candidate bytes and
 
 ## Trust this device substep within existing OPEN groups
 
+M5/R0200..R0203 within HI-T266.2/RT-T266.3/VD-T266.5: implement and qualify explicit native Android/tablet individually revocable device-bound pairing and bounded automatic refresh, with no hourly/daily interactive OTP in normal paired use. Prove restart/refresh, logout, lost-device revocation and renewal-failure denial/reauthentication while preserving data, owner scope and original turn/lease limits. Applied 720-hour global web Access convenience is separate; native pairing remains pending and M1 remains first. All eight groups stay OPEN.
+
 HI-T266.2/R0200/R0201: research exact supported per-browser/device native opt-in, expiry, session readback and forget/logout/revocation; implement a finite reviewed mechanism only if supported, targeting bounded 30-day convenience without disguising global/application/policy TTL changes as per-device. Unsupported native per-device behavior stays pending with exact alternative scope/next step. No Cloudflare or WARP/device enrollment mutation in this specification step.
 
 RT-T266.3/R0203: post-authentication off-by-default “Trust this device” personal-device control/readiness, effective expiry/unknown and exact Forget/Sign out/error consequences; no stored tokens/local bypass or trust-active claim from a preference bit. Apply mandatory candidate-bound affected-flow UI/UX review before deployment, including phone/tablet/desktop, touch/keyboard and shared-device limits.
