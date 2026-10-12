@@ -166,10 +166,11 @@ def test_actual_team_admission_binds_activity_only_from_retained_root_objects(mo
     registry._activity_store_ok = True
     registry._activity_records = {}
     now = time.monotonic()
-    mission = MissionBinding(schema=1, mission_id="mission_2", revision=3,
+    mission_id = "mission_2_12345678901234567890"
+    mission = MissionBinding(schema=1, mission_id=mission_id, revision=3,
         plan_sha256="a" * 64, task_sha256="b" * 64, source_profile_id="orchestrator")
     binding = observer.RootSelectedTeamBinding(schema=1, binding_id="B" * 32,
-        owner_subject_sha256="c" * 64, mission_id="mission_2", revision=3,
+        owner_subject_sha256="c" * 64, mission_id=mission_id, revision=3,
         goal_sha256="b" * 64, plan_sha256="a" * 64, catalog_sha256="d" * 64,
         team_id="team_2", source_revision="team-rev-4",
         bundle_generation_sha256="e" * 64, bundle_member_sha256="f" * 64,
