@@ -9,6 +9,7 @@ import re
 import secrets
 import stat
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .registry.primary_prompt import (
@@ -636,7 +637,7 @@ def rollback_primary_prompt_for_starting_cohort(custody) -> None:
         if _sha(raw) != custody.primary_stage_sha256:
             raise PrimaryPromptAdoptionError("retained primary manager stage differs")
         record = _read_record(core)
-        if record is None or record.get("state") not in {"preparing", "writing", "rolling_back"}:
+        if record is None or record.get("state") not in {"preparing", "writing", "adopted"}:
             raise PrimaryPromptAdoptionError("owned initial primary rollback stage is unavailable")
         if (record["prior_soul_sha256"] != custody.prior_soul_sha256
                 or tuple(record["prior_soul_signature"]) != tuple(custody.prior_soul_signature)
