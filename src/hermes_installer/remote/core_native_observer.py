@@ -5380,6 +5380,15 @@ class RootCoreNativeObservationRegistry:
             if record is None or record["expiry"] <= now or record["peer"] != gateway_peer:
                 return False
             owner, context, attempt = record["owner"], record["context"], record["attempt"]
+            observed_text = attempt.get("master_review_response_text")
+            if not isinstance(observed_text, str):
+                return False
+            try:
+                observed_text_sha256 = hashlib.sha256(
+                    observed_text.encode("utf-8", errors="strict")).hexdigest()
+            except UnicodeError:
+                return False
+            supplied_text = getattr(receipt, "response_text", None)
             if (owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
                     or owner.owner_turn_handle != getattr(receipt, "owner_turn_handle", None)
                     or owner.gateway_turn_id != getattr(receipt, "gateway_turn_id", None)
@@ -5394,7 +5403,8 @@ class RootCoreNativeObservationRegistry:
                     or context.execution_core_generation != getattr(receipt, "execution_core_generation", None)
                     or context.execution_core_source_generation != getattr(receipt, "execution_core_source_generation", None)
                     or record["response_sha256"] != getattr(receipt, "response_sha256", None)
-                    or attempt.get("master_review_response_text") != getattr(receipt, "response_text", None)
+                    or observed_text_sha256 != record["response_sha256"]
+                    or (supplied_text is not None and supplied_text != observed_text)
                     or attempt.get("response") is None or attempt["response"][1]
                     or attempt.get("response")[2] != record["response_sha256"]):
                 return False

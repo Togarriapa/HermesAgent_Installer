@@ -341,12 +341,17 @@ def test_root_master_review_receipt_joins_exact_live_owner_result_response_and_p
         gateway_turn_id=owner.gateway_turn_id, response_sha256=response_sha,
         gateway_peer=peer)
 
-    class RegistryClient:
-        expected_peer = peer
+    client = CoreNativeObservationClient()
 
-        def verify_master_review_completion(self, receipt, *, config=None, custody=None):
-            return registry.verify_master_review_completion(
-                receipt, gateway_peer=self.expected_peer)
+    def review_wire_roundtrip(operation, payload):
+        assert operation == "verify-master-review-completion"
+        assert "response_text" not in payload
+        return registry._handle(peer, {
+            "schema": 1, "op": operation, "nonce": "review-wire-roundtrip",
+            **dict(payload),
+        })
+
+    client._rpc = review_wire_roundtrip
 
     receipt = observer.CoreVerifiedJarvisMasterReviewCompletion(
         owner_subject_sha256=result["owner_subject_sha256"],
@@ -362,7 +367,11 @@ def test_root_master_review_receipt_joins_exact_live_owner_result_response_and_p
         response_text=raw, completion_handle=result["completion_handle"],
         expires_monotonic=result["expires_monotonic"],
         owner_turn_expires_monotonic=result["owner_turn_expires_monotonic"],
-        _client=RegistryClient(), _seal=observer._MASTER_REVIEW_COMPLETION_SEAL)
+        _client=client, _seal=observer._MASTER_REVIEW_COMPLETION_SEAL)
+    assert receipt.is_current_sealed(registry._config, custody=registry._custody)
+    attempt["master_review_response_text"] = raw + " changed"
+    assert not receipt.is_current_sealed(registry._config, custody=registry._custody)
+    attempt["master_review_response_text"] = raw
     assert receipt.is_current_sealed(registry._config, custody=registry._custody)
     assert not replace(receipt, mission_id="X" * 24).is_current_sealed(
         registry._config, custody=registry._custody)
@@ -374,9 +383,18 @@ def test_root_master_review_receipt_joins_exact_live_owner_result_response_and_p
         registry._config, custody=registry._custody)
     assert not replace(receipt, execution_core_source_generation="6" * 64).is_current_sealed(
         registry._config, custody=registry._custody)
-    RegistryClient.expected_peer = (411, 996, 1000)
+    changed_client = CoreNativeObservationClient()
+
+    def mismatched_peer_roundtrip(operation, payload):
+        return registry._handle((411, 996, 1000), {
+            "schema": 1, "op": operation, "nonce": "wrong-review-peer",
+            **dict(payload),
+        })
+
+    changed_client._rpc = mismatched_peer_roundtrip
+    receipt = replace(receipt, _client=changed_client)
     assert not receipt.is_current_sealed(registry._config, custody=registry._custody)
-    RegistryClient.expected_peer = peer
+    receipt = replace(receipt, _client=client)
     owner_state["current"] = False
     assert not receipt.is_current_sealed(registry._config, custody=registry._custody)
     owner_state["current"] = True
@@ -426,6 +444,7 @@ def test_root_master_review_completion_denies_provider_result_not_yet_completed(
 
 def test_native_client_rechecks_review_receipt_through_closed_root_rpc(tmp_path, monkeypatch):
     """The live-receipt check traverses the production client framing and response parser."""
+    import hashlib
     import json
     import stat
     import struct
@@ -439,7 +458,8 @@ def test_native_client_rechecks_review_receipt_through_closed_root_rpc(tmp_path,
         owner_subject_sha256="a" * 64, owner_turn_handle="b" * 32,
         gateway_turn_id="c" * 24, core_generation="d" * 64,
         core_source_generation="e" * 64, prompt_sha256="f" * 64,
-        response_sha256="1" * 64, mission_id="M" * 24, revision=2,
+        response_sha256=hashlib.sha256(b"review response").hexdigest(),
+        mission_id="M" * 24, revision=2,
         run_id="run_2", result_sha256="2" * 64,
         execution_core_generation="3" * 64,
         execution_core_source_generation="4" * 64, response_text="review response",

@@ -73,18 +73,6 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
             return current["value"]
 
     owner_sha = hashlib.sha256(b"owner-a").hexdigest()
-    completion = CoreVerifiedJarvisMasterReviewCompletion(
-        owner_subject_sha256=owner_sha, owner_turn_handle="a" * 32,
-        gateway_turn_id="R" * 24, core_generation=CORE, core_source_generation=SOURCE,
-        prompt_sha256="b" * 64, response_sha256=response_sha,
-        mission_id="M" * 24, revision=2, run_id="run_review_02", result_sha256=result_sha,
-        execution_core_generation=CORE, execution_core_source_generation=SOURCE,
-        response_text=raw_review, completion_handle="C" * 43,
-        expires_monotonic=now + 20, owner_turn_expires_monotonic=now + 240,
-        _client=RootReceiptClient(), _seal=_MASTER_REVIEW_COMPLETION_SEAL)
-    decision = issue_master_review_decision(
-        completion=completion, config=object(), custody=object(), raw_output=raw_review)
-
     store = JarvisChatStore(tmp_path / "mission-review.sqlite3")
     conversation = store.create_conversation("owner-a", "runtime-session", "stored-session", CORE)
     principal = ChatPrincipal("owner-a", time.monotonic() + 120,
@@ -99,6 +87,18 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
 
     result_turn_id = completed_turn(result_text, "review-result-turn-key-001")
     review_turn_id = completed_turn(raw_review, "review-owner-turn-key-001")
+    completion = CoreVerifiedJarvisMasterReviewCompletion(
+        owner_subject_sha256=owner_sha, owner_turn_handle="a" * 32,
+        gateway_turn_id=review_turn_id, core_generation=CORE, core_source_generation=SOURCE,
+        prompt_sha256="b" * 64, response_sha256=response_sha,
+        mission_id="M" * 24, revision=2, run_id="run_review_02", result_sha256=result_sha,
+        execution_core_generation=CORE, execution_core_source_generation=SOURCE,
+        response_text=raw_review, completion_handle="C" * 43,
+        expires_monotonic=time.monotonic() + 20,
+        owner_turn_expires_monotonic=time.monotonic() + 240,
+        _client=RootReceiptClient(), _seal=_MASTER_REVIEW_COMPLETION_SEAL)
+    decision = issue_master_review_decision(
+        completion=completion, config=object(), custody=object(), raw_output=raw_review)
     source_binding = __import__("json").dumps({
         "core_generation": CORE, "core_source_generation": SOURCE,
     }, sort_keys=True)
@@ -120,10 +120,11 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
             (decision.run_id, owner_sha, decision.mission_id, decision.revision,
              "1" * 64, "2" * 64, source_binding, "3" * 64, "4" * 64,
              conversation["id"], result_turn_id, "queued", time.time(), time.time()))
-        db.execute("CREATE TABLE activity_events (turn_id TEXT,child_ref TEXT,event_type TEXT,status TEXT)")
-        db.executemany("INSERT INTO activity_events VALUES(?,?,?,?)", [
-            (result_turn_id, "5" * 64, "subagent.start", "running"),
-            (result_turn_id, "5" * 64, "subagent.complete", "completed"),
+        db.execute("CREATE TABLE activity_events "
+                   "(turn_id TEXT,sequence INTEGER,child_ref TEXT,event_type TEXT,status TEXT)")
+        db.executemany("INSERT INTO activity_events VALUES(?,?,?,?,?)", [
+            (result_turn_id, 1, "5" * 64, "subagent.start", "running"),
+            (result_turn_id, 2, "5" * 64, "subagent.complete", "completed"),
         ])
 
     with pytest.raises(ValueError, match="Jarvis has not approved"):

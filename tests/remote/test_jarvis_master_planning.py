@@ -126,6 +126,8 @@ def test_master_review_requires_a_bounded_nonempty_reason(rationale):
 
 
 def test_review_decision_uses_only_a_current_root_review_completion_and_keeps_lineage(monkeypatch):
+    from dataclasses import replace
+
     from hermes_installer.remote.core_native_observer import (
         CoreVerifiedJarvisMasterReviewCompletion, _MASTER_REVIEW_COMPLETION_SEAL,
     )
