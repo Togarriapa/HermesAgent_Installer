@@ -785,8 +785,12 @@ def test_adapter_refresh_resume_recovers_partial_core_before_qualification(monke
                       ("read-Core", "old"), "snapshot-old-bindings"]
 
 
-def test_resume_all_joined_rolling_back_core_finishes_old_ingress_without_replay(
-        monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("prior_cohort", [
+    b"",
+    b'{"obsidian_vault_tree_sha256":"' + b"f" * 64 + b'","schema":1}\n',
+])
+def test_resume_all_joined_rolling_back_core_uses_latest_vault_snapshot(
+        monkeypatch, tmp_path, capsys, prior_cohort):
     row = _adapter_refresh_row(committed=True)
     original_join = (row["core_update_backup_reference"],
                      row["core_update_cohort_transaction_id"],
@@ -808,8 +812,8 @@ def test_resume_all_joined_rolling_back_core_finishes_old_ingress_without_replay
         "journal.json": prior_raw, "unit": b"old Core unit", "launcher": b"old launcher",
         "resources-record.json": b"old Resources", "overlay-record.json": b"old overlay",
         "primary-record.json": b"old primary",
-        "cohort.json": b'{"obsidian_vault_tree_sha256":"absent","schema":1}\n',
-        "obsidian-registration.json": b"",
+        "cohort.json": prior_cohort,
+        "obsidian-registration.json": b"exact current owner registration",
     }
     rolling_cohort = {"phase": "rolling-back",
                       "cohort_transaction_id": row["core_update_cohort_transaction_id"],
@@ -817,7 +821,8 @@ def test_resume_all_joined_rolling_back_core_finishes_old_ingress_without_replay
                       "old_adapter_generation": row["old_core_adapter_generation"],
                       "old_core_source_generation": row["old_core_source_generation"],
                       "old_journal_sha256": row["old_core_journal_sha256"],
-                      "new_source": "/opt/hermes-installer-core-bbbbbbbbb/src"}
+                      "new_source": "/opt/hermes-installer-core-bbbbbbbbb/src",
+                      "obsidian_vault_tree_sha256": "a" * 64}
     value = {
         "state": "recovery-required",
         "old_gateway_sha256": hashlib.sha256(old_gateway).hexdigest(),
@@ -908,9 +913,11 @@ def test_resume_all_joined_rolling_back_core_finishes_old_ingress_without_replay
                 "overlay_record": contents["overlay-record.json"],
                 "primary_record": contents["primary-record.json"],
                 "prior_cohort": contents["cohort.json"],
-                "obsidian_registration": b"",
-                "obsidian_registration_state": "absent",
-                "obsidian_vault_tree_sha256": "absent",
+                "obsidian_registration": contents["obsidian-registration.json"],
+                "obsidian_registration_state": "registered",
+                # Notes may have changed since the prior cohort, but this
+                # digest is the update-start snapshot retained by rolling-back.
+                "obsidian_vault_tree_sha256": rolling_cohort["obsidian_vault_tree_sha256"],
             }
 
         def restore_owned_core_adapter_update(self):

@@ -953,7 +953,6 @@ def _resume_rolling_back_adapter_refresh(candidate_sha: str, expected_source: Pa
         raise RuntimeError("restored Core does not match the retained old source and service recipe")
     current_bindings = core_runtime._snapshot_adapter_update_bindings(
         core_source_generation=row["old_core_source_generation"])
-    previous_cohort = json.loads(contents["cohort.json"], object_pairs_hook=_unique_pairs)
     if (current_bindings.get("resources_record") != contents.get("resources-record.json")
             or current_bindings.get("overlay_record") != contents.get("overlay-record.json")
             or current_bindings.get("primary_record") != contents.get("primary-record.json")
@@ -963,7 +962,7 @@ def _resume_rolling_back_adapter_refresh(candidate_sha: str, expected_source: Pa
             or current_bindings.get("obsidian_registration_state")
                != ("registered" if contents.get("obsidian-registration.json") else "absent")
             or current_bindings.get("obsidian_vault_tree_sha256")
-               != previous_cohort.get("obsidian_vault_tree_sha256")):
+               != rolling_cohort.get("obsidian_vault_tree_sha256")):
         raise RuntimeError("restored Core bindings differ from the retained old owner snapshot")
     if not _restore_old_ingress(value, old_gateway, old_inspector, old_config,
                                 observer_socket=observer_socket,
