@@ -1,5 +1,6 @@
 """Static and isolated-effect checks for the fixed root Inspector service."""
 import hashlib
+import dataclasses
 import os
 import shlex
 import stat
@@ -31,6 +32,65 @@ def test_inspector_unit_keeps_primary_group_and_limits_native_write_access():
     assert service.count("SupplementaryGroups=1000") == 1
     assert service.count("ReadWritePaths=/var/lib/hermes-installer/core-runtime") == 1
     assert "ProtectSystem=strict" in service
+
+
+def test_profile_admin_child_is_action_parent_peer_and_identity_bound_and_one_use():
+    now = time.monotonic()
+    parent = SimpleNamespace(caller_pid=44, caller_start_ticks="start-44",
+        nonce="a" * 64, proof_sha256="b" * 64, expires_monotonic=now + 4)
+    parent_key = (44, "start-44", parent.nonce, parent.proof_sha256)
+    child_key = (44, "start-44", "c" * 64, "d" * 64)
+    principal = SimpleNamespace(subject="original-subject", token_fingerprint="e" * 64)
+    config = SimpleNamespace(config_sha256="f" * 64, boot_id="boot")
+    child = core_gateway_inspector._RetainedProfileAdminChild(
+        parent_key, "read", now - 0.1, now + 3,
+        (551, 996, 981), "9" * 64, config.config_sha256, config.boot_id,
+        hashlib.sha256(b"original-subject").hexdigest(), principal.token_fingerprint,
+        4, "8" * 64, "profile-admin-child")
+    with patch.dict(core_gateway_inspector._PROFILE_ADMIN_CHILDREN, {child_key: child}, clear=True):
+        consumed = core_gateway_inspector._consume_profile_admin_child(
+            caller_pid=44, caller_start_ticks="start-44", nonce=child_key[2],
+            proof_sha256=child_key[3], action="read", parent=parent,
+            peer=(551, 996, 981), core_generation="9" * 64, config=config,
+            principal=principal, expected_revision=4, expected_record_sha256="8" * 64)
+        assert consumed is child
+        with pytest.raises(core_gateway_inspector.CoreInspectionDenied,
+                           match="one-use profile administrator child"):
+            core_gateway_inspector._consume_profile_admin_child(
+                caller_pid=44, caller_start_ticks="start-44", nonce=child_key[2],
+                proof_sha256=child_key[3], action="read", parent=parent,
+                peer=(551, 996, 981), core_generation="9" * 64, config=config,
+                principal=principal, expected_revision=4, expected_record_sha256="8" * 64)
+
+
+@pytest.mark.parametrize("wrong", [
+    {"action": "write"}, {"peer": (552, 996, 981)},
+    {"expected_revision": 5}, {"purpose": "ordinary-ingress"},
+])
+def test_profile_admin_child_denies_foreign_action_peer_or_registration(wrong):
+    now = time.monotonic()
+    parent = SimpleNamespace(caller_pid=44, caller_start_ticks="start-44",
+        nonce="a" * 64, proof_sha256="b" * 64, expires_monotonic=now + 4)
+    child_key = (44, "start-44", "c" * 64, "d" * 64)
+    principal = SimpleNamespace(subject="original-subject", token_fingerprint="e" * 64)
+    config = SimpleNamespace(config_sha256="f" * 64, boot_id="boot")
+    child = core_gateway_inspector._RetainedProfileAdminChild(
+        (44, "start-44", parent.nonce, parent.proof_sha256), "read", now - 0.1, now + 3,
+        (551, 996, 981), "9" * 64, config.config_sha256, config.boot_id,
+        hashlib.sha256(b"original-subject").hexdigest(), principal.token_fingerprint,
+        4, "8" * 64, "profile-admin-child")
+    kwargs = {"caller_pid": 44, "caller_start_ticks": "start-44",
+        "nonce": child_key[2], "proof_sha256": child_key[3], "action": "read",
+        "parent": parent, "peer": (551, 996, 981), "core_generation": "9" * 64,
+        "config": config, "principal": principal, "expected_revision": 4,
+        "expected_record_sha256": "8" * 64}
+    kwargs.update({key: value for key, value in wrong.items() if key != "purpose"})
+    if "purpose" in wrong:
+        child = dataclasses.replace(child, purpose=wrong["purpose"])
+    with patch.dict(core_gateway_inspector._PROFILE_ADMIN_CHILDREN, {child_key: child}, clear=True):
+        with pytest.raises(core_gateway_inspector.CoreInspectionDenied,
+                           match="one-use profile administrator child"):
+            core_gateway_inspector._consume_profile_admin_child(**kwargs)
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="root ownership effect requires the Pi root test role")
@@ -87,6 +147,7 @@ def test_profile_admin_inspector_denies_non_singleton_allowlist_before_ingress_o
         "nonce": "b" * 64, "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
         "access_jwt": "signed-access-token", "core_generation": "c" * 64,
         "ingress_nonce": "d" * 64, "ingress_proof_sha256": "e" * 64,
+        "child_nonce": "f" * 64, "child_proof_sha256": "7" * 64,
         "expected_admin_revision": 0, "expected_admin_sha256": "0" * 64,
         **fields,
     }

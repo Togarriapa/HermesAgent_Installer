@@ -22,7 +22,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from yarl import URL
 
-from hermes_installer.remote import core_gateway, core_gateway_inspector
+from hermes_installer.remote import core_gateway, core_gateway_inspector, global_admin
 from hermes_installer.remote.gateway import Principal, RemotePolicy
 
 
@@ -1289,12 +1289,23 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
         from hermes_installer.remote.core_gateway_inspector import CoreGatewayInspector
         from hermes_installer.remote.jarvis_ecosystem import install_jarvis_ecosystem_routes
         from hermes_installer.remote.jarvis_profiles_admin import (
-            JarvisProfileAdmin, ProfileAdminDescriptor, install_jarvis_profiles_admin_routes,
+            JarvisProfileAdmin, ProfileAdminDescriptor, RootProfileAdminContext,
+            install_jarvis_profiles_admin_routes,
         )
 
         class CountingProvider:
-            def __init__(self):
+            def __init__(self, authorized=True):
                 self.calls = []
+                self.authorized = authorized
+
+            def admin_status(self, *, access_jwt, accepted_ingress):
+                principal = accepted_ingress.principal
+                proof = accepted_ingress.root_observation
+                return RootProfileAdminContext("active" if self.authorized else "unconfigured",
+                    self.authorized, 1 if self.authorized else 0, "a" * 64 if self.authorized else "0" * 64,
+                    hashlib.sha256(principal.subject.encode()).hexdigest(), principal.token_fingerprint,
+                    accepted_ingress._config_sha256, accepted_ingress.core_generation,
+                    proof.nonce, proof.proof_sha256, time.monotonic() + 5)
 
             def list_profiles(self, **_kwargs):
                 self.calls.append("list")
@@ -1337,7 +1348,7 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
         union = frozenset({"owner@example.test", "member@example.test", "guest@example.test"})
         union_config = dataclasses.replace(_config(), allowed_emails=union)
         union_accepted = accepted_for(union_config, email="owner@example.test", token=token)
-        denied_provider = CountingProvider()
+        denied_provider = CountingProvider(authorized=False)
         observed_at = time.time()
         mission_id = "m" * 24
         sender_key, recipient_key = "sender-execution-key-0001", "recipient-execution-key-01"
@@ -1406,8 +1417,10 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                                      {"expert-one", "expert-two"})
                     same_origin = {**headers, "Origin": f"https://{union_config.hostname}",
                                    "Sec-Fetch-Site": "same-origin"}
+                    current_overview = SimpleNamespace(core_generation=union_accepted.core_generation,
+                        verify_current=lambda *_args, **_kwargs: True)
                     with patch.object(core_gateway_inspector, "verify_current_core_overview",
-                                      side_effect=AssertionError("union admin must deny before Core overview")) as overview:
+                                      return_value=current_overview):
                         responses = [
                             await client.get("/chat/api/profiles", headers=headers),
                             await client.get("/chat/api/profiles/hermes/files/soul", headers=headers),
@@ -1417,9 +1430,8 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(all(response.status == 403 for response in responses),
                                     [response.status for response in responses])
                     messages = [await response.text() for response in responses]
-                    self.assertTrue(all("Administrator access setup is pending" in message
+                    self.assertTrue(all("Original administrator setup is pending" in message
                                         for message in messages))
-                    overview.assert_not_called()
                     self.assertEqual(denied_provider.calls, [])
             finally:
                 await client.close()
@@ -1457,7 +1469,7 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
 
         # A singleton configured owner does not admit another currently approved union member.
         mismatch = accepted_for(single_config, email="member@example.test", token=token)
-        mismatch_provider = CountingProvider()
+        mismatch_provider = CountingProvider(authorized=False)
         with tempfile.TemporaryDirectory(prefix="jarvis-profile-mismatch-") as temporary:
             app = make_app(single_config, mismatch, mismatch_provider,
                            Path(temporary) / "mismatch.sqlite3")
@@ -1499,9 +1511,15 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
         request = {"schema": 1, "op": "owner-profile-admin", "action": "list",
             "nonce": "a" * 64, "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
             "access_jwt": token, "core_generation": core_generation,
-            "ingress_nonce": "b" * 64, "ingress_proof_sha256": "9" * 64}
+            "ingress_nonce": "b" * 64, "ingress_proof_sha256": "9" * 64,
+            "child_nonce": "8" * 64, "child_proof_sha256": "7" * 64,
+            "expected_admin_revision": 0, "expected_admin_sha256": "0" * 64}
         with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="88"), \
-             patch.object(core_gateway_inspector, "_consume_ingress_issue", return_value=retained), \
+             patch.object(core_gateway_inspector, "_peek_ingress_issue", return_value=retained), \
+             patch.object(core_gateway_inspector, "_consume_profile_admin_child",
+                          return_value=SimpleNamespace(expires_monotonic=now + 4)), \
+             patch.object(global_admin, "locked"), \
+             patch.object(global_admin, "read_locked", return_value=(None, None)), \
              patch.object(core_gateway_inspector, "observe_current_ingress", return_value=current), \
              patch.object(core_gateway_inspector, "_check_unit_process",
                           return_value=(92, "88", "gateway-invocation")), \
@@ -1518,17 +1536,19 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                 caller_pid=440, caller_uid=996, caller_gid=981,
                 peer_pid=551, peer_uid=996, peer_gid=981)
         self.assertEqual(result["action"], "list")
-        self.assertEqual(result["result"], current_rows)
+        self.assertEqual(result["result"]["data"], current_rows)
         list_native.assert_called_once_with(("hermes",))
         wrong_principal = Principal("member@example.test", "owner-subject", time.time() + 60,
                                     hashlib.sha256(token.encode("ascii")).hexdigest())
         with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="88"), \
-             patch.object(core_gateway_inspector, "_consume_ingress_issue", return_value=retained), \
+             patch.object(core_gateway_inspector, "_peek_ingress_issue", return_value=retained), \
              patch.object(core_gateway_inspector, "observe_current_ingress", return_value=current), \
              patch.object(core_gateway_inspector, "_check_unit_process",
                           return_value=(92, "88", "gateway-invocation")), \
              patch.object(core_gateway_inspector.os, "close"), \
              patch.object(core_gateway_inspector, "_learning_jwks", return_value={}), \
+             patch.object(global_admin, "locked"), \
+             patch.object(global_admin, "read_locked", return_value=(None, None)), \
              patch("hermes_installer.remote.gateway.validate_access_jwt",
                    return_value=wrong_principal), \
              patch("hermes_installer.components.resources_active_profile_source._read_catalog",
@@ -1536,7 +1556,7 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
              patch.object(core_gateway_inspector, "capture_current_core_native_custody",
                           side_effect=AssertionError("wrong caller must be denied before native custody")) as custody_call:
             with self.assertRaisesRegex(core_gateway_inspector.CoreInspectionDenied,
-                                        "Profile administration owner is unavailable"):
+                                        "original administrator setup"):
                 core_gateway_inspector.observe_profile_admin(config, request=request,
                     caller_pid=440, caller_uid=996, caller_gid=981,
                     peer_pid=551, peer_uid=996, peer_gid=981)
