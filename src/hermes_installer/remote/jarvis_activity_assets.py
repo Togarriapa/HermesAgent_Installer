@@ -61,7 +61,8 @@ _MOUNT = r"""function mount(container, api, state) {
   let stopped = false;
   let refreshing = false;
   let newestTurn = null;
-  let pendingDecision = null;
+  const decisionRecords = new Map();
+  let inFlightDecision = null;
   let finalEffectItems = [];
   let finalEffectTurn = null;
   let effectsRenderRevision = 0;
@@ -119,31 +120,40 @@ _MOUNT = r"""function mount(container, api, state) {
     effectsNode.replaceChildren();
     decisionButtons = [];
     const list = finalEffectItems;
-    if (pendingDecision && pendingDecision.turnId === turnId) {
-      const observed = list.find(item => item && item.pendingId === pendingDecision.pendingId
-        && item.reviewSha256 === pendingDecision.reviewSha256 && item.turnId === turnId);
-      if (observed && ['approved', 'denied', 'expired', 'spent'].includes(observed.status)) {
-        const status = observed.status;
-        pendingDecision = null;
-        effectsNoteNode.textContent = status === 'approved' || status === 'denied'
-          ? `Owner decision observed: ${status}. This does not confirm that the tool action completed.`
-          : `Review status observed: ${status}. This does not confirm that the tool action completed.`;
-      } else {
-        effectsNoteNode.textContent = pendingDecision.state === 'submitting'
-          ? 'Decision pending; this exact review remains unresolved.'
-          : pendingDecision.state === 'awaiting-observation'
-            ? 'Decision response received; current status still shows this review pending. Tool action completion is separate.'
-            : 'Decision outcome unknown. Inspect current status before taking further action.';
+    for (const item of list) {
+      if (!item || typeof item.pendingId !== 'string' || typeof item.reviewSha256 !== 'string'
+          || item.turnId !== turnId || !['approved', 'denied'].includes(item.status)) continue;
+      const record = decisionRecords.get(JSON.stringify([turnId, item.pendingId, item.reviewSha256]));
+      if (record && record.state !== 'confirmed') {
+        record.state = 'confirmed'; record.confirmedStatus = item.status;
+        if (inFlightDecision === record) inFlightDecision = null;
       }
-    } else if (pendingDecision) {
-      effectsNoteNode.textContent = 'Decision outcome unknown. Inspect current status before taking further action.';
+    }
+    const currentRecords = list.map(item => item && typeof item.pendingId === 'string'
+      && typeof item.reviewSha256 === 'string' && item.turnId === turnId
+      ? decisionRecords.get(JSON.stringify([turnId, item.pendingId, item.reviewSha256])) : null);
+    if (inFlightDecision && inFlightDecision.turnId === turnId) {
+      effectsNoteNode.textContent = 'Submitting your decision for this exact review…';
+    } else if (currentRecords.some(record => record && record.state === 'unknown')) {
+      effectsNoteNode.textContent = 'Decision outcome unknown for this exact review. Inspect current status; other reviews remain independent.';
+    } else if (currentRecords.some(record => record && record.state === 'confirmed')) {
+      effectsNoteNode.textContent = 'Owner decision confirmed for the exact reviewed request. Tool action completion is separate.';
+    } else {
+      effectsNoteNode.textContent = 'Only exact actions from your current Jarvis turn can be approved.';
     }
     for (const item of list) {
       if (!item || typeof item.pendingId !== 'string' || typeof item.reviewSha256 !== 'string'
           || item.turnId !== turnId || !item.preview) continue;
+      const key = JSON.stringify([turnId, item.pendingId, item.reviewSha256]);
+      const record = decisionRecords.get(key);
       const row = document.createElement('li');
       row.style.gridTemplateColumns = '1fr';
       row.append(cell('strong', `Review ${String(item.preview.tool_name || 'tool action')}`));
+      if (record && record.state === 'confirmed') {
+        row.append(cell('span', `Owner decision confirmed: ${record.confirmedStatus}. This does not confirm that the tool action completed.`, 'activity-meta'));
+        effectsNode.append(row);
+        continue;
+      }
       if (item.status !== 'pending') {
         row.append(cell('span', `Observed status: ${String(item.status)}. This is separate from tool action completion.`, 'activity-meta'));
         effectsNode.append(row);
@@ -157,7 +167,7 @@ _MOUNT = r"""function mount(container, api, state) {
       for (const [decision, label] of [['approve','Approve once'], ['deny','Deny']]) {
         const button = cell('button', label);
         button.type = 'button';
-        button.disabled = pendingDecision !== null;
+        button.disabled = inFlightDecision !== null || Boolean(record);
         decisionButtons.push(button);
         button.addEventListener('click', async () => {
           const currentRow = () => !stopped && revision === effectsRenderRevision
@@ -165,10 +175,12 @@ _MOUNT = r"""function mount(container, api, state) {
             && finalEffectItems.some(candidate => candidate && candidate.pendingId === item.pendingId
               && candidate.reviewSha256 === item.reviewSha256 && candidate.turnId === turnId
               && candidate.status === 'pending');
-          if (!currentRow() || pendingDecision) return;
-          const attempt = {turnId, pendingId: item.pendingId, reviewSha256: item.reviewSha256,
+          if (!currentRow() || inFlightDecision) return;
+          const existing = decisionRecords.get(key);
+          if (existing) return;
+          const attempt = {key, turnId, pendingId: item.pendingId, reviewSha256: item.reviewSha256,
             decision, idempotencyKey: crypto.randomUUID().replaceAll('-', ''), state: 'submitting'};
-          pendingDecision = attempt;
+          decisionRecords.set(key, attempt); inFlightDecision = attempt;
           for (const control of decisionButtons) control.disabled = true;
           effectsNoteNode.textContent = 'Submitting your decision…';
           try {
@@ -176,22 +188,31 @@ _MOUNT = r"""function mount(container, api, state) {
               pending_id: attempt.pendingId, review_sha256: attempt.reviewSha256,
               decision: attempt.decision, idempotency_key: attempt.idempotencyKey
             });
-            if (pendingDecision !== attempt) return;
-            if (!currentRow()) { attempt.state = 'unknown'; return; }
+            if (stopped || decisionRecords.get(key) !== attempt || attempt.state === 'confirmed') return;
             const expectedStatus = attempt.decision === 'approve' ? 'approved' : 'denied';
             if (!result || result.pendingId !== attempt.pendingId || result.status !== expectedStatus) {
               attempt.state = 'unknown';
-              effectsNoteNode.textContent = 'Decision outcome unknown. Inspect current status before taking further action.';
-              await refresh();
+              if (inFlightDecision === attempt) inFlightDecision = null;
+              if (newestTurn === attempt.turnId && !stopped) {
+                effectsNoteNode.textContent = 'Decision outcome unknown for this exact review. Inspect current status; other reviews remain independent.';
+                if (finalEffectTurn === attempt.turnId) renderFinalEffects(finalEffectItems, attempt.turnId);
+              }
               return;
             }
-            attempt.state = 'awaiting-observation';
-            effectsNoteNode.textContent = 'Decision response received; waiting for current status. This does not confirm tool action completion.';
-            await refresh();
+            attempt.state = 'confirmed'; attempt.confirmedStatus = result.status;
+            if (inFlightDecision === attempt) inFlightDecision = null;
+            if (newestTurn === attempt.turnId && finalEffectTurn === attempt.turnId && !stopped) {
+              effectsNoteNode.textContent = `Owner decision confirmed: ${result.status}. This does not confirm that the tool action completed.`;
+              renderFinalEffects(finalEffectItems, attempt.turnId);
+            }
           } catch (_) {
-            if (!stopped && pendingDecision === attempt) {
+            if (!stopped && decisionRecords.get(key) === attempt && attempt.state !== 'confirmed') {
               attempt.state = 'unknown';
-              effectsNoteNode.textContent = 'Decision outcome unknown. Inspect current status before taking further action.';
+              if (inFlightDecision === attempt) inFlightDecision = null;
+              if (newestTurn === attempt.turnId && !stopped) {
+                effectsNoteNode.textContent = 'Decision outcome unknown for this exact review. Inspect current status; other reviews remain independent.';
+                if (finalEffectTurn === attempt.turnId) renderFinalEffects(finalEffectItems, attempt.turnId);
+              }
             }
           }
         });
@@ -229,9 +250,6 @@ _MOUNT = r"""function mount(container, api, state) {
         const approvals = await api.get(`/chat/api/turns/${encodeURIComponent(latest.turnId)}/final-effects`);
         if (stopped) return;
         renderFinalEffects(approvals.requests, latest.turnId);
-      }
-      if (pendingDecision && finalEffectTurn !== pendingDecision.turnId) {
-        effectsNoteNode.textContent = 'Decision outcome unknown. Inspect current status before taking further action.';
       }
       noteNode.textContent = pageData.nextPage ? 'Showing the latest recorded events. Hermes reports cumulative session counters; a per-turn usage delta is unavailable.' : 'Activity is recorded from this owner’s current Jarvis turns. Hermes reports cumulative session counters; a per-turn usage delta is unavailable.';
     } catch (error) {
