@@ -5,6 +5,7 @@ from .jarvis_feature_contract import JarvisFeatureAssets
 
 
 _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
+  <section class="command-centre-shell" aria-label="Jarvis command centre">
   <section class="overview-stage" data-activity="unknown" data-in-viewport="false" aria-label="Jarvis activity">
     <aside class="overview-rail" aria-label="Recent accepted turn outcomes">
       <div class="overview-readout"><span>Accepted · 7 days</span><strong data-metric="total">Unknown</strong><small>Owner turns</small></div>
@@ -41,6 +42,7 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
     </aside>
   </section>
   <section class="command-panel" aria-labelledby="command-title">
+    <h2 id="command-title" class="visually-hidden">Send a message to Jarvis</h2>
     <div class="command-intro"><span class="command-kicker">MESSAGE JARVIS</span><span id="overview-command-target" class="command-target" role="status" aria-live="polite">A new conversation will start when you send.</span></div>
     <form data-command-form class="command-form">
       <label class="visually-hidden" for="command-input">Ask Jarvis</label>
@@ -56,6 +58,7 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
       <button type="button" data-command-prompt="Review the current status of my configured integrations and report anything unavailable. Do not change their configuration.">Check integrations</button>
     </div>
   </section>
+  </section>
   <section class="ecosystem-card" data-ecosystem-card data-ecosystem-state="unavailable" data-activity-flow="idle" data-in-viewport="false" aria-labelledby="overview-ecosystem-title">
     <header class="ecosystem-heading"><div><p class="overview-kicker">NATIVE ACTIVITY</p><h2 id="overview-ecosystem-title">Expert &amp; Team activity</h2></div>
       <button type="button" data-view="activity">Open Activity</button></header>
@@ -68,6 +71,7 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
     <ol class="handoff-graph" data-handoff-graph aria-label="Native Expert instances linked to their observed events" hidden></ol>
     <p class="ecosystem-provenance">Names and states come from root-observed native instances. Team membership appears only when independently verified; animated handoffs require a separate recorded directed relation.</p>
   </section>
+  <div id="jarvis-ecosystem-feature-host" data-feature-host="ecosystem-fleet"></div>
   <div class="overview-toolbar"><p data-observation role="status" aria-live="polite">Loading measured data…</p><button type="button" data-refresh>Refresh</button></div>
   <p class="overview-window" data-window></p>
   <details class="overview-details">
@@ -314,6 +318,25 @@ html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-st
 [data-feature-root="overview"]:not([data-network-online="true"]) .overview-stage .reactor-orbit{animation:none!important;transform:none!important}
 [data-feature-root="overview"] .overview-stage:not([data-in-viewport="true"]) .reactor-dial,
 [data-feature-root="overview"] .overview-stage:not([data-in-viewport="true"]) .reactor-orbit{animation:none!important;transform:none!important}
+"""
+
+_CSS += """
+[data-feature-root="overview"] .command-centre-shell{position:relative;isolation:isolate;overflow:hidden;margin:0 0 clamp(1.25rem,3vw,2.5rem);padding:clamp(.65rem,1.7vw,1.4rem);border:1px solid rgba(88,228,235,.25);border-radius:clamp(18px,2.2vw,30px);background:radial-gradient(ellipse at 50% 22%,rgba(31,146,159,.12),transparent 48%),linear-gradient(145deg,rgba(6,22,29,.96),rgba(8,30,37,.94) 52%,rgba(5,19,26,.98));box-shadow:inset 0 1px rgba(230,255,255,.06),0 24px 64px rgba(0,0,0,.24)}
+[data-feature-root="overview"] .command-centre-shell:before{position:absolute;z-index:0;inset:0;content:"";pointer-events:none;background:linear-gradient(90deg,transparent 0,rgba(87,224,232,.055) 50%,transparent 100%),repeating-linear-gradient(0deg,transparent 0 39px,rgba(129,208,214,.035) 40px),repeating-linear-gradient(90deg,transparent 0 39px,rgba(129,208,214,.035) 40px);mask-image:linear-gradient(to bottom,black,transparent 88%)}
+[data-feature-root="overview"] .command-centre-shell:after{position:absolute;z-index:0;top:-16rem;left:50%;width:min(72vw,900px);aspect-ratio:1;content:"";pointer-events:none;transform:translateX(-50%);border:1px solid rgba(88,228,235,.08);border-radius:50%;box-shadow:0 0 0 24px rgba(88,228,235,.025),0 0 0 58px rgba(88,228,235,.018),inset 0 0 80px rgba(88,228,235,.025)}
+[data-feature-root="overview"] .command-centre-shell>.overview-stage,[data-feature-root="overview"] .command-centre-shell>.command-panel{position:relative;z-index:1}
+[data-feature-root="overview"] .command-centre-shell>.overview-stage{min-height:clamp(500px,48vw,650px);padding:clamp(.3rem,1.3vw,1.1rem) clamp(.2rem,1vw,.9rem) 1.4rem;gap:clamp(1rem,2.6vw,3rem)}
+[data-feature-root="overview"] .command-centre-shell .reactor-figure{width:clamp(285px,31vw,410px)}
+[data-feature-root="overview"] .command-centre-shell .overview-readout{padding:1.15rem 0}
+[data-feature-root="overview"] .command-centre-shell .command-panel{max-width:1050px;margin:0 auto;padding:clamp(1rem,2vw,1.5rem);border-color:rgba(100,231,237,.3);background:linear-gradient(115deg,rgba(5,20,27,.98),rgba(8,31,39,.96));box-shadow:0 18px 38px rgba(0,0,0,.22),inset 0 1px rgba(222,255,255,.05)}
+[data-feature-root="overview"] .command-centre-shell .command-form{min-height:68px}
+[data-feature-root="overview"] .command-centre-shell .command-form textarea{font-size:1.02rem}
+[data-feature-root="overview"] .command-centre-shell .command-intro{align-items:flex-start}
+[data-feature-root="overview"] .command-centre-shell .command-target{max-width:62ch;white-space:normal;overflow-wrap:anywhere}
+[data-feature-root="overview"] #jarvis-ecosystem-feature-host{min-height:0}
+@media(max-width:980px){[data-feature-root="overview"] .command-centre-shell>.overview-stage{min-height:0;padding-inline:.2rem}}
+@media(max-width:620px){[data-feature-root="overview"] .command-centre-shell{padding:.55rem;border-radius:18px}[data-feature-root="overview"] .command-centre-shell>.overview-stage{padding:.25rem .45rem 1rem}[data-feature-root="overview"] .command-centre-shell .reactor-figure{width:min(78vw,330px)}[data-feature-root="overview"] .command-centre-shell .command-panel{padding:.9rem}[data-feature-root="overview"] .command-centre-shell .command-intro{flex-direction:column;gap:.35rem}[data-feature-root="overview"] .command-centre-shell .command-target{text-align:left;max-width:100%}}
+@media(prefers-reduced-motion:reduce){[data-feature-root="overview"] .command-centre-shell:after{box-shadow:none}}
 """
 
 _MOUNT = r"""function mount(container, api, state, mountScope) {
