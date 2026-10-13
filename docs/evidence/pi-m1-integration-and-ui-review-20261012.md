@@ -1270,3 +1270,16 @@ were under `/var/tmp/hermes-native-guard-159-2262886f7-20261013T231835Z-3215666/
 Update and restart groups were still running, with outcomes pending. Live source
 remained `0cb`, all four services were stable, and candidate 159 had not been
 attempted for adoption.
+
+### Candidate 159 qualification completion and apply pending
+
+The pending update above is resolved: candidate 159's update group passed 2 in
+617.01s (log SHA-256
+`6a2aaeb7969c4d7a2cfb425af1e7d3fd0e4b7ed3fd63cc054f8b6a01321181db`), and
+restart passed 2 in 340.28s (log SHA-256
+`d826b39f295a1ac75592b59566c70c0bbd7f75a40851fb30ecd0ee2009e07046`). The
+startup group passed 4 in 5.04s and listener group passed 2 in 0.63s, with the
+previously recorded hashes. Thus all candidate 159 qualification groups passed.
+The protected adopter's `--apply` with union stdin launched as PID 3219476;
+`p/candidate159-actual-adoption.log` was pending, so no adoption acceptance is
+claimed.
