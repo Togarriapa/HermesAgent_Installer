@@ -1960,6 +1960,75 @@ def test_initial_primary_cohort_joins_each_recorded_manager_digest_exactly(
     store(dict(candidate, primary_record_sha256=preparing_digest), accepted=False)
 
 
+def test_initial_primary_writing_snapshot_requires_exact_stage_metadata_and_fresh_soul():
+    desired = b"owner prefix\nmanaged Jarvis block\n"
+    prior_sha = "a" * 64
+    source_sha = "b" * 64
+    block_sha = "c" * 64
+    artifact_sha = "d" * 64
+    core_generation = "e" * 64
+    separator = "0a"
+    custody = SimpleNamespace(
+        core_source_generation=core_generation, artifact_a1_sha256=artifact_sha,
+        prior_soul_sha256=prior_sha, source_prompt_sha256=source_sha,
+        managed_block_sha256=block_sha, owner_separator_hex=separator,
+        desired_soul_sha256=hashlib.sha256(desired).hexdigest())
+    record = {
+        "state": "writing", "core_source_generation": core_generation,
+        "artifact_sha256": artifact_sha, "prior_soul_sha256": prior_sha,
+        "source_prompt_sha256": source_sha, "managed_block_sha256": block_sha,
+        "owner_separator_hex": separator, "result_soul_sha256": custody.desired_soul_sha256,
+        # The installed signature is captured by Core's fresh read, then saved
+        # by the manager only after the A1 Resources readback completes.
+        "result_soul_signature": [],
+    }
+    raw = core._canonical_json(record)
+    digest = hashlib.sha256(raw).hexdigest()
+    transition = {
+        "state": "writing", "writing_record_sha256": digest,
+        "prior_soul_sha256": prior_sha, "source_prompt_sha256": source_sha,
+        "managed_block_sha256": block_sha, "owner_separator_hex": separator,
+        "desired_soul_sha256": custody.desired_soul_sha256,
+    }
+    cohort = {"primary_record_sha256": digest}
+
+    assert core._initial_primary_writing_snapshot_matches(
+        custody, cohort, transition, raw, record, desired)
+    assert not core._initial_primary_writing_snapshot_matches(
+        custody, dict(cohort, primary_record_sha256="f" * 64), transition, raw, record, desired)
+    assert not core._initial_primary_writing_snapshot_matches(
+        custody, cohort, transition, raw, record, b"prior owner bytes")
+    changed_metadata = dict(record, managed_block_sha256="f" * 64)
+    assert not core._initial_primary_writing_snapshot_matches(
+        custody, cohort, transition, core._canonical_json(changed_metadata),
+        changed_metadata, desired)
+    prematurely_signed = dict(record, result_soul_signature=[1, 2, 3])
+    assert not core._initial_primary_writing_snapshot_matches(
+        custody, cohort, transition, core._canonical_json(prematurely_signed),
+        prematurely_signed, desired)
+
+
+@pytest.mark.parametrize("failure", ["prewrite", "fresh-soul-read"])
+def test_initial_primary_refresh_refuses_before_native_A1_read_on_unwritten_or_unreadable_soul(
+        monkeypatch, failure):
+    custody = SimpleNamespace()
+    transition = {"state": "preparing" if failure == "prewrite" else "writing",
+                  "after_resources_record_sha256": None}
+    events = []
+    monkeypatch.setattr(core, "_initial_primary_current", lambda _custody: True)
+    monkeypatch.setattr(core, "_read_adapter_update_cohort", lambda: ({}, b"cohort"))
+    monkeypatch.setattr(core, "_initial_primary_transition_row", lambda _cohort: transition)
+    monkeypatch.setattr(core, "_initial_primary_record_and_soul",
+                        lambda: (_ for _ in ()).throw(OSError("controlled owner read failure")))
+    monkeypatch.setattr(core, "_verified_resources_payload",
+                        lambda: events.append("native-A1-read"))
+
+    expected = core.CoreRuntimeError if failure == "prewrite" else OSError
+    with pytest.raises(expected):
+        core.refresh_initial_primary_starting_tuple(custody)
+    assert events == []
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="cohort rollback custody requires the enrolled Pi root actor")
 def test_unwritten_initial_primary_rollback_requires_original_soul_inode_and_signature(
         tmp_path, monkeypatch, request):
