@@ -1968,11 +1968,14 @@ def test_initial_primary_writing_snapshot_requires_exact_stage_metadata_and_fres
     artifact_sha = "d" * 64
     core_generation = "e" * 64
     separator = "0a"
+    prior_signature = (9, 10, stat.S_IFREG | 0o600, 1000, 1000, 1, 14, 1, 1)
+    fresh_signature = (9, 11, stat.S_IFREG | 0o600, 1000, 1000, 1, len(desired), 2, 2)
     custody = SimpleNamespace(
         core_source_generation=core_generation, artifact_a1_sha256=artifact_sha,
         prior_soul_sha256=prior_sha, source_prompt_sha256=source_sha,
         managed_block_sha256=block_sha, owner_separator_hex=separator,
-        desired_soul_sha256=hashlib.sha256(desired).hexdigest())
+        desired_soul_sha256=hashlib.sha256(desired).hexdigest(),
+        prior_soul_signature=prior_signature)
     record = {
         "state": "writing", "core_source_generation": core_generation,
         "artifact_sha256": artifact_sha, "prior_soul_sha256": prior_sha,
@@ -1993,19 +1996,23 @@ def test_initial_primary_writing_snapshot_requires_exact_stage_metadata_and_fres
     cohort = {"primary_record_sha256": digest}
 
     assert core._initial_primary_writing_snapshot_matches(
-        custody, cohort, transition, raw, record, desired)
+        custody, cohort, transition, raw, record, desired, fresh_signature)
     assert not core._initial_primary_writing_snapshot_matches(
-        custody, dict(cohort, primary_record_sha256="f" * 64), transition, raw, record, desired)
+        custody, dict(cohort, primary_record_sha256="f" * 64), transition, raw,
+        record, desired, fresh_signature)
     assert not core._initial_primary_writing_snapshot_matches(
-        custody, cohort, transition, raw, record, b"prior owner bytes")
+        custody, cohort, transition, raw, record, b"prior owner bytes", fresh_signature)
+    relaxed_mode_signature = (9, 11, stat.S_IFREG | 0o644, 1000, 1000, 1, len(desired), 2, 2)
+    assert not core._initial_primary_writing_snapshot_matches(
+        custody, cohort, transition, raw, record, desired, relaxed_mode_signature)
     changed_metadata = dict(record, managed_block_sha256="f" * 64)
     assert not core._initial_primary_writing_snapshot_matches(
         custody, cohort, transition, core._canonical_json(changed_metadata),
-        changed_metadata, desired)
+        changed_metadata, desired, fresh_signature)
     prematurely_signed = dict(record, result_soul_signature=[1, 2, 3])
     assert not core._initial_primary_writing_snapshot_matches(
         custody, cohort, transition, core._canonical_json(prematurely_signed),
-        prematurely_signed, desired)
+        prematurely_signed, desired, fresh_signature)
 
 
 @pytest.mark.parametrize("failure", ["prewrite", "fresh-soul-read"])
@@ -2027,6 +2034,65 @@ def test_initial_primary_refresh_refuses_before_native_A1_read_on_unwritten_or_u
     with pytest.raises(expected):
         core.refresh_initial_primary_starting_tuple(custody)
     assert events == []
+
+
+@pytest.mark.parametrize("drift", ["soul-bytes", "soul-mode"])
+def test_initial_primary_refresh_rechecks_soul_after_native_read_before_receipt_write(
+        monkeypatch, drift):
+    desired = b"exact owner prefix\nmanaged block\n"
+    changed_soul = desired + b"concurrent edit\n"
+    prior_signature = (1, 2, stat.S_IFREG | 0o600, 1000, 1000, 1, 12, 1, 1)
+    before_signature = (1, 3, stat.S_IFREG | 0o600, 1000, 1000, 1, len(desired), 2, 2)
+    after_signature = ((1, 4, stat.S_IFREG | 0o644, 1000, 1000, 1, len(desired), 3, 3)
+                       if drift == "soul-mode" else
+                       (1, 4, stat.S_IFREG | 0o600, 1000, 1000, 1, len(changed_soul), 3, 3))
+    record = {
+        "state": "writing", "core_source_generation": "e" * 64,
+        "artifact_sha256": "d" * 64, "prior_soul_sha256": "a" * 64,
+        "source_prompt_sha256": "b" * 64, "managed_block_sha256": "c" * 64,
+        "owner_separator_hex": "0a", "result_soul_sha256": hashlib.sha256(desired).hexdigest(),
+        "result_soul_signature": [],
+    }
+    raw = core._canonical_json(record)
+    digest = hashlib.sha256(raw).hexdigest()
+    transition = {
+        "state": "writing", "after_resources_record_sha256": None,
+        "writing_record_sha256": digest, "prior_soul_sha256": record["prior_soul_sha256"],
+        "source_prompt_sha256": record["source_prompt_sha256"],
+        "managed_block_sha256": record["managed_block_sha256"],
+        "owner_separator_hex": record["owner_separator_hex"],
+        "desired_soul_sha256": record["result_soul_sha256"],
+    }
+    cohort = {"primary_record_sha256": digest}
+    custody = SimpleNamespace(
+        core_source_generation=record["core_source_generation"],
+        artifact_a1_sha256=record["artifact_sha256"],
+        prior_soul_sha256=record["prior_soul_sha256"],
+        prior_soul_signature=prior_signature,
+        source_prompt_sha256=record["source_prompt_sha256"],
+        managed_block_sha256=record["managed_block_sha256"],
+        owner_separator_hex=record["owner_separator_hex"],
+        desired_soul_sha256=record["result_soul_sha256"])
+    reads = iter(((raw, record, desired, before_signature),
+                  (raw, record, changed_soul if drift == "soul-bytes" else desired,
+                   after_signature)))
+    events = []
+    monkeypatch.setattr(core, "_initial_primary_current", lambda _custody: True)
+    monkeypatch.setattr(core, "_read_adapter_update_cohort", lambda: (cohort, b"cohort"))
+    monkeypatch.setattr(core, "_initial_primary_transition_row", lambda _cohort: transition)
+    monkeypatch.setattr(core, "_initial_primary_record_and_soul", lambda: next(reads))
+    monkeypatch.setattr(core, "initial_primary_adoption_scope", lambda _custody: contextlib.nullcontext())
+    monkeypatch.setattr(core, "verify_initial_primary_adoption_custody", lambda _custody: True)
+    monkeypatch.setattr(core, "_verified_resources_payload",
+                        lambda: (events.append("native-A1-read") or (b"archive", {})))
+    monkeypatch.setattr(core, "_write_adapter_update_cohort",
+                        lambda *_args, **_kwargs: events.append("cohort-write"))
+    monkeypatch.setattr(core, "_write_resources_record_bytes",
+                        lambda *_args, **_kwargs: events.append("Resources-write"))
+
+    with pytest.raises(core.CoreRuntimeError, match="changed during native A1 readback"):
+        core.refresh_initial_primary_starting_tuple(custody)
+    assert events == ["native-A1-read"]
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="cohort rollback custody requires the enrolled Pi root actor")

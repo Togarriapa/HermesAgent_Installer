@@ -3630,9 +3630,18 @@ def initial_primary_adoption_scope(custody):
   _INITIAL_PRIMARY_ADOPTION_CONTEXT.reset(adoption_token)
   _GUARDED_NEW_READ_CONTEXT.reset(new_token)
 
-def _initial_primary_writing_snapshot_matches(custody,cohort,transition,raw,record,soul):
+def _initial_primary_writing_snapshot_matches(custody,cohort,transition,raw,record,soul,signature):
  """Join the exact durable writing row to fresh Root-read owner bytes."""
  digest=hashlib.sha256(raw).hexdigest() if type(raw) is bytes else None
+ prior_signature=custody.prior_soul_signature
+ valid_signature=(type(signature) in {list,tuple} and len(signature)==9
+  and all(type(value) is int and value>=0 for value in signature)
+  and type(prior_signature) is tuple and len(prior_signature)==9
+  and all(type(value) is int and value>=0 for value in prior_signature)
+  and stat.S_ISREG(signature[2]) and stat.S_ISREG(prior_signature[2])
+  and stat.S_IMODE(signature[2])==stat.S_IMODE(prior_signature[2])
+  and signature[3]==prior_signature[3] and signature[4]==prior_signature[4]
+  and signature[5]==prior_signature[5]==1 and signature[6]==len(soul))
  return bool(
   type(record) is dict and transition.get("state")=="writing"
   and transition.get("after_resources_record_sha256") is None
@@ -3652,7 +3661,8 @@ def _initial_primary_writing_snapshot_matches(custody,cohort,transition,raw,reco
   and record.get("owner_separator_hex")==transition.get("owner_separator_hex")
   and transition.get("desired_soul_sha256")==custody.desired_soul_sha256
   and record.get("result_soul_signature")==[]
-  and type(soul) is bytes and hashlib.sha256(soul).hexdigest()==custody.desired_soul_sha256)
+  and valid_signature and type(soul) is bytes
+  and hashlib.sha256(soul).hexdigest()==custody.desired_soul_sha256)
 
 def refresh_initial_primary_starting_tuple(custody):
  """Refresh only the current starting Resources receipt after native adoption."""
@@ -3664,7 +3674,7 @@ def refresh_initial_primary_starting_tuple(custody):
   raise CoreRuntimeError("initial primary Resources refresh is not the exact writing stage")
  primary_raw,primary_record,soul,signature=_initial_primary_record_and_soul()
  if not _initial_primary_writing_snapshot_matches(
-     custody,cohort,transition,primary_raw,primary_record,soul):
+     custody,cohort,transition,primary_raw,primary_record,soul,signature):
   raise CoreRuntimeError("initial primary write has not completed with exact owner bytes")
  with initial_primary_adoption_scope(custody):
   verify_initial_primary_adoption_custody(custody)
@@ -3673,7 +3683,7 @@ def refresh_initial_primary_starting_tuple(custody):
   # after it so a concurrent replacement cannot be joined to this receipt.
   after_raw,after_record,after_soul,after_signature=_initial_primary_record_and_soul()
   if (not _initial_primary_writing_snapshot_matches(
-       custody,cohort,transition,after_raw,after_record,after_soul)
+       custody,cohort,transition,after_raw,after_record,after_soul,after_signature)
       or after_raw!=primary_raw or after_record!=primary_record
       or tuple(after_signature)!=tuple(signature)
       or not _initial_primary_current(custody)):
