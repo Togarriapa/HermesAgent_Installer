@@ -515,7 +515,11 @@ def _success_checks(before: dict[str, Any], after: dict[str, Any], candidate_src
     }
 
 
-def _root_setup_exception_origin(exc: BaseException, candidate_src: Path) -> dict | None:
+_TRACEBACK_UNSET = object()
+
+
+def _root_setup_exception_origin(exc: BaseException, candidate_src: Path,
+                                 *, outer_tb=_TRACEBACK_UNSET) -> dict | None:
     exc_type = type(exc)
     name = getattr(exc_type, "__name__", None)
     if (not isinstance(name, str)
@@ -524,12 +528,17 @@ def _root_setup_exception_origin(exc: BaseException, candidate_src: Path) -> dic
     frames = []
     seen = set()
     current = exc
+    use_outer_tb = outer_tb is not _TRACEBACK_UNSET
     while current is not None and len(seen) < 4 and len(frames) < 12:
         identity = id(current)
         if identity in seen:
             break
         seen.add(identity)
-        tb = BaseException.__traceback__.__get__(current)
+        if use_outer_tb:
+            tb = outer_tb
+            use_outer_tb = False
+        else:
+            tb = BaseException.__traceback__.__get__(current)
         visited = 0
         while tb is not None and visited < 128 and len(frames) < 12:
             visited += 1
@@ -584,7 +593,7 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path) -> tuple[int
                     captured["origin"] = None
                     return trace
                 captured["origin"] = _root_setup_exception_origin(
-                    exc, candidate_src)
+                    exc, candidate_src, outer_tb=arg[2])
             except (TypeError, ValueError):
                 captured["origin"] = None
         return trace

@@ -266,6 +266,44 @@ def test_exception_origin_bounds_and_breaks_cause_cycles():
     assert "PRIVATE_CHAIN_TEXT_" not in repr(origin)
 
 
+def test_exception_origin_breaks_two_object_cause_cycle():
+    def captured_error(text):
+        try:
+            raise RuntimeError(text)
+        except RuntimeError as exc:
+            return exc
+
+    first = captured_error("PRIVATE_TWO_CYCLE_FIRST")
+    second = captured_error("PRIVATE_TWO_CYCLE_SECOND")
+    first.__cause__ = second
+    second.__cause__ = first
+
+    origin = qualification._root_setup_exception_origin(
+        first, Path(__file__).resolve().parent)
+    assert origin is not None
+    assert origin["exception_type"] == "RuntimeError"
+    assert len(origin["frames"]) == 2
+    assert "PRIVATE_TWO_CYCLE_" not in repr(origin)
+
+
+def test_exception_origin_caps_aggregated_traceback_frames():
+    def descend(depth):
+        if depth:
+            return descend(depth - 1)
+        raise RuntimeError("PRIVATE_DEEP_TRACEBACK_TEXT")
+
+    try:
+        descend(20)
+    except RuntimeError as exc:
+        origin = qualification._root_setup_exception_origin(
+            exc, Path(__file__).resolve().parent)
+
+    assert origin is not None
+    assert origin["exception_type"] == "RuntimeError"
+    assert len(origin["frames"]) == 12
+    assert "PRIVATE_DEEP_TRACEBACK_TEXT" not in repr(origin)
+
+
 def test_fixed_cli_trace_refuses_a_preexisting_trace():
     def prior_trace(_frame, _event, _arg):
         return prior_trace
