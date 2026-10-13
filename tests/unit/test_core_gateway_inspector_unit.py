@@ -5,6 +5,7 @@ import shlex
 import stat
 import subprocess
 from pathlib import Path
+import time
 from types import SimpleNamespace
 from unittest.mock import patch
 from hermes_installer.remote import core_gateway, core_gateway_inspector, global_admin
@@ -96,6 +97,8 @@ def test_profile_admin_inspector_denies_non_singleton_allowlist_before_ingress_o
             patch("hermes_installer.remote.gateway.validate_access_jwt", return_value=principal), \
             patch.object(global_admin, "locked"), \
             patch.object(global_admin, "read_locked", return_value=(None, None)), \
+            patch.object(core_gateway_inspector, "_peek_ingress_issue",
+                return_value=SimpleNamespace(expires_monotonic=time.monotonic() + 5)), \
             patch.object(core_gateway_inspector, "_consume_ingress_issue",
                       side_effect=AssertionError("non-singleton admin must stop before ingress consumption")) as consume:
         with pytest.raises(core_gateway_inspector.CoreInspectionDenied,
