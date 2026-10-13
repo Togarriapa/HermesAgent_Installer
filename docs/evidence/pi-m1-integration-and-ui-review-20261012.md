@@ -1167,3 +1167,29 @@ recipe compatibility plan (`f7ce982a95a98f41f143c474ac716968886657be`, archive
 SHA-256 `1ee8a500149189a359694a61ac28399aa270d459d4e608b46714605fafd9e340`)
 was staged pending Pi spec validation; no implementation was present. Live
 source remains `0cb`; no candidate 153 acceptance is claimed.
+
+## Candidates 155–156 qualification and effects
+
+Candidate 155 (`f150`/`45e5`, Core `969`) passed the actual read-only A0
+probe and spec validation. Its first effects run failed after 1.22s only in a
+new root-service-traversal test with `PermissionError`; this is a test failure,
+not evidence of a live Core change. Test-only correction `debfa` passed source
+review.
+
+Candidate 156 (`97e5288b85a8557125a6ca008a7f86ee2822ed50`), archive SHA-256
+`b299d1ce8ef00c9fafec4615a552193a266924c55dae7f209c915c8ea6e0c3a9`, on the
+same Core `969`, passed spec/plan validation and all effects groups. Guard tests:
+3 passed in 1.32s (log SHA-256
+`a421dab8384c4fc3c23dae30db1f5d786442e3e067ab59d296f67c09d6c2ea5d`). Waiter
+tests: 2 passed (log SHA-256
+`8061d30d23b5c5346a7b785068c9bedd8da31ad3104c9aeec5cf56815e6451a1`). Update
+tests: 2 passed in 612.64s (log SHA-256
+`27a7271b9ac6f219dfa411c17ecb4ec60851a54d58861eb01b1e795a76a86cfd`). Restart
+tests: 2 passed in 339.56s (log SHA-256
+`3205d05b785bbb43ad22cc8a621a2e47ecf8a837c0a1bf34e525702f40faf285`). Logs
+were under
+`/var/tmp/hermes-native-guard-156-97e5288b8-20261013T220908Z-3202313/`.
+Candidate 156 actual apply had just started; no adoption or runtime acceptance
+was yet available. The prior state remained four active services on old source
+`0cb`. Feature 147's 95 contracts and synthetic render remain source-level
+history; no live Feature claim is made.
