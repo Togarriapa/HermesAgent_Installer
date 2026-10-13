@@ -998,3 +998,28 @@ correction did not change production CSS; all other files remained unchanged.
 Earlier selector/import and asset-path failures were test invocation/contract
 errors, not product regressions. This Feature result was not deployed. The
 native and Feature evidence does not establish full M1 acceptance.
+
+## Follow-on Native 141–144 outcomes
+
+Native 141 (`4ff47f6bd…`) advanced past the importer without reproducing the
+original `runuser` guard error, but failed after 427.33s at the initial-primary
+first guard. Native 142 (`6301f12c7…`) established only the custody-expiry and
+custody-deadline checks before and after; it failed after 425.91s, with the
+original 110s unchanged. Neither result establishes a successful update.
+
+Native 143 (`8ee6733d6…`) returned success without broad `sys.settrace`; its
+ordinary strict A1-discovery assertion passed. The run then failed after
+307.36s on a stale top-level `new_composed` test field. Its log SHA-256 was
+`a94c4fa5e5baf89e1c6271fd0b9290f625d707c5518382b84bef0e93f0009eca`. The
+comparison does not establish tracing as the cause. A source-only B1 test
+correction independently checks canonical `new_artifact`, nested A1, the real
+receipt and the full receipt hash, and passed Sol review.
+
+Root candidate 144
+(`4e27bc95f41e52c34a83eaaffcff9e9eca76a978`), archive SHA-256
+`7e504fd1f3c0d3d9b2fff02887ac55d655e29bdb2728ec774a699260b57565f8`, was
+preparing both update variants and restart variants; no effect results were
+available. Core `9e70` remained unchanged since candidate 139. No production
+deployment or deadline fix is established. Feature 58e's 71 contracts and
+renderer checks remain the previously recorded source-level evidence; its CSS
+is published in PRs 38/36, still drafts. Full M1 acceptance remains open.
