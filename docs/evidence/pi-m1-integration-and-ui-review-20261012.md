@@ -841,7 +841,7 @@ and strict spec/plan validation with zero findings unless explicitly stated.
 | 127 `666ddbe4f2b2b19174ce60ccb743901c75d015d0` | `b6888ad2d61e597804e566095e277c8b77d531ba522f69995de5f00793982c87` | UI: 2 failed, 180 passed in 3.69s. Four Core lock/startup checks passed; partial group had 1 failure in 124.90s. |
 | 128 `d09d1d72c4317ae960633672c246060bcd5e449b` | `349a641b45499d70599e7157f4b2dcb71195fe5964f206d4860190522eb32f9f` | Compile/spec/plan passed, including the first #21 spec validation. UI: 1 failed, 181 passed in 3.68s; stale captured approval-nonce assertion corrected in `e8`. Partial-group failure duration was not supplied. |
 | 129 `3f2c7904da076c250ce9fc3d07f4254d9d15d2a1` | `f5cd03876350b4d67f480baebbcd1a16d550da1cc9501aff3acfeb62690441a9` | UI: 182 passed in 3.67s with 28 warnings. Partial group: 1 failure in 103.76s; `guard_ok=True`, then `PermissionError` at the original script's unit `stat`. Sandboxed Chromium helper `87c3f` against exact repo source 129 passed phone390x844, tablet768x1024 and wide1440x900 44px controls plus motion pause/resume, but had 7 render failures: phone composer/nav overlap; three Mission auto-close fixture flags; and three tablet Notes reads racing load/stale-button state. No qualification was weakened. Root visually reviewed a Pi127-derived wide Overview capture with synthetic quiet fixture. CSS `2f` raised controls from 42px to 44px and added nested mobile scrolling; actual navigation clearance remained pending. |
-| 130 `ab509e65b63ce4df92e06f25263eb11506e5aa73` | `4472450c4c5bd628d7983f89bdd419b1f5945c3d4e70c43d329431d2dc384bc6` | Compile/spec/plan passed, including #21 one-use refinements; `f15` branch was not accepted. Partial group failed at `PermissionError` on `stat` of the allowlisted unit basename. Exact Root fixture public service-file mode `0664` source correction was reviewed; Pi validation remained pending 131. Renderer exited 2 because an Obsidian button was stale; `ca6` re-queries the live DOM and requires selected ID/body/digest, which does not prove production effects. |
+| 130 `ab509e65b63ce4df92e06f25263eb11506e5aa73` | `4472450c4c5bd628d7983f89bdd419b1f5945c3d4e70c43d329431d2dc384bc6` | Compile/spec/plan passed, including #21 one-use refinements; `f15` branch was not accepted. Partial group failed at `PermissionError` on `stat` of the allowlisted unit basename. Exact Root fixture public service-file mode `0644` source correction was reviewed; Pi validation remained pending 131. Renderer exited 2 because an Obsidian button was stale; `ca6` re-queries the live DOM and requires selected ID/body/digest, which does not prove production effects. |
 
 At the supplied ledger point, run 131 jobs were still running with no results.
 Root read back the four live units as active (Core, Inspector, Gateway and
@@ -852,3 +852,19 @@ passes plus four new-lock checks, but full new-source positive, restart,
 partial-recovery and overall M1 acceptance remained open. Broad #21, #62 and
 #18 items and eight other requirements remained open. These are historical
 qualification facts, not a current production-status assertion.
+
+## Pi qualification runs 131 and 133
+
+These later results add recovery and UI evidence while keeping adoption and
+final acceptance distinct. They are historical and do not state the current
+production result.
+
+| Run / candidate | Archive SHA-256 | Pi result and disposition |
+| --- | --- | --- |
+| 131 `dd13aefac6860621ca0a0b0c45c8e864550e9e01` | `02ba6e8dacbc7c798817dc5bb51f60d43fc188f3805df1dcbd1ae54b5fe75304` | Compile/spec/plan passed. Corrected partial/interrupted rollback: 1 pass in 96.24s. Positive updates: 2 passed in 611.25s. Restart-failure recovery: 2 passed in 199.54s. Core source `0dac9c...` was unchanged. |
+| 133 `0972fe1dc3f20ad432c93ac42b54db56c470465a` | `2de26e4d5db5e52d4f4343f8026c4245abfe651f6e489c18a16e1fde2a99d49f` | Compile/spec/plan passed; chat checks 23 passed in 0.58s. Sandboxed responsive fixture passed with `failed_checks=[]` at390x844,768x1024 and1440x900 using helper `f26bd16e4e1b357c0e5f794e287a27dec823171db5b7046cd275c1e6a9b11e5d`. The measured control was73.5x44px at y453.765625–497.765625; a center hit succeeded with342x44px input. Stage verification found `/opt/hermes-installer-core-0972fe1dc`; it made no live change. Screenshots included a controls-modal overlay, so the targeted clean capture remains pending. |
+
+Root dispatched actual adoption after these checks; its outcome was unknown at
+the time this entry was written and must remain pending until read back. The
+responsive fixture and stage verification do not establish a completed live
+adoption, final full-MVP acceptance, or actual Android/voice qualification.
