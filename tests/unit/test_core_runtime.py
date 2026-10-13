@@ -800,7 +800,7 @@ def _rebind_fixture_resources_to_current_journal():
 
 def _fake_update_pidfd(monkeypatch, enabled, request):
     """Model one live PIDFD per fake service incarnation."""
-    pipe_fds = []
+    fixture_pipe_fds = set()
     writers = {}
     latest = {"pidfd": None}
     # The real PIDFD listener verifier must observe a live OS process. Model
@@ -809,7 +809,8 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
     pid = os.getpid()
 
     def cleanup_pipe():
-        for fd in pipe_fds:
+        for fd in tuple(fixture_pipe_fds):
+            fixture_pipe_fds.discard(fd)
             try:
                 os.close(fd)
             except OSError:
@@ -820,6 +821,7 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
     def close_writer(pidfd):
         writer = writers.pop(pidfd, None)
         if writer is not None:
+            fixture_pipe_fds.discard(writer)
             os.close(writer)
 
     def identity(source, adapter_generation, core_generation, actual_pid):
@@ -834,11 +836,15 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
         evidence, digest = identity(source, adapter_generation, core_generation, pid)
         # A restarted fake service gets a new unread pipe. Reusing the old
         # pipe would leave the new process's pseudo-PIDFD readable at EOF.
-        read_fd, write_fd = os.pipe()
-        pipe_fds.extend((read_fd, write_fd))
-        writers[read_fd] = write_fd
-        latest["pidfd"] = read_fd
-        return read_fd, pid, evidence, digest
+        pipe_read_fd, write_fd = os.pipe()
+        fixture_pipe_fds.update((pipe_read_fd, write_fd))
+        pidfd = os.dup(pipe_read_fd)
+        writers[pidfd] = write_fd
+        latest["pidfd"] = pidfd
+        # Core owns and closes the returned duplicate; fixture cleanup retains
+        # only its original endpoints, so descriptor reuse cannot close an
+        # unrelated process FD in the finalizer.
+        return pidfd, pid, evidence, digest
 
     def stop(pidfd, actual_pid, source, adapter_generation, core_generation, expected):
         _evidence, actual = identity(source, adapter_generation, core_generation, actual_pid)
@@ -1039,7 +1045,7 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
         context = core._ADAPTER_STARTUP_COHORT_CONTEXT.get()
         assert isinstance(context, dict)
         assert context["cohort"].get("phase") == "source-starting"
-        assert context["pidfd"] is not None and context["pid"] == 424242
+        assert context["pidfd"] is not None and context["pid"] == os.getpid()
         assert context.get("new_read") is not None
         assert core._validate_guarded_new_read(context["new_read"])
         assert core._ADAPTER_UPDATE_LOCK_HELD.get()
