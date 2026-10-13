@@ -406,6 +406,64 @@ Primary journal remained absent during and after v97. Source/tools match v96,
 whose170 checks were not repeated; broader changed fixture qualification and
 full update/recovery acceptance remain pending.
 
+The v109 candidate `9f5ce0b49372647ee520b089e553701f308223ea`
+compiled and passed strict specs/plan validation on the Pi. Archive SHA-256
+`2656be1e3969b1c7e5d8c76d0aebb3586d7770a1cb2cdc9533976ddda8b2262e`.
+All six quick actual guard tests passed in2.16s, including the committed
+initial-adoption starting/final Resources distinction and tamper denials.
+The full update group stopped with one failure and three passes,37 deselected
+in294.69s. The controlled updater returns successfully but its final generated
+guard still exits1 with an empty stderr. The failure is the final guard call
+at test line1462; no remaining recovery assertions or live acceptance follow.
+A bounded Boolean-only diagnostic of the unchanged guard is the next step;
+no speculative admission weakening is authorized. All four live services were
+active and the real Primary ownership journal remained absent during this run.
+
+The v108 candidate `478199d5e3a61b22d24352fffbf3bff999fe6612`
+compiled and passed strict specs/plan validation on the Pi. Archive SHA-256
+`1c3f677f5c06caed5d91f25d2610f9e54d26eb7bb17e5c2ad9c3aa782d73e533`.
+The first quick actual guard test stopped with a generated-script SyntaxError
+in0.59s;53 cases were deselected. The expensive update group did not start.
+The retained R_s predicate correction omitted one closing parenthesis. Luna
+supplied the minimal syntax repair and Sol reviewed/pinned the changed Core;
+actual quick guard validation remains required. No live deployment occurred.
+
+The v107 candidate `19bce42d32c8c14e63e84a4903398265c9b6b1a4`
+compiled on the Pi and passed strict specs/plan validation. Archive SHA-256
+`e7d3fee77a791b0ffce5c1d11830e5cd4c5a3fafb7bd44f865b01ed974fbf9ee`.
+The five quick guard cases passed in1.99s. A net fixture correction selects
+only unit/launcher in a disposable Root-owned readable service tree before
+recipe creation; no generic pytest-root mirror remains. The full group
+stopped at one failure and three passes,36 deselected in297.09s. Complete
+update returned successfully; public fixture paths removed the prior access
+error, but the committed guard still denied. Sol identified the exact source
+join: initial adoption retains the starting Resources receipt digest R_s,
+whereas the committed current receipt is R_f with final journal ownership.
+The guard incorrectly compares that retained starting digest to current R_f.
+The pending correction must retain the immutable R_s/C starting join and the
+separate current phase-selected R_f check; no receipt restamping or admission
+weakening is permitted. A quick committed-adoption regression precedes further
+expensive replay. Complete case, recovery and live acceptance remain open.
+
+The v106 candidate `fb875d7df8323eb34632498fd014c88e66945db2`
+compiled on the Pi and passed strict specs/plan validation. Archive SHA-256
+`67f79d0acace81b11eb0f98bcd504f5f037ff81c9d3b757060a6d575be42c197`.
+Its quick actual admin/private-mount startup guard group passed five tests,
+53 deselected in1.98s: exact legacy9 and typed native11 backup modes,
+missing-credential/plugin-tamper refusal, preserved Core subprocess denial,
+and exact generated unit bytes across fresh Python hash seeds. The reviewed
+source now emits sorted field tuples instead of process-dependent set repr;
+only the existing Core source pin was refreshed. Installed plugin fixture
+effects use actual root:root0555/0444 files inside the private HOME mount.
+The broader group stopped at one failure and three passes,36 deselected
+in295.38s. Complete controlled update again returned successfully; its real
+admin guard then could not read the embedded fixture-unit recipe path beneath
+Root-only `/tmp/pytest-of-root`. The helper exposes unit/launcher bytes at the
+fixed production paths, but the full-unit check reads its recipe path. A
+bounded isolated path-visibility correction is pending; host pytest directory
+permissions and exact unit-byte checks must remain protected. These quick
+results do not establish complete update, rollback or live chat acceptance.
+
 The v105 candidate `f989ba66e50a4eee7bc707f57d156fb4f5f9be08`
 compiled on the Pi and passed strict specs/plan validation. Archive SHA-256
 `030a0ad6e818ef521d7a12c545024e4232f8998cf612636f84106aa5a071f7b5`.
@@ -413,11 +471,13 @@ The new quick runner case executed the real private namespace/admin guard,
 emitted namespace-ready, and then the unchanged generated guard returned1.
 Result: one failure,55 deselected in0.54s; the recipe stopped before expensive
 update/recovery replay. Sol and Luna independently found production guard
-drift: the closed cohort-key set omits `native_plugin_transition`, backup
-membership still assumes9 instead of the exact conditional9/11 set, and the
-generated canonicalizer encodes a literal backslash-n rather than a newline.
-These require a reviewed source correction; fixture rows and expected success
-are retained. A bounded Sol review also found three stale test assumptions in
+drift: the closed cohort-key set omits `native_plugin_transition` and backup
+membership still assumes9 instead of the exact conditional9/11 set. These
+require a reviewed source correction; fixture rows and expected success are
+retained. An initially suspected canonical-newline defect was disproved by
+Sol's raw-source review: nested tool-output escaping caused the mistaken
+observation, so no extra newline change is needed. A bounded Sol review also
+found three stale test assumptions in
 interruption injection, rollback start ordering and the two-phase reload
 witness; their test-only correction is separate. Actual deployment, positive
 startup guard and recovery qualification remain pending.
