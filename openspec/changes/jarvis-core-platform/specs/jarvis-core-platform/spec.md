@@ -2530,10 +2530,10 @@ Native workbenches SHALL provide skill source/archive review (#29), a timezone-a
 - **THEN** only explicit project Save persists captured selected IDs/current version; missing saved IDs survive filtered/failed reads, foreign/stale preview denies, Markdown stays inert, and genuine supported turn-context use remains separate from note selection metadata.
 
 ### Requirement: MVP fail-closed global native profile administration
-Profiles backend and authoritative Inspector SHALL independently require exactly one configured approved email matching the current authenticated principal before global native profile/skill administration. Empty/multiple/ambiguous configuration or caller mismatch SHALL deny before native access. Existing authority/currentness/CAS/recovery SHALL remain; this restriction SHALL NOT confer original-admin status.
+Until qualified original-administrator enrollment is deployed, Profiles backend and Inspector SHALL require exactly one configured approved email matching the current principal before global native profile/skill access. Empty/multiple/ambiguous configuration or mismatch SHALL deny. Authority/currentness/CAS/recovery SHALL remain; singleton access SHALL NOT confer original-admin status. Deployed enrollment SHALL use the independent original-administrator requirement.
 
 #### Scenario: Household union cannot administer shared native sources
-- **WHEN** any approved member of a multiple-email configuration requests global Profiles list/read/preview/save or direct Inspector owner-profile-admin profile/skill operation
+- **WHEN** any approved member of a multiple-email configuration without deployed qualified original-administrator enrollment requests global Profiles list/read/preview/save or direct Inspector owner-profile-admin profile/skill operation
 - **THEN** both boundaries deny or report pending original-global-admin scope before native read/write/provider invocation; same-origin, valid JWT, current Core, opaque IDs and explicit preview do not override this restriction.
 
 #### Scenario: Current singleton operations and ordinary family chat
@@ -2581,3 +2581,16 @@ The Android companion SHALL provide owned text chat, foreground PTT to editable 
 - **WHEN** permissions/engine/language fail, the app leaves foreground or locks, owner/conversation/reply changes, native callbacks arrive late or transport outcome is uncertain
 - **THEN** stale capture/send/render/audio is denied, unsent drafts remain visibly unsent, and explicit fresh permission/authentication/current readback restores usable text/voice without automatic recording or uncertain-turn replay.
 - **AND** Root Pi backend evidence and actual per-build Pixel10/HonorX5bPlus/tablet audio/lifecycle/accessibility plus candidate-bound affected/full-flow UX revision precede acceptance; assistant-role/hotword/background/HA/ROM/notifications remain separate open obligations.
+
+### Requirement: Original administrator is explicitly enrolled by trusted setup
+Global Profiles and native skill-source administration SHALL require a Root-enrolled immutable signed identity, independently checked at backend and native effect boundaries. Explicit trusted setup SHALL verify fresh identity and fixed Home custody; allowlist order, first login or frontend roles SHALL NOT enroll. Missing/revoked/changed registration SHALL deny global access while ordinary approved family chat and private owner data remain available.
+
+#### Scenario: Original administrator operates within household admission
+- **WHEN** explicit Root setup confirms its selected original-owner email and verifies fresh current issuer/audience/subject and Home, then that enrolled identity accesses global Profiles/native skills under a multi-email allowlist
+- **THEN** exact protected registration and current ingress/Core/source/native checks authorize only that identity; other approved people retain independent normal chat/Projects/vault/read-only Experts but deny global native file access.
+- **AND** phase A of issue#21 uses the closed literal registry/lock/setup/check contract in design; managed-plugin/MCP direct RPC mutations remain singleton-denied under union until equivalent native transaction enforcement is reviewed. Full parity remains owed.
+
+#### Scenario: Revocation, stale preview and retained policy recovery
+- **WHEN** Root revokes/reactivates an enrollment, an old preview is submitted, or source update/rollback/restart or interrupted enrollment occurs
+- **THEN** exclusive writer/shared native-transaction lock order and expected registration revision/SHA linearize authority; stale approvals deny even for the same subject, current tombstone is retained and uncertain bytes/effects are not silently overwritten/replayed.
+- **AND** fixed Root custody/no-follow/CAS/atomic fsync remains; identity transfers/migrations require separate review, token/claims remain redacted, ordinary owner lease expiry is unchanged, and Root Pi effect/denial/recovery plus mandatory full-flow UI qualification precedes acceptance.
