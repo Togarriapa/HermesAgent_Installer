@@ -182,6 +182,11 @@ def test_projects_assets_describe_the_verified_turn_context_boundary():
     assert "Array.from(selectedNoteIds)" in js and "snapshot.payload" in js
     assert "uncertainSave = snapshot" in js and "Resolve this exact request" in js
     assert "obsidianNoteIds:selectedNoteIds" not in js
+    assert "selectedNoteIds.size >= 50" in js and "obsidianNoteIds.length > 50" in js
+    assert "/^[A-Za-z0-9_-]{1,96}$/" in js
+    assert "project.id !== snapshot.projectId" in js
+    assert "normalizeProjectText(form.elements.title.value)" in js
+    assert "cancel.addEventListener('click'" in js
     assert "verified Codex Responses turns" in html
     assert "another transport handles the message, Jarvis leaves it out" in html
     assert "Project notes guide replies; they do not grant access." in html
@@ -268,7 +273,7 @@ def test_project_note_page_reads_ignore_aba_success_and_error_and_keep_get_targe
 const assert = require('node:assert/strict');
 let selected={id:'A'}, projectRevision=1, selectionRevision=1, noteReadRevision=0;
 let savePending=false, uncertainSave=null, stopped=false, noteMode='recent', noteSearchText='';
-let noteRows=[], noteCursor=null, vaultNotesState='loading';
+let noteRows=[], noteCursor=null, vaultNotesState='loading', vaultNotes=new Map();
 const targets=[], pending=[];
 const isCurrent=()=>!stopped, retryNotes={hidden:true}, noteMore={disabled:false};
 const noteEmpty={hidden:false};
@@ -302,6 +307,78 @@ const call=path=>{targets.push(path); return new Promise((resolve,reject)=>pendi
         result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=15)
     assert result.returncode == 0, result.stderr
     assert "PROJECT_NOTE_READ_HARNESS_COMPLETE" in result.stdout
+
+
+def test_project_note_preview_and_save_effects_are_deferred_and_target_bound():
+    source = FEATURE_ASSETS.mount_js
+    preview = "async function previewNote(" + source.split(
+        "async function previewNote(", 1
+    )[1].split("\n  refreshButton.addEventListener", 1)[0]
+    submit = "async function submitSnapshot(" + source.split(
+        "async function submitSnapshot(", 1
+    )[1].split("\n  form.addEventListener('submit'", 1)[0]
+    harness = r'''
+const assert=require('node:assert/strict');
+let selected={id:'project-A'},selectionRevision=1,previewRevision=0,stopped=false;
+let savePending=false,uncertainSave=null;
+const targets=[],pending=[];
+const node=()=>({hidden:true,disabled:false,textContent:'',setAttribute(){}});
+const notePreview=node(),previewTitle=node(),previewMeta=node(),previewMarkdown=node(),previewStatus=node();
+const vaultNotes=new Map([['note-one',{contentSha256:'a'.repeat(64)}]]);
+const isCurrent=()=>!stopped,call=(path,options)=>{targets.push({path,options});return new Promise((resolve,reject)=>pending.push({resolve,reject}));};
+const status=node(),save=node(),saveRecovery=node();
+const text=(target,value)=>{target.textContent=value;};
+const renderSelectedNotes=()=>{},renderNoteRows=()=>{},refresh=async()=>true;
+let selectedProject=null;
+function selectProject(project){selectedProject=project;}
+''' + preview + "\n" + submit + r'''
+(async()=>{
+  const stale=previewNote('note-one');
+  assert.equal(targets[0].path,'/chat/api/second-brain/notes/note-one');
+  selected={id:'project-B'};selectionRevision++;
+  pending[0].resolve({noteId:'note-one',title:'Stale title',markdown:'stale',contentSha256:'a'.repeat(64),updatedAt:1});
+  await stale;assert.equal(previewMarkdown.textContent,'');
+  selected={id:'project-A'};selectionRevision++;
+  const current=previewNote('note-one');
+  pending[1].resolve({noteId:'note-one',title:'Current',markdown:'<script>literal</script>',contentSha256:'a'.repeat(64),updatedAt:2});
+  await current;assert.equal(previewTitle.textContent,'Current');
+  assert.equal(previewMarkdown.textContent,'<script>literal</script>');
+  assert.equal(Object.hasOwn(previewMarkdown,'innerHTML'),false);
+  const foreign=previewNote('note-one');
+  pending[2].resolve({noteId:'another-owner-note',title:'Foreign',markdown:'private',contentSha256:'a'.repeat(64),updatedAt:3});
+  await foreign;assert.equal(previewMarkdown.textContent,'');
+  assert.match(previewStatus.textContent,/unavailable|verified/i);
+  const changed=previewNote('note-one');
+  pending[3].resolve({noteId:'note-one',title:'Changed digest',markdown:'do not show',contentSha256:'b'.repeat(64),updatedAt:4});
+  await changed;assert.equal(previewMarkdown.textContent,'');assert.match(previewStatus.textContent,/changed|unavailable/i);
+  const snapshot={projectId:'project-A',path:'/chat/api/projects/project-A',key:'same-idempotency-key',revision:selectionRevision,
+    payload:{title:'Name',instructions:'Guidance',sharedMemory:'Memory',obsidianNoteIds:['note-one'],version:4}};
+  assert.equal(targets.filter(item=>item.options&&item.options.method==='POST').length,0,'reads and draft preview must not write');
+  const saving=submitSnapshot(snapshot);
+  assert.equal(targets.at(-1).path,snapshot.path);
+  assert.equal(targets.at(-1).options.headers['Idempotency-Key'],snapshot.key);
+  assert.deepEqual(JSON.parse(targets.at(-1).options.body),snapshot.payload);
+  pending[4].resolve({project:{id:'project-A',title:'Name',instructions:'Guidance',sharedMemory:'Memory',obsidianNoteIds:['note-one'],version:5}});
+  await saving;assert.equal(selectedProject.id,'project-A');assert.equal(uncertainSave,null);
+  const mismatched={...snapshot,key:'mismatch-key'};
+  const rejected=submitSnapshot(mismatched);
+  pending[5].resolve({project:{id:'project-B',title:'Name',instructions:'Guidance',sharedMemory:'Memory',obsidianNoteIds:['note-one'],version:5}});
+  await rejected;assert.equal(uncertainSave,mismatched);
+  assert.equal(targets.length,6,'mismatched result must not trigger an automatic retry');
+  uncertainSave=null;stopped=false;
+  const leaving=previewNote('note-one'); stopped=true;
+  const loadingTitle=previewTitle.textContent;
+  pending[6].resolve({noteId:'note-one',title:'After unmount',markdown:'ignored',contentSha256:'a'.repeat(64),updatedAt:5});
+  await leaving;assert.equal(previewTitle.textContent,loadingTitle,'unmounted preview must not mutate its former DOM');
+  console.log('PROJECT_NOTE_PREVIEW_SAVE_HARNESS_COMPLETE');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "project-note-preview-save-harness.js"
+        path.write_text(harness, encoding="utf-8")
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "PROJECT_NOTE_PREVIEW_SAVE_HARNESS_COMPLETE" in result.stdout
 
 
 def test_trashing_chat_conflicts_with_active_turn_and_versions_survive_restore(tmp_path):

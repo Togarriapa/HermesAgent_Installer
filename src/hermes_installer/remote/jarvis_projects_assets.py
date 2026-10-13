@@ -136,6 +136,7 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
     return response.status === 204 ? {} : response.json();
   }
   function field(name) { return form.elements.namedItem(name); }
+  const normalizeProjectText = value => value.replace(/^[\s\x1c-\x1f\x85]+|[\s\x1c-\x1f\x85]+$/g, '');
   function clearPreview(message = '') {
     previewRevision += 1;
     notePreview.hidden = true; previewTitle.textContent = 'Note preview';
@@ -184,7 +185,8 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
     noteMore.disabled = savePending || Boolean(uncertainSave);
   }
   function changeNoteSelection(noteId, add) {
-    if (!isCurrent() || savePending || uncertainSave || (add && !vaultNotes.has(noteId))) return;
+    if (!isCurrent() || savePending || uncertainSave
+        || (add && (!vaultNotes.has(noteId) || selectedNoteIds.size >= 50))) return;
     if (add) selectedNoteIds.add(noteId); else selectedNoteIds.delete(noteId);
     selectionRevision += 1;
     clearPreview('Preview again after changing selected notes.');
@@ -200,7 +202,7 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
     form.elements.instructions.value = project ? project.instructions : '';
     form.elements.sharedMemory.value = project ? project.sharedMemory : '';
     selectedNoteIds = new Set(Array.isArray(project && project.obsidianNoteIds)
-      ? project.obsidianNoteIds.filter(id => typeof id === 'string' && id.length > 0 && id.length <= 160) : []);
+      ? project.obsidianNoteIds.filter(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,96}$/.test(id)) : []);
     renderSelectedNotes(); renderNoteRows();
     $('[data-editor-title]').textContent = project ? 'Project settings' : 'Create a project';
     save.textContent = project ? 'Save changes' : 'Create project';
@@ -331,7 +333,7 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
       if (!data || !Array.isArray(data.notes)
           || (data.nextCursor !== null && typeof data.nextCursor !== 'string')) throw new Error('Invalid owner note page.');
       const valid = data.notes.filter(note => note && typeof note.noteId === 'string'
-        && note.noteId.length > 0 && note.noteId.length <= 160 && typeof note.title === 'string');
+        && /^[A-Za-z0-9_-]{1,96}$/.test(note.noteId) && typeof note.title === 'string');
       for (const note of valid) vaultNotes.set(note.noteId, note);
       const rows = append ? noteRows.slice() : [];
       const seen = new Set(rows.map(note => note.noteId));
@@ -359,7 +361,8 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
     }
   }
   async function previewNote(noteId) {
-    if (!isCurrent() || savePending || uncertainSave || typeof noteId !== 'string' || !noteId || noteId.length > 160) return;
+    if (!isCurrent() || savePending || uncertainSave || typeof noteId !== 'string'
+        || !/^[A-Za-z0-9_-]{1,96}$/.test(noteId)) return;
     const requestRevision = ++previewRevision;
     const projectId = selected && selected.id || null, projectRevision = selectionRevision;
     const expected = vaultNotes.get(noteId);
@@ -418,11 +421,12 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
       const result = await call(snapshot.path, {method:'POST', headers:{'Content-Type':'application/json','Idempotency-Key':snapshot.key}, body:JSON.stringify(snapshot.payload)});
       if (!isCurrent()) return;
       const project = result && result.project;
-      if (!project || typeof project.id !== 'string' || project.title !== snapshot.payload.title
+      if (!project || typeof project.id !== 'string' || (snapshot.projectId && project.id !== snapshot.projectId)
+          || project.title !== snapshot.payload.title
           || project.instructions !== snapshot.payload.instructions || project.sharedMemory !== snapshot.payload.sharedMemory
           || !Array.isArray(project.obsidianNoteIds)
           || JSON.stringify(project.obsidianNoteIds) !== JSON.stringify(snapshot.payload.obsidianNoteIds)
-          || !Number.isInteger(project.version)
+          || snapshot.payload.obsidianNoteIds.length > 50 || !Number.isInteger(project.version)
           || (Number.isInteger(snapshot.payload.version) && project.version !== snapshot.payload.version + 1)) {
         throw new Error('The server returned a different project result. Resolve this Save before submitting again.');
       }
@@ -444,8 +448,10 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
   }
   form.addEventListener('submit', event => {
     event.preventDefault(); if (!isCurrent() || savePending || uncertainSave) return;
-    const payload = {title:form.elements.title.value, instructions:form.elements.instructions.value,
-      sharedMemory:form.elements.sharedMemory.value, obsidianNoteIds:Array.from(selectedNoteIds)};
+    const payload = {title:normalizeProjectText(form.elements.title.value),
+      instructions:normalizeProjectText(form.elements.instructions.value),
+      sharedMemory:normalizeProjectText(form.elements.sharedMemory.value), obsidianNoteIds:Array.from(selectedNoteIds)};
+    if (payload.obsidianNoteIds.length > 50) { text(status, 'A project can link at most 50 notes. Remove extra links before saving.'); return; }
     const target = selected;
     if (target) payload.version = target.version;
     void submitSnapshot({payload, projectId:target && target.id || null,
