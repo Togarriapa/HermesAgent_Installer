@@ -2159,6 +2159,53 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
         return result
     monkeypatch.setattr(core, "_run", model_restart_on_failure)
 
+    original_proc_snapshot = core._root_runuser_proc_snapshot
+    runuser_identity_mismatches = []
+
+    def observe_runuser_proc_snapshot(process, identity, pipe_fd):
+        try:
+            return original_proc_snapshot(process, identity, pipe_fd)
+        except core.CoreRuntimeError:
+            tb = sys.exc_info()[2]
+            while tb is not None:
+                frame = tb.tb_frame
+                if frame.f_code is original_proc_snapshot.__code__:
+                    values = frame.f_locals
+                    pipe = values.get("pipe")
+                    stdin_stat = values.get("stdin_stat")
+                    status = values.get("values", {})
+                    checks = {
+                        "process_state": values.get("state") not in {"Z", "X"},
+                        "root_parent": values.get("ppid") == identity["root_pid"],
+                        "process_group": values.get("process_group") == identity["pid"],
+                        "session": values.get("session") == identity["pid"],
+                        "start_ticks": str(values.get("start_ticks", "")).isdecimal(),
+                        "root_uids": status.get("Uid") == ["0"] * 4,
+                        "root_gids": status.get("Gid") == ["0"] * 4,
+                        "runuser_comm": values.get("comm") == "runuser",
+                        "argv": tuple(values.get("actual_argv", ())) == identity["argv"],
+                        "executable": (pipe is not None and
+                            (values.get("exe").st_dev, values.get("exe").st_ino,
+                             values.get("exe").st_uid) ==
+                            (identity["exe_dev"], identity["exe_ino"], core.ROOT_UID)),
+                        "stdin_fifo": stdin_stat is not None and stat.S_ISFIFO(stdin_stat.st_mode),
+                        "stdin_owner": stdin_stat is not None and stdin_stat.st_uid == core.ROOT_UID,
+                        "stdin_inode": (stdin_stat is not None and pipe is not None and
+                            (stdin_stat.st_dev, stdin_stat.st_ino) == (pipe.st_dev, pipe.st_ino)),
+                        "stdin_target": values.get("stdin_target") ==
+                            (f"pipe:[{pipe.st_ino}]" if pipe is not None else None),
+                        "pipe_identity": (pipe is not None and
+                            (pipe.st_dev, pipe.st_ino, pipe.st_uid) ==
+                            (identity["pipe_dev"], identity["pipe_ino"], core.ROOT_UID)),
+                    }
+                    failed = tuple(name for name, ok in checks.items() if not ok)
+                    runuser_identity_mismatches.append(failed)
+                    print("bounded runuser identity predicates failed: " + repr(failed))
+                    break
+                tb = tb.tb_next
+            raise
+
+    monkeypatch.setattr(core, "_root_runuser_proc_snapshot", observe_runuser_proc_snapshot)
     with _bounded_cohort_exception_sites() as importer_outcomes:
         result = core.update_owned_core_adapter()
 
