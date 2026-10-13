@@ -4985,7 +4985,7 @@ def _restore_adapter_update_owner_generation(cohort):
       or result.get("artifact_sha256")!=old_sha
       or result.get("generation_path")!=str(target)
       or result.get("retained_artifact_sha256")!=new_sha
-      or result.get("retained_generation_backup")!=str(target.parent/name)
+      or result.get("retained_generation_backup")!=str(HERMES_HOME/name)
       or set(result)!={"state","artifact_sha256","generation_path",
        "retained_generation_backup","retained_artifact_sha256"}):
    raise CoreRuntimeError("owner generation rollback receipt does not bind the prior bytes")
