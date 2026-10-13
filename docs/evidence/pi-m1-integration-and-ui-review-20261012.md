@@ -47,6 +47,18 @@ Logs and status JSON are under
 reported `spec-driven`, `ready`, eight total/zero complete/eight remaining;
 no archive or canonical runtime acceptance was performed.
 
+The v70 integrated candidate `14dffcaabec8f22f9e16c33714713a33bbaae508`
+compiled on the Pi and passed strict specs/plan validation. The gateway,
+adopter, qualifier, initial-primary and bootstrap group had3 failures and152
+passes; the expanded Core update/recovery group had4 failures and14 passes.
+Archive SHA-256
+`724d8b66276832506da3864732cb946510a71d7d6d7722cfd891858b162c5bd8`.
+The real Core-to-bootstrap prepare scope and0644/0664 source custody checks
+passed. Source review separately found an adopter reference reader still
+limited to9 members; transition backups contain exactly11. The candidate is
+not admitted for staging/apply until the conditional consumer and all failed
+checks are repaired and verified. Production remains on the old source.
+
 The v69 specification-only candidate
 `6b4621209a11895ce9f7894013ce034e1bdb3b05` compiled on the Pi and passed
 strict specs/plan validation. Archive SHA-256
