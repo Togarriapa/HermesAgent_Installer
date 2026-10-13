@@ -146,11 +146,15 @@ class JarvisChatAssetTests(unittest.TestCase):
                 self.assertEqual(primary_nav.count(f'data-view="{destination}"'), 1)
         self.assertEqual(primary_nav.count('<button type="button" class="nav-item'),
                          len(expected_destinations))
-        self.assertEqual(primary_nav.count('class="nav-group'), 3)
-        for group in ("work", "resources", "system"):
-            self.assertIn(f'data-nav-group="{group}"', primary_nav)
-        resources_menu = primary_nav.split('data-nav-group="resources"', 1)[1].split("</details>", 1)[0]
-        system_menu = primary_nav.split('data-nav-group="system"', 1)[1].split("</details>", 1)[0]
+        self.assertEqual(primary_nav.count('class="nav-group'), 1)
+        self.assertIn('class="nav-group manage-group" data-nav-group="manage"', primary_nav)
+        self.assertIn('<summary aria-expanded="false">Manage</summary>', primary_nav)
+        self.assertLess(primary_nav.index('id="manage-work-heading"'), primary_nav.index('id="manage-resources-heading"'))
+        self.assertLess(primary_nav.index('id="manage-resources-heading"'), primary_nav.index('id="manage-system-heading"'))
+        work_menu = primary_nav.split('aria-labelledby="manage-work-heading"', 1)[1].split("</section>", 1)[0]
+        resources_menu = primary_nav.split('aria-labelledby="manage-resources-heading"', 1)[1].split("</section>", 1)[0]
+        system_menu = primary_nav.split('aria-labelledby="manage-system-heading"', 1)[1].split("</section>", 1)[0]
+        self.assertIn('data-view="missions"', work_menu)
         self.assertIn('data-view="capabilities"', resources_menu)
         self.assertIn('data-view="settings"', system_menu)
         self.assertEqual(system_menu.count('data-view="calendar"'), 1)
@@ -173,11 +177,11 @@ class JarvisChatAssetTests(unittest.TestCase):
             with self.subTest(destination=destination):
                 self.assertIn(f'data-view="{destination}"', primary_nav)
                 self.assertIn(label, primary_nav)
-        resources_menu = primary_nav.split('data-nav-group="resources"', 1)[1].split("</details>", 1)[0]
+        resources_menu = primary_nav.split('aria-labelledby="manage-resources-heading"', 1)[1].split("</section>", 1)[0]
         self.assertEqual(resources_menu.count('data-view="second-brain"'), 1)
         self.assertEqual(resources_menu.count(">Second brain</button>"), 1)
         for label in ("Work", "Resources", "System"):
-            self.assertIn(f"<summary aria-expanded=\"false\">{label}</summary>", primary_nav)
+            self.assertIn(f">{label}</h2>", primary_nav)
         self.assertIn('id="voice-entry" type="button" aria-label="Open voice controls"', source)
 
 
@@ -215,10 +219,14 @@ class JarvisChatAssetTests(unittest.TestCase):
         _content_type, app_script = reviewed_chat_asset("/chat/assets/app.js")
         client = app_script.decode("utf-8")
 
-        self.assertEqual(primary_nav.count('class="nav-group'), 3)
-        self.assertIn('data-nav-group="work"', primary_nav)
-        self.assertIn('data-nav-group="resources"', primary_nav)
-        self.assertIn('data-nav-group="system"', primary_nav)
+        self.assertEqual(primary_nav.count('class="nav-group'), 1)
+        self.assertIn('data-nav-group="manage"', primary_nav)
+        self.assertIn('id="manage-work-heading"', primary_nav)
+        self.assertIn('id="manage-resources-heading"', primary_nav)
+        self.assertIn('id="manage-system-heading"', primary_nav)
+        self.assertIn('event.key !== "Escape"', client)
+        self.assertIn('summary.focus();', client)
+        self.assertIn('if (!manageMenu?.open || manageMenu.contains(event.target)) return;', client)
         self.assertIn('byId("voice-entry").addEventListener("click", () => { void openVoiceControls(); });', client)
 
         _registry_type, registry = reviewed_chat_asset("/chat/assets/features.js")
@@ -235,6 +243,7 @@ class JarvisChatAssetTests(unittest.TestCase):
                       for path in ("/chat/assets/app.css", *FEATURE_CSS_CHUNK_PATHS)]
         css = "\n".join(css_assets)
         self.assertIn('.primary-nav>.nav-item,.primary-nav>.nav-group{flex:1 1 0;min-width:0}', css)
+        self.assertIn('grid-template-columns:repeat(3,minmax(0,1fr))', css)
         overview_features = [feature for feature in FEATURE_ASSETS if feature.feature_id == "overview"]
         self.assertEqual(len(overview_features), 1)
         overview = overview_features[0]
