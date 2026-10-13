@@ -466,7 +466,15 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
                 or hashlib.sha256(archive).hexdigest() != record.get("artifact_sha256")
                 or record.get("state") != "discovered"):
             return {"resources_state": "stale"}
+        from hermes_installer.registry import manual_jarvis_skills as native
+        manifest, _files = native._read_artifact(archive, record["artifact_sha256"])
+        source = manifest.get("source")
+        if (not isinstance(source, dict)
+                or record.get("resources_revision") != source.get("revision")
+                or record.get("resources_tree") != source.get("git_tree")):
+            return {"resources_state": "stale"}
         return {"resources_state": "discovered", "artifact_sha256": record["artifact_sha256"],
+                "resources_revision": source["revision"],
                 "resource_counts": record["resource_counts"]}
 
     monkeypatch.setattr(core, "read_current_resources_discovery", read_fixture_resources_discovery)
@@ -1011,9 +1019,12 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
             native._verify_owned_generation(home / "skills" / native._GENERATION,
                                             files, old_sha)
     assert core._hash_generation_tree(home, manifest, files, old_sha)
-    assert core.read_current_resources_discovery(
+    fixture_discovery = core.read_current_resources_discovery(
         core_source_generation=current_record["core_source_generation"]
-    )["resources_state"] == "discovered"
+    )
+    assert fixture_discovery["resources_state"] == "discovered"
+    assert fixture_discovery["resources_revision"] == manifest["source"]["revision"]
+    assert current_record["resources_tree"] == manifest["source"]["git_tree"]
 
     # Cohort unit tests cover the filesystem/journal effects, while native
     # Hermes-loader and Core-provider proofs are qualified separately. Keep
