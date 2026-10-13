@@ -157,7 +157,7 @@ const fields=new Map([
 ]);
 const root={querySelector(selector){return fields.get(selector)||null;}};
 global.Option=Option; global.document={createElement(){return new Option("","");}};
-global.crypto={getRandomValues(bytes){bytes.fill(9);return bytes;}};
+Object.defineProperty(globalThis,'crypto',{configurable:true,writable:true,value:{getRandomValues(bytes){bytes.fill(9);return bytes;}}});
 const reads=[],posts=[];
 const api={
  get(path){if(path==="/chat/api/models/conversations")return Promise.resolve({conversations:[{id:A,title:"A"},{id:B,title:"B"}]});const d=deferred();reads.push({path,d});return d.promise;},

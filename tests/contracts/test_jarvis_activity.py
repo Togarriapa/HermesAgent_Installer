@@ -150,7 +150,7 @@ const root={querySelector:selector=>nodes.get(selector)};
 global.document={createElement:()=>new Target()};
 let poll, intervalCleared=false, effectRows=[], latestTurn='turn-1'; const posts=[]; let keyCount=0;
 global.window={setInterval(fn){poll=fn;return 91;},clearInterval(id){assert.equal(id,91);intervalCleared=true;}};
-global.crypto={randomUUID(){keyCount++;return `key-${keyCount}`;}};
+Object.defineProperty(globalThis,'crypto',{configurable:true,writable:true,value:{randomUUID(){keyCount++;return `00000000-0000-4000-8000-${String(keyCount).padStart(12,'0')}`;}}});
 const api={
  get(path){
   if(path==='/chat/api/activity?limit=50')return Promise.resolve({events:[{turnId:latestTurn,type:'approval',status:'pending'}]});
@@ -177,7 +177,7 @@ async function pollOnce(){await poll();await flush();await flush();}
  await deny.fire('click'); await approve.fire('click');
  assert.equal(posts.length,1,'opposing and repeated clicks share one decision request');
  assert.equal(posts[0].path,'/chat/api/turns/turn-1/final-effects/decision');
- assert.deepEqual(posts[0].body,{pending_id:pending.pendingId,review_sha256:pending.reviewSha256,decision:'approve',idempotency_key:'key-1'});
+ assert.deepEqual(posts[0].body,{pending_id:pending.pendingId,review_sha256:pending.reviewSha256,decision:'approve',idempotency_key:'00000000000040008000000000000001'});
  assert.equal(approve.disabled,true); assert.equal(deny.disabled,true);
  posts[0].d.resolve({pendingId:'9'.repeat(64),status:'approved'});
  await firstDecision; await flush(); await flush();
@@ -192,7 +192,7 @@ async function pollOnce(){await poll();await flush();await flush();}
  assert.equal(buttons()[0].disabled,false,'an unknown old review does not block a distinct current turn');
  const denyDecision=buttons()[1].fire('click'); await flush();
  assert.equal(posts.length,2); posts[1].d.resolve({pendingId:pendingDeny.pendingId,status:'denied'}); await denyDecision;
- assert.deepEqual(posts[1].body,{pending_id:pendingDeny.pendingId,review_sha256:pendingDeny.reviewSha256,decision:'deny',idempotency_key:'key-2'});
+ assert.deepEqual(posts[1].body,{pending_id:pendingDeny.pendingId,review_sha256:pendingDeny.reviewSha256,decision:'deny',idempotency_key:'00000000000040008000000000000002'});
  assert.equal(effectsNote(),'Owner decision confirmed for the exact reviewed request. Tool action completion is separate.');
  assert.equal(confirmedRowNote(),'Owner decision confirmed: denied. This does not confirm that the tool action completed.');
  assert.equal(buttons().length,0);

@@ -112,6 +112,8 @@ function makeView() {
     '[data-categories]', '[data-running]', '[data-created]', '[data-activity]', '[data-tokens]',
     '[data-persona]', '[data-workspace]'];
   const nodes = Object.fromEntries(selectors.map(key => [key, element()]));
+  // Match the initial [data-status] copy in FEATURE_ASSETS.view_html.
+  nodes['[data-status]'].textContent = 'Choose a conversation to inspect its context.';
   const root = {attrs:{}, querySelector:key => nodes[key],
     setAttribute(key, value) { this.attrs[key] = value; }};
   const container = {querySelector:() => root};
