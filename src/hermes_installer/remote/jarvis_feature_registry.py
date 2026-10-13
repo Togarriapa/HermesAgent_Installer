@@ -37,6 +37,8 @@ _PROJECTS_ROUTES = (
     *_projects.FEATURE_ROUTES,
     ("GET", "/chat/api/conversations"),
     ("GET", "/chat/api/second-brain/notes"),
+    ("GET", "/chat/api/second-brain/search"),
+    ("GET", "/chat/api/second-brain/notes/{note_id}"),
 )
 
 # Runtime resources are compiled only from these explicit, reviewed modules.
@@ -100,6 +102,8 @@ _SHARED_INSTALLER_READS = {
     "projects": {
         ("GET", "/chat/api/conversations"),
         ("GET", "/chat/api/second-brain/notes"),
+        ("GET", "/chat/api/second-brain/search"),
+        ("GET", "/chat/api/second-brain/notes/{note_id}"),
     },
     "second-brain": set(),
 }

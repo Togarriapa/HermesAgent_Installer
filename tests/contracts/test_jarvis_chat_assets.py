@@ -30,6 +30,36 @@ class JarvisChatAssetTests(unittest.TestCase):
                 self.assertTrue(feature.mount_js.startswith("function mount("))
                 self.assertTrue(feature.unmount_js.startswith("function unmount("))
 
+    def test_composed_workspace_styles_keep_feature_filters_and_note_remove_tappable(self):
+        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/features-knowledge.css")
+        css = re.sub(r"/\*.*?\*/", "", stylesheet.decode("utf-8"), flags=re.DOTALL)
+        rules = re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+        targets = (
+            '[data-feature-root="extensions"] [data-inventory-search]',
+            '[data-feature-root="extensions"] [data-inventory-kind]',
+            '[data-feature-root="projects"] [data-note-query]',
+            '[data-feature-root="projects"] .project-note-row-actions button',
+            '[data-feature-root="projects"] .project-note-chips button',
+        )
+
+        for target in targets:
+            with self.subTest(target=target):
+                declarations = {}
+                for selectors, body in rules:
+                    if target in (selector.strip() for selector in selectors.split(",")):
+                        declarations.update(
+                            (name.strip(), value.strip())
+                            for declaration in body.split(";")
+                            if ":" in declaration
+                            for name, value in (declaration.split(":", 1),)
+                        )
+                for dimension in ("min-width", "min-height"):
+                    value = declarations.get(dimension)
+                    self.assertIsNotNone(value, f"{target} must define {dimension}")
+                    match = re.fullmatch(r"(\d+(?:\.\d+)?)px", value or "")
+                    self.assertIsNotNone(match, f"{target} {dimension} must use a fixed pixel minimum")
+                    self.assertGreaterEqual(float(match.group(1)), 44, f"{target} {dimension} is below 44px")
+
     def test_overview_experts_button_uses_registered_shell_navigation(self):
         ecosystem = [feature for feature in FEATURE_ASSETS if feature.feature_id == "ecosystem"]
         self.assertEqual(len(ecosystem), 1)

@@ -220,6 +220,26 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
         ("profiles-admin", jarvis_feature_registry._profiles.install_jarvis_profiles_admin_routes,
          jarvis_feature_registry._PROFILE_ADMIN_ASSETS.api_routes),
     )
+    assert jarvis_feature_registry._PROJECTS_ROUTES == (
+        *jarvis_feature_registry._projects.FEATURE_ROUTES,
+        ("GET", "/chat/api/conversations"),
+        ("GET", "/chat/api/second-brain/notes"),
+        ("GET", "/chat/api/second-brain/search"),
+        ("GET", "/chat/api/second-brain/notes/{note_id}"),
+    )
+    project_note_reads = {
+        ("GET", "/chat/api/second-brain/search"),
+        ("GET", "/chat/api/second-brain/notes/{note_id}"),
+    }
+    assert project_note_reads <= set(jarvis_feature_registry._OBSIDIAN_ASSETS.api_routes)
+    assert jarvis_feature_registry._SHARED_INSTALLER_READS["projects"] == {
+        ("GET", "/chat/api/conversations"),
+        ("GET", "/chat/api/second-brain/notes"),
+        *project_note_reads,
+    }
+    assert not jarvis_feature_registry._has_unreviewed_shared_routes(
+        "projects", set(jarvis_feature_registry._PROJECTS_ROUTES),
+        set(jarvis_feature_registry._OBSIDIAN_ASSETS.api_routes))
     assert {feature_id for feature_id, _owner, _routes
             in jarvis_feature_registry.FEATURE_ROUTE_OWNERS} == {
                 "activity", "native-controls", "resources-learning", "overview", "calendar", "integrations", "ecosystem"}
