@@ -1990,7 +1990,8 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
 def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pre(tmp_path, monkeypatch, request):
     guard_runner = subprocess.run
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
-        tmp_path, monkeypatch, journal_state="installed")
+        tmp_path, monkeypatch, journal_state="installed",
+        public_service_files=True, request=request)
     core.migrate_owned_core_to_adapter_path()
     _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
     _fake_update_pidfd(monkeypatch, enabled, request)
