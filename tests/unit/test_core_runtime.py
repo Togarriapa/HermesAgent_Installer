@@ -141,6 +141,7 @@ def _bounded_cohort_exception_sites():
     owner_marker_mismatches = []
     custody_false_returns = []
     initial_primary_exceptions = []
+    owner_restore_receipts = []
     routine = {"GeneratorExit", "StopIteration", "StopAsyncIteration"}
     allowed = {"core_runtime.py", "manual_jarvis_skills.py",
                "resources_skill_overlay.py", "primary_prompt_manager.py"}
@@ -159,6 +160,26 @@ def _bounded_cohort_exception_sites():
         if event == "call":
             return trace if filename_kind(frame.f_code.co_filename) in allowed else None
         kind = filename_kinds.get(frame.f_code.co_filename)
+        if (event == "exception" and kind == "core_runtime.py"
+                and frame.f_code.co_name == "_restore_adapter_update_owner_generation"
+                and type(arg[1]).__name__ == "CoreRuntimeError"
+                and str(arg[1]) == "owner generation rollback receipt does not bind the prior bytes"):
+            values = frame.f_locals
+            result = values.get("result")
+            expected_keys = {"state", "artifact_sha256", "generation_path",
+                             "retained_generation_backup", "retained_artifact_sha256"}
+            row = {
+                "result_object": type(result) is dict,
+                "keys_exact": type(result) is dict and set(result) == expected_keys,
+                "state_restored": type(result) is dict and result.get("state") == "restored",
+                "artifact_old": type(result) is dict and result.get("artifact_sha256") == values.get("old_sha"),
+                "generation_target": type(result) is dict and result.get("generation_path") == str(values.get("target")),
+                "retained_artifact_new": type(result) is dict and result.get("retained_artifact_sha256") == values.get("new_sha"),
+                "retained_backup_path": type(result) is dict and result.get("retained_generation_backup") == str(values.get("target").parent / values.get("name")),
+            }
+            owner_restore_receipts.append(row)
+            if len(owner_restore_receipts) > 2:
+                del owner_restore_receipts[0]
         if (event == "exception" and kind == "core_runtime.py"
                 and frame.f_code.co_name == "_hash_generation_tree"
                 and type(arg[1]).__name__ == "CoreRuntimeError"
@@ -250,6 +271,7 @@ def _bounded_cohort_exception_sites():
         print("bounded owner marker mismatch classes: " + repr(owner_marker_mismatches[:2]))
         print("bounded custody false-return sites: " + repr(custody_false_returns[-12:]))
         print("bounded initial-primary predicate exceptions: " + repr(initial_primary_exceptions[-12:]))
+        print("bounded owner-generation restore receipt predicates: " + repr(owner_restore_receipts[-2:]))
         # Read only outcome metadata from the genuine fixed importer frame.
         # Never print child stdout or stderr; the sole textual diagnostic is
         # an exact constant message reviewed in manual_jarvis_skills.py.
