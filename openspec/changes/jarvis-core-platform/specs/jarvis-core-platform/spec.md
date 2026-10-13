@@ -2528,3 +2528,15 @@ Native workbenches SHALL provide skill source/archive review (#29), a timezone-a
 #### Scenario: Owner Project note discovery and retained references
 - **WHEN** the owner browses/searches notes or previews an exact current owner note before editing project links
 - **THEN** only explicit project Save persists captured selected IDs/current version; missing saved IDs survive filtered/failed reads, foreign/stale preview denies, Markdown stays inert, and genuine supported turn-context use remains separate from note selection metadata.
+
+### Requirement: MVP fail-closed global native profile administration
+Profiles backend and authoritative Inspector SHALL independently require exactly one configured approved email matching the current authenticated principal before global native profile/skill administration. Empty/multiple/ambiguous configuration or caller mismatch SHALL deny before native access. Existing authority/currentness/CAS/recovery SHALL remain; this restriction SHALL NOT confer original-admin status.
+
+#### Scenario: Household union cannot administer shared native sources
+- **WHEN** any approved member of a multiple-email configuration requests global Profiles list/read/preview/save or direct Inspector owner-profile-admin profile/skill operation
+- **THEN** both boundaries deny or report pending original-global-admin scope before native read/write/provider invocation; same-origin, valid JWT, current Core, opaque IDs and explicit preview do not override this restriction.
+
+#### Scenario: Current singleton operations and ordinary family chat
+- **WHEN** the single configured approved principal uses existing reviewed global operations with current original ingress/Core/source and exact preview/CAS
+- **THEN** existing finite positive behavior and failure/recovery remain without minting an original-admin role; ordinary approved family chat, owner Projects and read-only Experts catalog/ecosystem remain unchanged under multiple-email configurations.
+- **AND** issue#33 requires exact Pi backend/Inspector positive, direct-bypass denial and family-chat/Experts preservation plus affected/full-shell UI revision before adoption; full original-admin/multi-email global writes stay pending#21 and no account/allowlist or authority producer changes follow.
