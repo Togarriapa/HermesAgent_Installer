@@ -24,12 +24,13 @@ class _Provider:
                       ("dev-peter", "soul"): "Internal profile prompt\n"}
         self.generation = "a" * 64
         self.writes = []
-
-    def list_profiles(self, *, subject, core_generation, access_jwt, accepted_ingress):
-        return (
+        self.profile_rows = (
             ProfileAdminDescriptor("hermes", "Jarvis", "jarvis", self.generation, ("soul",)),
             ProfileAdminDescriptor("dev-peter", "Dev Peter", "expert", self.generation, ("soul",)),
         )
+
+    def list_profiles(self, *, subject, core_generation, access_jwt, accepted_ingress):
+        return self.profile_rows
 
     def read_file(self, *, subject, core_generation, profile_key, file_kind, access_jwt, accepted_ingress):
         value = self.files[(profile_key, file_kind)]
@@ -64,6 +65,47 @@ def test_opaque_profile_ids_bind_owner_and_current_core_generation_and_never_exp
     with pytest.raises(JarvisChatDenied):
         admin.read_file(subject="owner-a", core_generation="core-a", profile_id="../SOUL.md",
                         file_kind="soul", access_jwt="jwt", accepted_ingress=object())
+
+
+@pytest.mark.parametrize("count", [65, 208])
+def test_profile_inventory_accepts_complete_current_rows_through_native_bound(count):
+    provider = _Provider()
+    provider.profile_rows = (ProfileAdminDescriptor("hermes", "Jarvis", "jarvis",
+        provider.generation, ("soul",)),) + tuple(
+        ProfileAdminDescriptor(f"expert-{index}", f"Expert {index}", "expert",
+            provider.generation, ("soul",)) for index in range(count - 1))
+    result = JarvisProfileAdmin(provider).list_profiles(subject="owner-a", core_generation="core-a",
+        access_jwt="jwt", accepted_ingress=object())
+    assert len(result["profiles"]) == count
+    assert sum(row["kind"] == "jarvis" for row in result["profiles"]) == 1
+    assert all(row["files"] == [{"kind": "soul", "name": "SOUL.md", "editable": True}]
+               for row in result["profiles"])
+
+
+def test_profile_inventory_denies_over_bound_duplicates_and_missing_jarvis():
+    provider = _Provider()
+    jarvis = provider.profile_rows[0]
+    provider.profile_rows = (jarvis,) + tuple(ProfileAdminDescriptor(
+        f"expert-{index}", f"Expert {index}", "expert", provider.generation, ())
+        for index in range(208))
+    admin = JarvisProfileAdmin(provider)
+    with pytest.raises(JarvisChatDenied):
+        admin.list_profiles(subject="owner-a", core_generation="core-a", access_jwt="jwt",
+                            accepted_ingress=object())
+    provider.profile_rows = (jarvis, jarvis)
+    with pytest.raises(JarvisChatDenied):
+        admin.list_profiles(subject="owner-a", core_generation="core-a", access_jwt="jwt",
+                            accepted_ingress=object())
+    provider.profile_rows = (ProfileAdminDescriptor("dev-peter", "Dev Peter", "expert",
+        provider.generation, ("soul",)),)
+    with pytest.raises(JarvisChatDenied):
+        admin.list_profiles(subject="owner-a", core_generation="core-a", access_jwt="jwt",
+                            accepted_ingress=object())
+    provider.profile_rows = (jarvis, ProfileAdminDescriptor("bad key", "Broken", "expert",
+        provider.generation, ("soul",)))
+    with pytest.raises(JarvisChatDenied):
+        admin.list_profiles(subject="owner-a", core_generation="core-a", access_jwt="jwt",
+                            accepted_ingress=object())
 
 
 def test_save_requires_fresh_single_use_review_token_and_exact_file_cas():
@@ -220,11 +262,12 @@ const status=nodes.get('[data-profile-status]'), profile=nodes.get('[data-profil
 const editor=nodes.get('[data-profile-editor]'), review=nodes.get('[data-profile-review]'), save=nodes.get('[data-profile-save]');
 const profileId='a'.repeat(64), content='Original\n', proposed=content+'Edited\n';
 const hash=value=>cryptoNode.createHash('sha256').update(value).digest('hex');
-const profileRow={id:profileId,name:'Jarvis',kind:'jarvis',files:[{kind:'soul',name:'SOUL.md'}]};
+const profileRow={id:profileId,name:'Jarvis',kind:'jarvis',sourceGeneration:'generation-1',files:[{kind:'soul',name:'SOUL.md',editable:true}]};
+let inventory=[profileRow];
 let previewCalls=0, saveCalls=0, releaseStalePreview, releaseUnmountPreview, releaseDeniedSave, activeContent=content;
 const saveBodies=[];
 const api={
- get:async path=>path==='/chat/api/profiles'?{profiles:[profileRow]}:{profileId,fileKind:'soul',fileName:'SOUL.md',content:activeContent,protectedSuffix:'',managedPrimary:false,editable:true,sha256:hash(activeContent),sourceGeneration:'generation-1',effective:true},
+ get:async path=>path==='/chat/api/profiles'?{profiles:inventory}:{profileId,fileKind:'soul',fileName:'SOUL.md',content:activeContent,protectedSuffix:'',managedPrimary:false,editable:true,sha256:hash(activeContent),sourceGeneration:'generation-1',effective:true},
  post:(path,body)=>{
   if(path.endsWith('/preview')){
    previewCalls++;
@@ -271,6 +314,14 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  const beforeLatePreview=status.textContent; unmount(); releaseUnmountPreview(); await pendingUnmount;
  assert.equal(status.textContent,beforeLatePreview,'unmounted editor ignores delayed preview completion');
  assert.equal(save.disabled,true,'unmounted editor cannot retain a save grant');
+ inventory=[profileRow,...Array.from({length:207},(_,index)=>({id:(index+1).toString(16).padStart(64,'0'),name:`Expert ${index}`,kind:'expert',sourceGeneration:'generation-1',files:[]}))];
+ const fullUnmount=mount(root,api); await flush();
+ assert.equal(profile.options.length,209,'208 real rows, including one Jarvis, render with the placeholder');
+ fullUnmount();
+ inventory=[profileRow,...Array.from({length:208},(_,index)=>({id:(index+1).toString(16).padStart(64,'0'),name:`Expert ${index}`,kind:'expert',sourceGeneration:'generation-1',files:[]}))];
+ mount(root,api); await flush();
+ assert.equal(profile.options.length,1,'209 profile rows are denied before rendering');
+ assert.match(status.textContent,/unavailable/i);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''
     with tempfile.TemporaryDirectory() as temporary:

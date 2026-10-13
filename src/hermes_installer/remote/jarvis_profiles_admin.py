@@ -21,7 +21,9 @@ from typing import Any, Literal, Protocol
 from .jarvis_chat import ChatPrincipal, JarvisChatDenied, JarvisChatService, _secure_headers, _unique_pairs
 from .jarvis_feature_contract import JarvisFeatureAssets
 
-MAX_PROFILE_COUNT = 64
+# The reviewed native source schema is bounded at 208 editable profile-file
+# records. This is a record bound, not an identity or file-creation allowance.
+MAX_PROFILE_COUNT = 208
 MAX_PROFILE_FILE_BYTES = 64 * 1024
 MAX_PROFILE_REQUEST_BYTES = 96 * 1024
 MAX_PROFILE_DIFF_BYTES = 128 * 1024
@@ -821,7 +823,14 @@ _MOUNT_JS = r'''function mount(root, api) {
   }
   async function loadProfiles() {
     try { const data=await api.get("/chat/api/profiles");
-      if(!active||!data||!Array.isArray(data.profiles)||data.profiles.length>64||!data.profiles.every(x=>x&&safeId(x.id)&&typeof x.name==="string"&&["jarvis","expert"].includes(x.kind)&&Array.isArray(x.files)))throw Error();
+      if(!active||!data||!Array.isArray(data.profiles)||data.profiles.length>208||
+        !data.profiles.every(x=>x&&safeId(x.id)&&typeof x.name==="string"&&x.name.length>0&&x.name.length<=96&&
+          ["jarvis","expert"].includes(x.kind)&&typeof x.sourceGeneration==="string"&&x.sourceGeneration.length>0&&
+          Array.isArray(x.files)&&x.files.length<=3&&x.files.every((f,i)=>f&&["soul","description","instructions"].includes(f.kind)&&
+            f.name==={soul:"SOUL.md",description:"description.md",instructions:"instructions.md"}[f.kind]&&f.editable===true&&
+            x.files.findIndex(other=>other&&other.kind===f.kind)===i))||
+        new Set(data.profiles.map(x=>x.id)).size!==data.profiles.length||
+        data.profiles.filter(x=>x.kind==="jarvis").length!==1)throw Error();
       profiles=data.profiles;profileSelect.replaceChildren(new Option("Choose a profile", ""));
       for(const row of profiles){const option=new Option(`${row.name} · ${row.kind==="jarvis"?"Jarvis master":"internal Expert"}`,row.id);profileSelect.add(option);}
       profileSelect.disabled=!profiles.length;status.textContent=profiles.length?"Select Jarvis or an internal Expert profile to inspect its existing files.":"No editable native profile files are available.";
