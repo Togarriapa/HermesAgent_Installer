@@ -1394,11 +1394,18 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     assert updated["adapter_generation"] == "a" * 64
     assert updated["plugin_selection_sha256"] == prior["plugin_selection_sha256"]
     assert core.LAUNCHER.read_bytes() != prior_launcher
-    assert core.UNIT.read_bytes() == prior_unit
+    expected_new_unit = core._unit(
+        adapter_source=Path(updated["adapter_source"]), cohort_gate=True,
+        backup_generation=prior["adapter_generation"])
+    assert core.UNIT.read_bytes() == expected_new_unit
+    assert hashlib.sha256(expected_new_unit).hexdigest() == updated["unit_sha256"]
+    assert _exec_start_pre(expected_new_unit, expect_success=True) == 0
+    assert _exec_start_pre(prior_unit, expect_success=False) != 0
     assert core.TOKEN.read_bytes() == token
     assert memory.read_text() == "existing owner memory"
     backup = core.ADAPTER_UPDATE_BACKUPS / prior["adapter_generation"]
     assert (backup / "launcher").read_bytes() == prior_launcher
+    assert (backup / "unit").read_bytes() == prior_unit
     assert json.loads((backup / "journal.json").read_bytes()) == prior
     backup_manifest = json.loads((backup / "manifest.json").read_bytes())
     assert {"native-plugin-plugin.yaml", "native-plugin-__init__.py"} <= set(backup_manifest)
