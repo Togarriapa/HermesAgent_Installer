@@ -1801,6 +1801,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
 def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tmp_path, monkeypatch, request):
+    guard_runner = subprocess.run
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
@@ -1849,7 +1850,8 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
         attempted_starting).hexdigest()
     assert core.LAUNCHER.read_bytes() != launcher
     assert core.UNIT.read_bytes() != unit
-    assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=False) != 0
+    assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=False,
+                           runner=guard_runner) != 0
 
     monkeypatch.setattr(core, "_atomic_replace", replace_atomic)
     core._recover_interrupted_adapter_update()
