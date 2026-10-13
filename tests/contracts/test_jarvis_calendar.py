@@ -199,9 +199,9 @@ async function run() {
   assert.deepEqual(titles(app.nodes['[data-calendar-events]']), []);
   assert.equal(app.nodes['[data-calendar-source]'].textContent, '');
   app.nodes['[data-calendar-refresh]'].click();
-  assert.equal(app.requests.length, 4, 'refresh must not start a GET while disable is pending');
-  app.requests[2].resolve(ok(payload('Obsolete refresh'))); await tick();
-  app.requests[3].resolve(post('disabled')); await tick();
+  assert.equal(app.requests.length, 3, 'refresh must not start a GET while disable is pending');
+  app.requests[1].resolve(ok(payload('Obsolete refresh'))); await tick();
+  app.requests[2].resolve(post('disabled')); await tick();
   assert.equal(app.nodes['[data-calendar-refresh]'].disabled, false);
   assert.deepEqual(titles(app.nodes['[data-calendar-events]']), []);
   assert.equal(app.nodes['[data-calendar-status]'].textContent, 'Calendar dashboard consent was removed.');
@@ -209,30 +209,30 @@ async function run() {
   // A second selection cannot overlap an enable POST; success starts one fresh GET.
   app.nodes['[data-calendar-select]'].click();
   app.nodes['[data-calendar-disable]'].click();
-  assert.equal(app.requests.length, 5, 'selection mutations must be serialized');
-  app.requests[4].resolve(post('selected')); await tick();
-  app.requests[5].resolve(ok(payload('Selected'))); await tick();
+  assert.equal(app.requests.length, 4, 'selection mutations must be serialized');
+  app.requests[3].resolve(post('selected')); await tick();
+  app.requests[4].resolve(ok(payload('Selected'))); await tick();
   assert.deepEqual(titles(app.nodes['[data-calendar-events]']), ['Selected']);
   app.nodes['[data-calendar-disable]'].click();
   app.nodes['[data-calendar-refresh]'].click();
-  assert.equal(app.requests.length, 7, 'refresh must not start a GET while disable is pending');
-  app.requests[6].resolve(post('disabled')); await tick();
+  assert.equal(app.requests.length, 6, 'refresh must not start a GET while disable is pending');
+  app.requests[5].resolve(post('disabled')); await tick();
   assert.equal(app.nodes['[data-calendar-status]'].textContent, 'Calendar dashboard consent was removed.');
   assert.deepEqual(titles(app.nodes['[data-calendar-events]']), []);
 
   // Bad payloads and fetch failures settle the current loading state with a safe message.
   app.nodes['[data-calendar-refresh]'].click();
-  app.requests[7].resolve(ok({schema:99})); await tick();
+  app.requests[6].resolve(ok({schema:99})); await tick();
   assert.match(app.nodes['[data-calendar-status]'].textContent, /unavailable/);
   assert.equal(app.nodes['[data-calendar-refresh]'].disabled, false);
   app.nodes['[data-calendar-refresh]'].click();
-  app.requests[8].reject(new Error('offline')); await tick();
+  app.requests[7].reject(new Error('offline')); await tick();
   assert.match(app.nodes['[data-calendar-status]'].textContent, /unavailable/);
   app.nodes['[data-calendar-select]'].click();
-  app.requests[9].resolve({ok:false, json:async () => ({schema:1, error:'authorization-required'})}); await tick();
+  app.requests[8].resolve({ok:false, json:async () => ({schema:1, error:'authorization-required'})}); await tick();
   assert.equal(app.nodes['[data-calendar-status]'].textContent, 'authorization-required');
   assert.deepEqual(titles(app.nodes['[data-calendar-events]']), []);
-  assert.equal(app.requests.length, 10, 'failed consent does not launch an automatic retry');
+  assert.equal(app.requests.length, 9, 'failed consent does not launch an automatic retry');
 
   // Returned-zone day grouping spans midnight, DST and multiday ranges; all-day end is exclusive.
   app = setup();
