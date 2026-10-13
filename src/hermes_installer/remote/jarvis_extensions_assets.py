@@ -385,7 +385,7 @@ _MOUNT = "\n".join(line.lstrip() for line in r'''function mount(container, api) 
             status.textContent='The inventory or selected skill changed while archived versions were loading. Refresh and select the current skill.';
             return;
           }
-          if (!archive || archive.skill!==item.label || !Array.isArray(archive.versions) || archive.versions.length>64
+          if (!archive || archive.skill!==item.label || !Array.isArray(archive.versions) || archive.versions.length>4096
               || archive.versions.some(version=>!version || !/^[A-Za-z0-9_-]{16,96}$/.test(version.restoreId||'')
                 || !/^[0-9a-f]{64}$/.test(version.sha256||'')))
             throw Error();

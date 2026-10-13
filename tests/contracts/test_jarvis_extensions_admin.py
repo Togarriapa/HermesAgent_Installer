@@ -686,6 +686,8 @@ function all(node){return[node,...node.children.flatMap(all)];}
 function button(node,label){return all(node).find(n=>n.tagName==='button'&&n.textContent===label);}
 function card(node,label){return all(node).find(n=>n.tagName==='article'&&all(n).some(x=>x.tagName==='h3'&&x.textContent===label));}
 const DIGEST='c251e4e41cc0cc6aaed00d812833172df2dbaa5db63d02d3c0a6a1e2c1e15863',VERSION='f'.repeat(64),RESTORE='restore-token_0123456789';
+const versions65=Array.from({length:65},(_,i)=>({restoreId:`archive-version-${String(i).padStart(2,'0')}`,sha256:i.toString(16).padStart(64,'0')}));
+const versions4097=Array.from({length:4097},(_,i)=>({restoreId:`archive-version-${String(i).padStart(4,'0')}`,sha256:i.toString(16).padStart(64,'0')}));
 function inventory(revision){return{schema:1,revision,readiness:'observed',items:[
  {kind:'skills',id:'owner-skill-id',name:'owner-helper',label:'Owner helper',source:'useradded',originLabel:'Hermes home (owner-added)',editable:true,removable:true,sha256:DIGEST,category:'native',actionState:'loaded',archivedVersions:[]},
  {kind:'skills',id:'resource-skill-id',name:'resource-helper',label:'Resource helper',source:'bundledResources',originLabel:'Resources (owner overlay)',editable:true,removable:true,sha256:DIGEST,category:'native',actionState:'loaded',archivedVersions:[{restoreId:'listed-id-012345678901',sha256:VERSION}]},
@@ -719,25 +721,32 @@ MOUNT
  a.posts[1].resolve({status:'applied',result:{action:'edit'}});await flush();assert.equal(a.gets.length,2);a.gets[1].resolve(inventory('rev-2'));await save;
  assert.match(v.status.textContent,/current inventory readback completed/);v.search.value='';v.kind.value='skills';await v.search.dispatch('input');await v.kind.dispatch('change');
  const archiveRead=button(card(v.list,'Resource helper'),'Restore archived version').dispatch('click');assert.equal(a.posts[2].path,'/chat/api/extensions/skills/restore-list');
- assert.deepEqual(a.posts[2].body,{item_id:'resource-skill-id',revision:'rev-2'});a.posts[2].resolve({skill:'Resource helper',versions:[{restoreId:RESTORE,sha256:VERSION}]});await archiveRead;
+ assert.deepEqual(a.posts[2].body,{item_id:'resource-skill-id',revision:'rev-2'});a.posts[2].resolve({skill:'Resource helper',versions:versions65});await archiveRead;
  const oldDialog=all(v.root).find(n=>n.tagName==='dialog'&&n!==edit),select=all(oldDialog).find(n=>n.tagName==='select');assert.match(all(oldDialog).map(n=>n.textContent).join(' '),/Archive contents and dates are not exposed/);
- select.value='0';select.dispatch('change');const oldRestore=button(oldDialog,'Review and restore');assert.equal(oldRestore.disabled,false);
+ assert.equal(all(select).filter(n=>n.tagName==='option').length,66,'all 65 native archive choices plus the placeholder are rendered');
+ select.value='64';select.dispatch('change');const oldRestore=button(oldDialog,'Review and restore');assert.equal(oldRestore.disabled,false);
  const otherRead=button(card(v.list,'Owner helper'),'Edit skill').dispatch('click');assert.equal(a.posts[3].path,'/chat/api/extensions/skills/read');a.posts[3].resolve(source());await otherRead;
  await oldRestore.dispatch('click');assert.equal(a.posts.length,4,'selection change invalidates the archive choice before restore');assert.match(v.status.textContent,/selected skill or inventory changed/);
  const secondEdit=all(v.root).find(n=>n.tagName==='dialog'&&n!==edit&&n!==oldDialog);button(secondEdit,'Cancel').dispatch('click');button(oldDialog,'Cancel').dispatch('click');
  const fresh=button(card(v.list,'Resource helper'),'Restore archived version').dispatch('click');assert.equal(a.posts[4].path,'/chat/api/extensions/skills/restore-list');
- a.posts[4].resolve({skill:'Resource helper',versions:[{restoreId:RESTORE,sha256:VERSION}]});await fresh;
- const current=all(v.root).find(n=>n.tagName==='dialog'&&n!==edit),currentSelect=all(current).find(n=>n.tagName==='select');currentSelect.value='0';currentSelect.dispatch('change');
+ a.posts[4].resolve({skill:'Resource helper',versions:versions65});await fresh;
+ const current=all(v.root).find(n=>n.tagName==='dialog'&&n!==edit),currentSelect=all(current).find(n=>n.tagName==='select');currentSelect.value='64';currentSelect.dispatch('change');
  const restore=button(current,'Review and restore').dispatch('click');await flush();assert.equal(a.posts.length,6);assert.equal(a.posts[5].path,'/chat/api/extensions/skills/restore');
  assert.deepEqual(Object.keys(a.posts[5].body).sort(),['confirmation','idempotency_key','item_id','restore_id','restore_sha256','revision']);
- assert.equal(a.posts[5].body.item_id,'resource-skill-id');assert.equal(a.posts[5].body.revision,'rev-2');assert.equal(a.posts[5].body.restore_id,RESTORE);assert.equal(a.posts[5].body.restore_sha256,VERSION);
- assert.equal(a.posts[5].body.confirmation,`RESTORE Resource helper ${RESTORE}`);assert.equal(confirmations.filter(x=>x===`RESTORE Resource helper ${RESTORE}`).length,1);
+ const exact65=versions65[64];
+ assert.equal(a.posts[5].body.item_id,'resource-skill-id');assert.equal(a.posts[5].body.revision,'rev-2');assert.equal(a.posts[5].body.restore_id,exact65.restoreId);assert.equal(a.posts[5].body.restore_sha256,exact65.sha256);
+ assert.equal(a.posts[5].body.confirmation,`RESTORE Resource helper ${exact65.restoreId}`);assert.equal(confirmations.filter(x=>x===`RESTORE Resource helper ${exact65.restoreId}`).length,1);
  a.posts[5].resolve({status:'applied',result:{action:'restore'}});await flush();assert.equal(a.gets.length,3);a.gets[2].resolve(inventory('rev-3'));await restore;
  assert.match(v.status.textContent,/current inventory readback completed/);unmount();
  const late=view(),la=api(),dispose=mount(late.root,la);la.gets[0].resolve(inventory('late-rev'));await flush();
  const pending=button(card(late.list,'Resource helper'),'Restore archived version').dispatch('click'),oldStatus=late.status.textContent;dispose();
  la.posts[0].resolve({skill:'Resource helper',versions:[{restoreId:RESTORE,sha256:VERSION}]});await pending;
  assert.equal(all(late.root).filter(n=>n.tagName==='dialog').length,0);assert.equal(late.status.textContent,oldStatus);
+ const oversized=view(),oa=api(),oversizedCleanup=mount(oversized.root,oa);oa.gets[0].resolve(inventory('oversized-rev'));await flush();
+ const oversizedRead=button(card(oversized.list,'Resource helper'),'Restore archived version').dispatch('click');
+ oa.posts[0].resolve({skill:'Resource helper',versions:versions4097});await oversizedRead;
+ assert.equal(all(oversized.root).filter(n=>n.tagName==='dialog').length,0);assert.equal(oa.posts.length,1,'4,097 archive rows fail closed without a restore request');
+ assert.match(oversized.status.textContent,/archived version identities are unavailable or malformed/);oversizedCleanup();
  const bad=view(),ba=api(),badCleanup=mount(bad.root,ba);ba.gets[0].resolve(inventory('bad-rev'));await flush();
  const badRead=button(card(bad.list,'Owner helper'),'Edit skill').dispatch('click');ba.posts[0].resolve({...source(),sha256:'0'.repeat(64)});await badRead;
  assert.equal(all(bad.root).filter(n=>n.tagName==='dialog').length,0);assert.equal(ba.posts.length,1);
