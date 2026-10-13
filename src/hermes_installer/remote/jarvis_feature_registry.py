@@ -31,6 +31,7 @@ from .jarvis_context_assets import FEATURE_ASSETS as _CONTEXT_ASSETS
 from .jarvis_second_brain_assets import FEATURE_ASSETS as _OBSIDIAN_ASSETS
 from .jarvis_extensions_assets import FEATURE_ASSETS as _EXTENSIONS_ASSETS
 from .jarvis_projects_assets import FEATURE_ASSETS as _PROJECTS_ASSETS
+from .jarvis_ecosystem_assets import FEATURE_ASSETS as _ECOSYSTEM_ASSETS
 _PROFILE_ADMIN_ASSETS = _profiles.reviewed_profiles_admin_feature()
 _PROJECTS_ROUTES = (
     *_projects.FEATURE_ROUTES,
@@ -53,6 +54,7 @@ FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
     _EXTENSIONS_ASSETS,
     _PROJECTS_ASSETS,
     _PROFILE_ADMIN_ASSETS,
+    _ECOSYSTEM_ASSETS,
 )
 
 # New endpoint installers are explicit. Activity is installed exactly once by
@@ -84,6 +86,7 @@ FEATURE_ROUTE_OWNERS = (
     ("overview", "dashboard", _OVERVIEW_ASSETS.api_routes),
     ("calendar", "dashboard", _CALENDAR_ASSETS.api_routes),
     ("integrations", "dashboard-and-bots-read", _INTEGRATIONS_ASSETS.api_routes),
+    ("ecosystem", "core-gateway", _ECOSYSTEM_ASSETS.api_routes),
 )
 
 # Files may reuse only this fixed authenticated conversation selector.
@@ -111,6 +114,7 @@ _OWNER_BY_FEATURE = {
     "overview": "dashboard",
     "calendar": "dashboard",
     "integrations": "dashboard-and-bots-read",
+    "ecosystem": "core-gateway",
 }
 
 
@@ -199,7 +203,18 @@ def install_jarvis_feature_routes(app, service) -> None:
                 raise ValueError("dashboard feature asset and existing routes differ")
             registered = {_route_shape((route.method, route.resource.canonical))
                           for route in app.router.routes()}
-            if feature_id == "integrations":
+            if feature_id == "ecosystem":
+                fixed_routes = (("GET", "/chat/api/ecosystem"),)
+                exact_route_count = sum(
+                    (route.method, route.resource.canonical) == fixed_routes[0]
+                    for route in app.router.routes()
+                )
+                if (owner != "core-gateway" or asset.api_routes != fixed_routes
+                        or routes != fixed_routes
+                        or exact_route_count != 1
+                        or not {_route_shape(route) for route in fixed_routes}.issubset(registered)):
+                    raise ValueError("ecosystem read route is not owned by the core gateway")
+            elif feature_id == "integrations":
                 bot_routes = installers.get("bots", (None, ()))[1]
                 channels_read = ("GET", "/chat/api/channels")
                 capabilities_read = ("GET", "/chat/api/capabilities")

@@ -11,6 +11,7 @@ from hermes_installer.remote.jarvis_chat_assets import (
     FEATURE_CHUNK_PATHS, FEATURE_CSS_CHUNK_PATHS, reviewed_chat_asset,
 )
 from hermes_installer.remote.jarvis_feature_registry import FEATURE_ASSETS
+from hermes_installer.remote.jarvis_feature_registry import FEATURE_ROUTE_OWNERS
 from hermes_installer.remote.jarvis_feature_contract import validate_feature_assets
 
 
@@ -28,6 +29,42 @@ class JarvisChatAssetTests(unittest.TestCase):
             with self.subTest(feature=feature.feature_id):
                 self.assertTrue(feature.mount_js.startswith("function mount("))
                 self.assertTrue(feature.unmount_js.startswith("function unmount("))
+
+    def test_overview_experts_button_uses_registered_shell_navigation(self):
+        ecosystem = [feature for feature in FEATURE_ASSETS if feature.feature_id == "ecosystem"]
+        self.assertEqual(len(ecosystem), 1)
+        feature = ecosystem[0]
+        self.assertEqual(feature.api_routes, (("GET", "/chat/api/ecosystem"),))
+        owners = {feature_id: (owner, routes) for feature_id, owner, routes in FEATURE_ROUTE_OWNERS}
+        self.assertEqual(owners["ecosystem"], ("core-gateway", feature.api_routes))
+
+        _content_type, page = reviewed_chat_asset("/chat")
+        markup = page.decode("utf-8")
+        self.assertIn('<button type="button" data-view="ecosystem">Explore Experts</button>', markup)
+        self.assertIn('data-view="ecosystem">Experts</button>', markup)
+        self.assertEqual(markup.count('data-view="ecosystem"'), 2)
+        resources = markup.split('aria-labelledby="manage-resources-heading"', 1)[1].split("</section>", 1)[0]
+        self.assertIn('data-view="ecosystem">Experts</button>', resources)
+
+        # The overview action uses the same shell listener and registered ID as
+        # the Resources destination, so it selects/mounts the Experts view and
+        # applies the standard selected-view heading focus behavior.
+        _content_type, app_script = reviewed_chat_asset("/chat/assets/app.js")
+        client = app_script.decode("utf-8")
+        self.assertIn('const featuresById = new Map(FEATURE_ASSETS.map((feature) => [feature.id, feature]));', client)
+        self.assertIn('for (const button of document.querySelectorAll("[data-view]")', client)
+        self.assertIn('showView(button.dataset.view, openChats ? "sessions" : button.dataset.view, featureContext);', client)
+        self.assertIn('focusSelectedViewHeading(button.dataset.view);', client)
+        self.assertIn('const selected = ["chat", "overview", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";', client)
+        self.assertIn('for (const panel of document.querySelectorAll("[data-view-panel]")) panel.hidden = panel.dataset.viewPanel !== selected;', client)
+        self.assertIn('const feature = featuresById.get(selected);', client)
+
+        self.assertIn('/chat/assets/features-ecosystem.js', markup)
+        self.assertIn('/chat/assets/features-ecosystem.css', markup)
+        _content_type, chunk = reviewed_chat_asset('/chat/assets/features-ecosystem.js')
+        self.assertIn('id:"ecosystem"', chunk.decode("utf-8"))
+        _content_type, stylesheet = reviewed_chat_asset('/chat/assets/features-workspace.css')
+        self.assertIn('[data-feature-root="overview"] .ecosystem-heading button{min-height:44px', stylesheet.decode("utf-8"))
 
     def test_chat_shell_uses_jarvis_branding_without_desktop_admin_links(self):
         _content_type, page = reviewed_chat_asset("/chat")

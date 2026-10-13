@@ -192,7 +192,7 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
     }
     assert jarvis_feature_registry.FEATURE_ASSETS[0] == MISSION_ASSETS
     assert {asset.feature_id for asset in jarvis_feature_registry.FEATURE_ASSETS} == {
-        "missions", "bots", "activity", "native-controls", "resources-learning", "native-inventory", "files", "models-settings", "settings-admin", "overview", "integrations", "calendar", "context", "second-brain", "extensions", "projects", "profiles-admin",
+        "missions", "bots", "activity", "native-controls", "resources-learning", "native-inventory", "files", "models-settings", "settings-admin", "overview", "integrations", "calendar", "context", "second-brain", "extensions", "projects", "profiles-admin", "ecosystem",
     }
     assert jarvis_feature_registry.FEATURE_ROUTE_INSTALLERS == (
         ("missions", jarvis_missions.install_jarvis_missions_routes,
@@ -222,12 +222,13 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
     )
     assert {feature_id for feature_id, _owner, _routes
             in jarvis_feature_registry.FEATURE_ROUTE_OWNERS} == {
-                "activity", "native-controls", "resources-learning", "overview", "calendar", "integrations"}
+                "activity", "native-controls", "resources-learning", "overview", "calendar", "integrations", "ecosystem"}
     owners = {feature_id: (owner, routes) for feature_id, owner, routes
               in jarvis_feature_registry.FEATURE_ROUTE_OWNERS}
     assert owners["overview"] == (
         "dashboard", (("GET", "/chat/api/overview"),
                       ("GET", "/chat/api/ecosystem")))
+    assert owners["ecosystem"] == ("core-gateway", (("GET", "/chat/api/ecosystem"),))
     assert owners["calendar"] == (
         "dashboard", (("GET", "/chat/api/calendar"),
                       ("POST", "/chat/api/calendar/selection")))
@@ -242,6 +243,7 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
         "overview": "dashboard",
         "calendar": "dashboard",
         "integrations": "dashboard-and-bots-read",
+        "ecosystem": "core-gateway",
     }
     assert jarvis_feature_registry._bots.FEATURE_ROUTES.count(
         ("GET", "/chat/api/channels")) == 1

@@ -1196,6 +1196,10 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                         routes = [route for route in app.router.routes()
                                   if getattr(route.resource, "canonical", None) == path]
                         self.assertEqual([route.method for route in routes], ["GET"])
+                ecosystem_routes = [route for route in app.router.routes()
+                                    if getattr(route.resource, "canonical", None)
+                                    == "/chat/api/ecosystem"]
+                self.assertEqual([route.method for route in ecosystem_routes], ["GET"])
                 decision_routes = [
                     route for route in app.router.routes()
                     if getattr(route.resource, "canonical", None)

@@ -32,9 +32,11 @@ _HTML = '''<!doctype html>
   <link rel="stylesheet" href="/chat/assets/features-core.css">
   <link rel="stylesheet" href="/chat/assets/features-workspace.css">
   <link rel="stylesheet" href="/chat/assets/features-knowledge.css">
+  <link rel="stylesheet" href="/chat/assets/features-ecosystem.css">
   <script defer src="/chat/assets/features-core.js"></script>
   <script defer src="/chat/assets/features-workspace.js"></script>
   <script defer src="/chat/assets/features-knowledge.js"></script>
+  <script defer src="/chat/assets/features-ecosystem.js"></script>
   <script defer src="/chat/assets/features.js"></script>
   <script defer src="/chat/assets/app.js"></script>
 </head>
@@ -2166,16 +2168,19 @@ FEATURE_CHUNK_PATHS = (
     "/chat/assets/features-core.js",
     "/chat/assets/features-workspace.js",
     "/chat/assets/features-knowledge.js",
+    "/chat/assets/features-ecosystem.js",
 )
 FEATURE_CSS_CHUNK_PATHS = (
     "/chat/assets/features-core.css",
     "/chat/assets/features-workspace.css",
     "/chat/assets/features-knowledge.css",
+    "/chat/assets/features-ecosystem.css",
 )
 _FEATURE_CHUNK_IDS = (
     ("missions", "bots", "activity", "native-controls", "settings-admin"),
     ("resources-learning", "native-inventory", "files", "models-settings", "overview", "calendar"),
     ("integrations", "context", "second-brain", "extensions", "projects", "profiles-admin"),
+    ("ecosystem",),
 )
 _FEATURE_CHUNKS_JS: dict[str, bytes] = {}
 _FEATURE_CSS_CHUNKS: dict[str, bytes] = {}
@@ -2195,7 +2200,8 @@ def _compose_feature_assets() -> None:
         "context": "resources", "extensions": "resources", "files": "resources",
         "native-controls": "resources", "native-inventory": "resources",
         "profiles-admin": "resources", "resources-learning": "resources",
-        "second-brain": "resources", "integrations": "system", "models-settings": "system",
+        "second-brain": "resources", "ecosystem": "resources",
+        "integrations": "system", "models-settings": "system",
         "calendar": "system", "settings-admin": "system",
     }
     panels: list[str] = []
@@ -2208,7 +2214,7 @@ def _compose_feature_assets() -> None:
     }
     for feature in FEATURE_ASSETS:
         feature_id = escape(feature.feature_id, quote=True)
-        nav_label = escape(feature.nav_label)
+        nav_label = "Experts" if feature.feature_id == "ecosystem" else escape(feature.nav_label)
         title = escape(feature.title, quote=True)
         nav_markup = (
             f'<button type="button" class="nav-item" data-view="{feature_id}">'
@@ -2219,11 +2225,22 @@ def _compose_feature_assets() -> None:
             if group is None:
                 raise ValueError("Jarvis feature is missing an explicit navigation group")
             grouped_nav[group].append(nav_markup)
+        view_html = feature.view_html
+        if feature.feature_id == "overview":
+            host = '<div id="jarvis-ecosystem-feature-host" data-feature-host="ecosystem-fleet"></div>'
+            if view_html.count(host) != 1:
+                raise ValueError("Overview ecosystem host is missing or ambiguous")
+            view_html = view_html.replace(
+                host,
+                '<div id="jarvis-ecosystem-feature-host" data-feature-host="ecosystem-fleet">'
+                '<div class="ecosystem-heading"><button type="button" data-view="ecosystem">'
+                'Explore Experts</button></div></div>',
+            )
         panel_markup = (
             f'<section class="data-main" id="{feature_id}-view" '
             f'aria-label="{title}" data-view-panel="{feature_id}" hidden>'
             f'<div class="feature-view" data-feature-root="{feature_id}">'
-            f'{feature.view_html}</div></section>'
+            f'{view_html}</div></section>'
         )
         panels.append(panel_markup)
         chunk_path = chunk_path_by_id.get(feature.feature_id)
@@ -2258,7 +2275,7 @@ def _compose_feature_assets() -> None:
     _HTML = html.encode("utf-8")
     _FEATURE_CSS_CHUNKS = {
         path: ("\n".join(css_fragments[path]) + ("\n" if css_fragments[path] else "")
-               + (_CAPABILITY_DETAILS_CSS if path == FEATURE_CSS_CHUNK_PATHS[-1] else "")).encode("utf-8")
+               + (_CAPABILITY_DETAILS_CSS if path == "/chat/assets/features-knowledge.css" else "")).encode("utf-8")
         for path in FEATURE_CSS_CHUNK_PATHS
     }
     _JS = script.encode("utf-8")
