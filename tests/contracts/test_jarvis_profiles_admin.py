@@ -199,7 +199,6 @@ def test_editor_fragment_uses_fixed_routes_and_never_opens_expert_chat():
 def test_editor_review_is_bound_to_exact_snapshot_and_recovers_after_denied_preview_and_save():
     feature = reviewed_profiles_admin_feature()
     harness = r'''
-const assert = require('node:assert/strict');
 const cryptoNode = require('node:crypto');
 class Target {
   constructor() { this.value=''; this.disabled=false; this.hidden=false; this.textContent=''; this.options=[]; this.listeners={}; }
@@ -211,7 +210,8 @@ class Target {
   querySelector() { return null; }
 }
 global.Option=class { constructor(text,value) { this.text=text; this.value=value; } };
-global.crypto={getRandomValues(bytes){bytes.fill(3);return bytes;},subtle:{digest(_alg,data){return Promise.resolve(cryptoNode.createHash('sha256').update(Buffer.from(data)).digest());}}};
+let deferNextDigest=false, releaseDigest;
+global.crypto={getRandomValues(bytes){bytes.fill(3);return bytes;},subtle:{digest(_alg,data){const result=cryptoNode.createHash('sha256').update(Buffer.from(data)).digest();if(deferNextDigest){deferNextDigest=false;return new Promise(resolve=>{releaseDigest=()=>resolve(result);});}return Promise.resolve(result);}}};
 const selectors=['[data-profile-status]','[data-profile-select]','[data-file-select]','[data-profile-editor]','[data-profile-review]','[data-profile-save]','[data-profile-diff]','[data-protected-section]','[data-protected-content]','[data-editor-title]','[data-editor-state]','[data-profile-generation]'];
 const nodes=new Map(selectors.map(key=>[key,new Target()]));
 const root={querySelector:key=>nodes.get(key)};
@@ -221,16 +221,18 @@ const editor=nodes.get('[data-profile-editor]'), review=nodes.get('[data-profile
 const profileId='a'.repeat(64), content='Original\n', proposed=content+'Edited\n';
 const hash=value=>cryptoNode.createHash('sha256').update(value).digest('hex');
 const profileRow={id:profileId,name:'Jarvis',kind:'jarvis',files:[{kind:'soul',name:'SOUL.md'}]};
-let previewCalls=0, saveCalls=0, releaseStalePreview, releaseDeniedSave, activeContent=content;
+let previewCalls=0, saveCalls=0, releaseStalePreview, releaseUnmountPreview, releaseDeniedSave, activeContent=content;
+const saveBodies=[];
 const api={
  get:async path=>path==='/chat/api/profiles'?{profiles:[profileRow]}:{profileId,fileKind:'soul',fileName:'SOUL.md',content:activeContent,protectedSuffix:'',managedPrimary:false,editable:true,sha256:hash(activeContent),sourceGeneration:'generation-1',effective:true},
  post:(path,body)=>{
   if(path.endsWith('/preview')){
    previewCalls++;
    if(previewCalls===1)return new Promise(resolve=>{releaseStalePreview=()=>resolve({diff:'stale diff',previewToken:'stale-token',contentSha256:hash(body.content),baseSha256:body.base_sha256});});
+   if(previewCalls===5)return new Promise(resolve=>{releaseUnmountPreview=()=>resolve({diff:'late diff',previewToken:'late-token',contentSha256:hash(body.content),baseSha256:body.base_sha256});});
    return Promise.resolve({diff:'reviewed diff',previewToken:'token-'+previewCalls,contentSha256:hash(body.content),baseSha256:body.base_sha256});
   }
-  saveCalls++;
+  saveCalls++;saveBodies.push({path,body});
   if(saveCalls===1)return new Promise(resolve=>{releaseDeniedSave=()=>resolve({state:'conflict',effectiveReadback:false});});
   activeContent=proposed; return Promise.resolve({state:'active',effectiveReadback:true,sha256:hash(proposed)});
  }
@@ -245,16 +247,30 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  editor.value=proposed+'changed while pending\n'; editor.dispatch('input');
  releaseStalePreview(); await pendingReview;
  assert.equal(save.disabled,true,'late preview cannot authorize edited content');
+ editor.value=proposed; editor.dispatch('input');
+ deferNextDigest=true; const digestReview=review.dispatch('click'); await flush();
+ assert.equal(typeof releaseDigest,'function','preview digest is pending');
+ profile.value=''; await profile.dispatch('change');
+ profile.value=profileId; await profile.dispatch('change'); files.value='soul'; await files.dispatch('change'); await flush(); await flush();
+ releaseDigest(); await digestReview;
+ assert.equal(save.disabled,true,'selection ABA during digest cannot authorize a preview');
  editor.value=proposed; editor.dispatch('input'); await review.dispatch('click');
  assert.equal(save.disabled,false,'a fresh exact snapshot preview enables save');
  const pendingSave=save.dispatch('click'); await flush();
  releaseDeniedSave(); await pendingSave;
  assert.equal(saveCalls,1,'denied save is not retried automatically');
  assert.match(status.textContent,/source changed/i);
- await review.dispatch('click'); assert.equal(save.disabled,false,'owner can recover by reviewing the current snapshot again');
+ await review.dispatch('click'); assert.equal(save.disabled,false,'conflict recovery requires a fresh preview');
  await save.dispatch('click');
- assert.equal(saveCalls,2); assert.match(status.textContent,/saved and effective source read back/i);
- unmount();
+ assert.equal(saveCalls,2);
+ assert.deepEqual(saveBodies[1],{path:`/chat/api/profiles/${profileId}/save`,body:{file_kind:'soul',base_sha256:hash(content),content:proposed,preview_token:'token-4',idempotency_key:saveBodies[1].body.idempotency_key}});
+ assert.equal(activeContent,proposed,'successful reviewed save has the expected source effect');
+ assert.equal(editor.value,proposed,'effective readback refreshes the editor from the saved source');
+ editor.value=proposed+'later edit\n'; editor.dispatch('input');
+ const pendingUnmount=review.dispatch('click'); await flush();
+ const beforeLatePreview=status.textContent; unmount(); releaseUnmountPreview(); await pendingUnmount;
+ assert.equal(status.textContent,beforeLatePreview,'unmounted editor ignores delayed preview completion');
+ assert.equal(save.disabled,true,'unmounted editor cannot retain a save grant');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''
     with tempfile.TemporaryDirectory() as temporary:
