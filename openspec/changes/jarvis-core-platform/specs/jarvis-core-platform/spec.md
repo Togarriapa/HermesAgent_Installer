@@ -2503,7 +2503,7 @@ Only the fixed current UID0 updater SHALL consume the sealed in-process helper t
 - **THEN** effects deny/pends before writes; a child cannot validate a portable seal or mint discovery/adoption, and genuine Root dispatch still independently verifies byte effects and current cohort before protected commit.
 
 ### Requirement: Named-fleet distinct execution identity
-The read-only ecosystem projection SHALL accept an individually valid completed-message relation between different included execution keys sharing one profile only when all exact Team membership, Mission/revision, endpoint completion and observation-time joins hold. It SHALL reject identical execution keys or changed/missing joins. Native same-profile admission SHALL remain pending until Root reviews and Pi-validates genuine distinct sender/recipient child/admission/source/call/completion identity proof; profile names or fixture nodes SHALL NOT grant communication authority.
+The read-only projection SHALL accept same-profile completed-message relations only between distinct executions with exact Team/Mission/revision/completion/time joins. Identical keys or missing/changed joins SHALL deny. Native admission SHALL await Root-reviewed, Pi-validated distinct-child identity proof; profile names or fixture nodes SHALL NOT grant authority.
 
 #### Scenario: Exact same-profile observed executions
 - **WHEN** two genuinely distinct included completed execution keys share a profile and their retained relation passes every current exact join
@@ -2512,9 +2512,10 @@ The read-only ecosystem projection SHALL accept an individually valid completed-
 #### Scenario: Staged native recipient lacks reviewed distinct-child proof
 - **WHEN** message preparation provides a source delivery handle without the reviewed exact different native child/execution chain
 - **THEN** issue #27 stays Planned and actual native same-profile communication plus #18 acceptance stays pending; no profile-inequality deletion, mock graph or portable receipt substitutes for genuine Root-held identity and Pi effect/denial/recovery evidence.
+- **AND** Root reviews the exact sender/recipient child, admission, source, call and completion identity chain before native implementation; a projection fixture never supplies that proof.
 
 ### Requirement: Native workbench visible feature increments
-Existing native workbench features SHALL provide current safe skill source review and exact archived-version selection (#29), a real returned-window timezone-aware Calendar agenda (#30), and Project owner-note discovery/preview/link selection (#31). They SHALL preserve current owner/revision/native policy, explicit mutation review, uncertainty recovery, retained data and unavailable adapter/account states. Each SHALL require source review, Pi contract/effect/denial/recovery and affected/full-shell rendered UI revision separately.
+Native workbenches SHALL provide skill source/archive review (#29), a timezone-aware returned-window agenda (#30), and Project owner-note discovery/preview/link selection (#31). They SHALL preserve owner/revision/policy, explicit mutation review, uncertainty recovery, retained data and unavailable states. Source, Pi effect/denial/recovery and affected/full-shell UI qualification SHALL remain separate.
 
 #### Scenario: Reviewed current skill edit or archive restore
 - **WHEN** the owner selects a current editable skill or actual archived restore ID/digest from the exact inventory revision
