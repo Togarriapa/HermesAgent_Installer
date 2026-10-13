@@ -962,6 +962,8 @@ FEATURE_API
         self.assertIn('id="speech-stop" type="button" aria-label="Stop reply audio" hidden disabled', composer)
         _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
         css = stylesheet.decode("utf-8")
+        self.assertIn(".voice-dock-controls .voice-button{min-height:44px;padding-inline:13px}", css)
+        self.assertIn('.workspace[data-current-view="chat"]>.chat-main{min-height:0;overflow-y:auto;overscroll-behavior-y:contain;scroll-padding-block-end:8px}', css)
         self.assertIn("@media(max-width:390px){.voice-dock-opt-ins{grid-template-columns:1fr}", css)
 
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")

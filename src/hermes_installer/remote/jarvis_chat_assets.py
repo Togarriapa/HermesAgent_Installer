@@ -469,7 +469,7 @@ html[data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{b
 .voice-dock-opt-ins .chat-preference-toggle small{font-size:9px}
 .voice-dock-disclosure{margin:0;color:#9bb6bb;font-size:10px;line-height:1.5}
 .voice-dock-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.voice-dock-controls .voice-button{min-height:42px;padding-inline:13px}
+.voice-dock-controls .voice-button{min-height:44px;padding-inline:13px}
 .voice-dock-controls .voice-button:disabled{opacity:.48}
 .voice-wake-controls{max-width:880px;margin:0;color:#9bb6bb;font-size:11px;line-height:1.5}
 .voice-wake-controls label{min-height:44px;display:flex;align-items:center;gap:10px;color:#cce2e5;cursor:pointer}
@@ -518,6 +518,8 @@ html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,
   .voice-entry{order:3;margin-left:0;padding-inline:11px;font-size:10px}
   .connection{order:4;margin-left:auto}
   .voice-choice{width:100%;min-height:44px}
+  /* The expanded voice dock must scroll inside Chat instead of under the fixed nav. */
+  .workspace[data-current-view="chat"]>.chat-main{min-height:0;overflow-y:auto;overscroll-behavior-y:contain;scroll-padding-block-end:8px}
 }
 '''
 
