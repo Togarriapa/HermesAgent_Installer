@@ -197,6 +197,10 @@ _CSS += """
 [data-feature-root="overview"] .overview-stage[data-in-viewport="true"][data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial{transform-box:view-box;transform-origin:120px 120px;animation:jarvis-reactor-reverse 36s linear infinite}
 [data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-activity="quiet"] .reactor-orbit-inner{animation-duration:44s}
 [data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-activity="quiet"] .reactor-dial{animation-duration:72s}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-assistant-state="thinking"] .reactor-orbit-outer{stroke:#8fe7eb;animation:jarvis-reactor-pulse 2.4s ease-in-out infinite}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-assistant-state="listening"] .reactor-orbit-outer{stroke:#efc57c;stroke-dasharray:12 7;animation:jarvis-reactor-pulse 3.2s ease-in-out infinite}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-assistant-state="speaking"] .reactor-orbit-inner{stroke:#a6f0f1;animation-duration:14s}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-assistant-state="error"] .reactor-core{stroke:#e8bf78;fill:rgba(211,158,67,.1)}
 [data-feature-root="overview"] .overview-toolbar{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.65rem 0;border-top:1px solid rgba(117,191,199,.15);border-bottom:1px solid rgba(117,191,199,.15)}
 [data-feature-root="overview"] .overview-toolbar [data-observation]{margin:0;color:#a8c2c5;font-size:.72rem;line-height:1.5}
 [data-feature-root="overview"] .overview-toolbar button{min-width:92px;min-height:44px;border:1px solid rgba(95,199,208,.3);border-radius:9px;background:rgba(8,36,44,.68);color:#e1f9fa;padding:.5rem .9rem;font:inherit;font-size:.75rem;cursor:pointer}
@@ -318,6 +322,9 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
       && !(scope && scope.signal && scope.signal.aborted)
       && (!scope || typeof scope.isCurrent !== 'function' || scope.isCurrent());
   }
+  function projectAssistantPresence(state) {
+    return ['listening','thinking','speaking','error'].includes(state) ? state : null;
+  }
   function projectNativeEcosystem(snapshot, now, coreVerified) {
     const observation = snapshot && snapshot.observation;
     const observedAt = observation && typeof observation.observed_at === 'string'
@@ -378,6 +385,9 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
   const handoffGraph = $('[data-handoff-graph]');
   let stopped = false;
   let stageObserver = null;
+  let assistantHudObserver = null;
+  let lastTurnCounts = null;
+  let lastCoreVerified = false;
   let ecosystemObserver = null;
   let ecosystemPollTimer = null;
   let ecosystemGeneration = 0;
@@ -532,6 +542,8 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
     }
   }
   function renderCounts(counts, coreVerified) {
+    lastTurnCounts = counts;
+    lastCoreVerified = coreVerified;
     for (const key of ['total','completed','active','failed']) {
       const target = $(`[data-metric="${key}"]`);
       if (target) target.textContent = format(number(counts && counts[key]));
@@ -541,12 +553,23 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
     $('[data-metric="failed"]').closest('.overview-readout').dataset.attention = String(failed !== null && failed > 0);
     const stage = $('.overview-stage');
     const activity = $('[data-reactor-state]');
+    const assistantState = projectAssistantPresence(document.getElementById('assistant-hud')?.dataset.state);
+    stage.dataset.assistantState = assistantState || 'none';
     if (!coreVerified) {
       stage.dataset.coreState = 'unverified';
       stage.dataset.activity = 'unknown';
       activity.textContent = active === null
         ? 'Service observation unavailable; current activity is unverified.'
         : `${format(active)} accepted turn${active === 1 ? '' : 's'} in progress; service observation is unverified.`;
+    } else if (assistantState) {
+      stage.dataset.coreState = 'verified';
+      stage.dataset.activity = assistantState === 'error' ? 'unknown' : 'active';
+      activity.textContent = ({
+        listening: 'Listening · Jarvis voice input is active.',
+        thinking: 'Thinking · Jarvis is responding to an active turn.',
+        speaking: 'Speaking · Jarvis is reading a completed reply aloud.',
+        error: 'Needs attention · Jarvis reported an interaction error.',
+      })[assistantState];
     } else if (active > 0) {
       stage.dataset.coreState = 'verified';
       stage.dataset.activity = 'active';
@@ -566,6 +589,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
   }
   function markCoreStale(reason = 'stale') {
     if (stopped) return;
+    lastCoreVerified = false;
     if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer);
     coreFreshnessTimer = null;
     coreFreshUntil = 0;
@@ -574,6 +598,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
     const stage = $('.overview-stage');
     stage.dataset.coreState = 'unverified';
     stage.dataset.activity = 'unknown';
+    stage.dataset.assistantState = 'none';
     $('[data-core-status]').textContent = reason === 'offline' ? 'Offline · service status unverified'
       : reason === 'hidden' ? 'Dashboard paused · service status unverified'
       : 'Last service observation is stale';
@@ -672,6 +697,13 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
     ecosystemObserver.observe(ecosystemCard);
   } else {
     ecosystemCard.dataset.inViewport = 'true';
+  }
+  const assistantHud = document.getElementById('assistant-hud');
+  if (assistantHud && typeof MutationObserver === 'function') {
+    assistantHudObserver = new MutationObserver(() => {
+      if (lastTurnCounts !== null && lastCoreVerified) renderCounts(lastTurnCounts, true);
+    });
+    assistantHudObserver.observe(assistantHud, {attributes:true, attributeFilter:['data-state']});
   }
   async function refresh() {
     if (stopped) return;
@@ -775,7 +807,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
   document.addEventListener('visibilitychange',onVisibilityChange);
   window.addEventListener('offline',onNetworkChange);
   window.addEventListener('online',onNetworkChange);
-  return function cleanup() { stopped=true; ecosystemGeneration += 1; ecosystemRefreshing=false; if (ecosystemPollTimer !== null) clearInterval(ecosystemPollTimer); if (ecosystemObserver) ecosystemObserver.disconnect(); ecosystemCard.dataset.inViewport='false'; ecosystemCard.dataset.activityFlow='idle'; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); if (stageObserver) stageObserver.disconnect(); stage.dataset.inViewport='false'; refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',onVisibilityChange); window.removeEventListener('offline',onNetworkChange); window.removeEventListener('online',onNetworkChange); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
+  return function cleanup() { stopped=true; ecosystemGeneration += 1; ecosystemRefreshing=false; if (ecosystemPollTimer !== null) clearInterval(ecosystemPollTimer); if (ecosystemObserver) ecosystemObserver.disconnect(); ecosystemCard.dataset.inViewport='false'; ecosystemCard.dataset.activityFlow='idle'; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); if (stageObserver) stageObserver.disconnect(); if (assistantHudObserver) assistantHudObserver.disconnect(); stage.dataset.inViewport='false'; refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',onVisibilityChange); window.removeEventListener('offline',onNetworkChange); window.removeEventListener('online',onNetworkChange); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
 }"""
 
 _UNMOUNT = "function unmount() {}"
