@@ -1441,8 +1441,13 @@ def _qualification_report_fixture(candidate="b" * 40, archive="c" * 64):
             "primary_prompt_soul_sha256": "a" * 64, "primary_prompt_state": "unmanaged",
             "primary_owner_prefix_sha256": "b" * 64, "primary_owner_prefix_length": 12,
             "primary_immutable_backup_sha256": None,
-            "native_plugin_members_sha256": members,
-            "native_plugin_transition": plugin_transition,
+            "native_plugin_members_sha256": dict(members),
+            "native_plugin_transition": (
+                None if plugin_transition is None else {
+                    **plugin_transition,
+                    "old_members": dict(plugin_transition["old_members"]),
+                    "new_members": dict(plugin_transition["new_members"]),
+                }),
         }
         return result
     return {
@@ -1543,6 +1548,8 @@ def test_untrusted_qualification_failure_report_cannot_replace_last_failure(
         elif report_kind == "plugin-map-extra-member":
             report["before"]["native_plugin_members_sha256"]["other.py"] = "a" * 64
         elif report_kind == "plugin-transition-member-tamper":
+            assert report["after"]["native_plugin_transition"]["new_members"] is not (
+                report["after"]["native_plugin_members_sha256"])
             report["after"]["native_plugin_transition"]["new_members"]["__init__.py"] = "f" * 64
         elif report_kind == "plugin-transition-extra-member":
             report["after"]["native_plugin_transition"]["new_members"]["other.py"] = "f" * 64
