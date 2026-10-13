@@ -2355,6 +2355,11 @@ R0140/R0200..R0203 SHALL qualify protected text/foreground voice and opt-in indi
 - **THEN** protected device-bound credentials and bounded automatic refresh support normal use without hourly/daily interactive OTP; actual device restart, refresh and individual revocation require target evidence. The applied 720-hour global web Access duration is separate convenience, not proof of native pairing.
 - **AND** logout, lost-device revocation or renewal failure denies further admission and exposes exact reauthentication/recovery steps while preserving history/knowledge. Refresh cannot revive old turns/effects, widen owner authority or alter original 600-second turn and short lease ceilings; native pairing remains unimplemented/unqualified until evidenced.
 
+#### Scenario: Client-session research conflicts with current cookie protection
+- **WHEN** Cloudflare One Client is proposed from its documented Beta/up-to90-day Access session option
+- **THEN** treat its application-spanning duration, single-user device registration and unsupported Binding Cookie as qualification constraints. Current enabled Binding Cookie/no enrolled WARP clients prevent presenting it as operational native pairing; preserve verified30-day web convenience and current protection, with no research-only global toggle, enrollment or cookie removal.
+- **AND** renewable individually revocable native Android/tablet continuity remains pending actual compatibility/account/device/refresh/revocation proof, including shared-device account change. No hourly/daily prompts in normal qualified paired use remains the target; M1 and all existing owner/turn/lease gates continue independently.
+
 #### Scenario: Unsupported hotword, uncertain speaker or offline device
 - **WHEN** native role/recognition/background support is unqualified, speaker identity is uncertain or current network/authentication is absent
 - **THEN** the feature remains unavailable with practical text/foreground fallback and exact next gate; no private persona selection, silent consequential queue or final authority derives from voice/device familiarity.

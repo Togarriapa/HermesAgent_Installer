@@ -31,6 +31,8 @@ M5/R0200..R0203 requires explicit native Android/tablet individually revocable d
 
 ## Actual parallel work after specification validation
 
+M5 feasibility: [official Cloudflare client sessions](https://developers.cloudflare.com/cloudflare-one/team-and-resources/devices/cloudflare-one-client/configure/client-sessions/) are Beta for Access; up-to90days spans enabled applications, registration is single-user and Binding Cookie is unsupported. Root reports enabled Binding Cookie here and zero WARP enrollment. Keep verified30-day web convenience and protection; no global toggle/enrollment/security removal follows research. Renewable individually revocable Android/tablet pairing stays pending with no-hourly/daily-prompt normal-use target, shared-device isolation and actual revoke/refresh qualification. M1 stays first.
+
 | Lane / model | Next bounded work | Shared ownership and stopping condition |
 | --- | --- | --- |
 | Root integration / validation | Resolve current Pi spec errors; integrate exact reviewed source; M1 Resources migration/primary compatibility, startup and rollback. Record new chat/stop/history witnesses before user-visible rollout. | One owner of root Inspector/gateway/runtime/pins; serialize Pi checks and activation. Preserve current protected URL and recovery; unresolved witness denies activation rather than faking readiness. |
