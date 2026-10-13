@@ -1416,7 +1416,7 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     assert (backup / "native-plugin-plugin.yaml").read_bytes() == b"manifest-v1\n"
     assert (backup / "native-plugin-__init__.py").read_bytes() == b"old native tools\n"
     assert selection["value"] == prior["plugin_selection_sha256"]
-    assert reload_service_states == [False]
+    assert reload_service_states == [True, False]
     assert automatic_restarts == []
     assert guard_denials == []
     assert len(importer_outcomes) == 1
@@ -1465,6 +1465,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
         if attempts["wait"] == 1:
             raise core.CoreRuntimeError("injected adapter update restart failure")
     monkeypatch.setattr(core, "_wait_for_listener", fail_first_restart)
+    update_call_start = len(_calls)
 
     with pytest.raises(core.CoreRuntimeError, match="injected adapter update restart failure"):
         core.update_owned_core_adapter()
@@ -1475,9 +1476,11 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
     assert core.TOKEN.read_bytes() == token
     assert enabled["value"]
     assert attempts["wait"] == 2
-    ordered = [call[0] for call in _calls]
-    assert ordered.index(("native-plugin", "install")) < ordered.index(
-        ("native-plugin", "restore")) < ordered.index(("systemctl", "start", core.SERVICE))
+    ordered = [call[0] for call in _calls[update_call_start:]]
+    restore_index = ordered.index(("native-plugin", "restore"))
+    assert ordered.index(("native-plugin", "install")) < restore_index
+    assert any(index > restore_index and call == ("systemctl", "start", core.SERVICE)
+               for index, call in enumerate(ordered))
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
@@ -1496,33 +1499,47 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     core._replace_journal(migrated_record)
     _rebind_fixture_resources_to_current_journal()
     prior = core.JOURNAL.read_bytes()
+    prior_resources = core.RESOURCES_RECORD.read_bytes()
     launcher = core.LAUNCHER.read_bytes()
     unit = core.UNIT.read_bytes()
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
-    replace_journal = core._replace_journal
-    interrupted = {"done": False}
-    def interrupt_before_new_journal(record):
-        if (record.get("adapter_source")==str(core.ADAPTER_SOURCE)
-                and record.get("adapter_update_state")=="preparing"
-                and not interrupted["done"]):
-            interrupted["done"] = True
+    replace_atomic = core._atomic_replace
+    interrupted = {"starting_journal": None}
+    def interrupt_starting_journal(path, data, *args, **kwargs):
+        if (path == core.JOURNAL and isinstance(data, bytes)
+                and b'"adapter_update_state":"starting"' in data
+                and interrupted["starting_journal"] is None):
+            interrupted["starting_journal"] = data
             raise KeyboardInterrupt()
-        return replace_journal(record)
-    monkeypatch.setattr(core, "_replace_journal", interrupt_before_new_journal)
+        return replace_atomic(path, data, *args, **kwargs)
+    monkeypatch.setattr(core, "_atomic_replace", interrupt_starting_journal)
 
     with pytest.raises(KeyboardInterrupt):
         core.update_owned_core_adapter()
-    interrupted_record = json.loads(core.JOURNAL.read_text())
-    assert interrupted_record["adapter_update_state"] == "preparing"
-    assert interrupted_record["adapter_source"] == str(old_source)
+    assert core.JOURNAL.read_bytes() == prior  # J0 remains intact until the exact J_s CAS.
+    attempted_starting = interrupted["starting_journal"]
+    assert attempted_starting is not None
+    interrupted_record = json.loads(attempted_starting)
+    interrupted_cohort, _cohort_raw = core._read_adapter_update_cohort()
+    assert interrupted_record["adapter_update_state"] == "starting"
+    assert interrupted_record["adapter_source"] == str(core.ADAPTER_SOURCE)
+    assert interrupted_cohort["phase"] == "source-starting"
+    assert interrupted_cohort["starting_journal_sha256"] == hashlib.sha256(
+        attempted_starting).hexdigest()
+    staged_resources = core.RESOURCES_RECORD.read_bytes()
+    assert hashlib.sha256(staged_resources).hexdigest() == interrupted_cohort[
+        "starting_resources_record_sha256"]
+    assert json.loads(staged_resources)["core_ownership_sha256"] == hashlib.sha256(
+        attempted_starting).hexdigest()
     assert core.LAUNCHER.read_bytes() != launcher
     assert core.UNIT.read_bytes() != unit
     assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=False) != 0
 
-    monkeypatch.setattr(core, "_replace_journal", replace_journal)
+    monkeypatch.setattr(core, "_atomic_replace", replace_atomic)
     core._recover_interrupted_adapter_update()
 
     assert core.JOURNAL.read_bytes() == prior
+    assert core.RESOURCES_RECORD.read_bytes() == prior_resources
     assert core.LAUNCHER.read_bytes() == launcher
     assert core.UNIT.read_bytes() == unit
     assert enabled["value"]
