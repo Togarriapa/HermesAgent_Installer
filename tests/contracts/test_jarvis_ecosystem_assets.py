@@ -15,6 +15,7 @@ def test_ecosystem_feature_is_a_fixed_read_only_asset():
     assert "data-ecosystem-roster" in FEATURE_ASSETS.view_html
     assert "data-ecosystem-graph" in FEATURE_ASSETS.view_html
     assert "data-ecosystem-scene" in FEATURE_ASSETS.view_html
+    assert "does not indicate ongoing dialogue" in FEATURE_ASSETS.view_html
     assert "data-ecosystem-detail" in FEATURE_ASSETS.view_html
     assert "data-ecosystem-search" in FEATURE_ASSETS.view_html
     assert "data-ecosystem-filter" in FEATURE_ASSETS.view_html
@@ -99,17 +100,26 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  client.gets[1].resolve(partial);await flush();assert.equal(root.dataset.state,'partial');
  assert.equal(all(graph).find(node=>node.className==='ecosystem-arrow').dataset.pulse,'true','a current exact relation may pulse once while aggregate coverage stays visibly partial');
 
- // A repeated exact relation cannot pulse again; an error degrades the retained read to stale.
+ // More than 200 distinct fresh event IDs over successive snapshots cannot evict the first ID.
  nodes(root,'[data-ecosystem-refresh]')[0].dispatch('click');assert.equal(client.gets.length,3);
  client.gets[2].resolve(partial);await flush();assert.equal(all(graph).find(node=>node.className==='ecosystem-arrow').dataset.pulse,undefined);
- nodes(root,'[data-ecosystem-refresh]')[0].dispatch('click');client.gets[3].reject(new Error('unavailable'));await flush();
+ const relationBatch=(start,count)=>({...partial,relations:Array.from({length:count},(_,index)=>({...partial.relations[0],id:(start+index).toString(16).padStart(32,'0')}))});
+ nodes(root,'[data-ecosystem-refresh]')[0].dispatch('click');client.gets[3].resolve(relationBatch(4096,125));await flush();
+ assert.equal(graph.children.length,125);
+ nodes(root,'[data-ecosystem-refresh]')[0].dispatch('click');client.gets[4].resolve(relationBatch(8192,125));await flush();
+ assert.equal(graph.children.length,125,'the second snapshot contributes another 125 distinct fresh IDs');
+ nodes(root,'[data-ecosystem-refresh]')[0].dispatch('click');client.gets[5].resolve(data);await flush();
+ const originalRelation=graph.children.find(row=>row.dataset.relationId==='q'.repeat(32));
+ assert.ok(originalRelation);assert.equal(all(originalRelation).find(node=>node.className==='ecosystem-arrow').dataset.pulse,undefined,'the still-fresh first relation remains suppressed after more than 200 IDs');
+ // An error degrades the retained read to stale.
+ nodes(root,'[data-ecosystem-refresh]')[0].dispatch('click');client.gets[6].reject(new Error('unavailable'));await flush();
  assert.equal(root.dataset.state,'stale');assert.match(nodes(root,'[data-ecosystem-status]')[0].textContent,/previous snapshot as stale/);
- assert.equal(client.gets.length,4,'the view has no ambient polling loop');
+ assert.equal(client.gets.length,7,'the view has no ambient polling loop');
 
  // Schema 1 stays roster-only with an honest lineage limitation.
  nodes(root,'[data-ecosystem-refresh]')[0].dispatch('click');
  const schema1={schema:1,observation:{state:'observed',observed_at:new Date(Date.now()).toISOString(),partial:false,coverage:'complete',window:{from:new Date(now-60000).toISOString(),to:new Date(now).toISOString(),seconds:60}},summary:{observed_instances:1,observed_completed_executions:1,response_duration_ms:null,response_duration_coverage:0},instances:[data.instances[0]],teams:[],relations:[],pending:{}};
- client.gets[4].resolve(schema1);await flush();assert.equal(root.dataset.state,'current');assert.equal(graph.children.length,0);
+ client.gets[7].resolve(schema1);await flush();assert.equal(root.dataset.state,'current');assert.equal(graph.children.length,0);
  assert.match(nodes(root,'[data-ecosystem-coverage]')[0].textContent,/schema 1 has no verified Team lineage/);
  assert.match(nodes(root,'[data-ecosystem-coverage]')[0].textContent,/observed response duration unknown \(0 observed responses with duration\)/,'null remains unknown even when coverage is zero');
  cleanup();assert.equal(nodes(root,'[data-ecosystem-refresh]')[0].disabled,true);

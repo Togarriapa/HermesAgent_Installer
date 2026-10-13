@@ -15,12 +15,12 @@ _VIEW = """<section class=\"ecosystem-page\" data-feature-root=\"ecosystem\" dat
   <div class=\"ecosystem-layout\">
     <section class=\"ecosystem-panel\" aria-labelledby=\"ecosystem-roster-title\"><h2 id=\"ecosystem-roster-title\">Instance roster</h2>
       <ol data-ecosystem-roster class=\"ecosystem-roster\"></ol><p data-ecosystem-roster-empty class=\"ecosystem-empty\">No current roster is available.</p></section>
-    <section class=\"ecosystem-panel ecosystem-network-panel\" aria-labelledby=\"ecosystem-network-title\"><h2 id=\"ecosystem-network-title\">Observed communication</h2>
+    <section class=\"ecosystem-panel ecosystem-network-panel\" aria-labelledby=\"ecosystem-network-title\"><h2 id=\"ecosystem-network-title\">Observed completed events</h2>
       <div class=\"ecosystem-scene-frame\" data-ecosystem-scene-frame><svg data-ecosystem-scene tabindex=\"-1\" viewBox=\"0 0 720 360\" role=\"img\" aria-label=\"Directed network of observed execution instances\"><defs><marker id=\"ecosystem-arrowhead\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0,0 L8,4 L0,8 z\" fill=\"#83d9de\"></path></marker></defs><g data-ecosystem-scene-links></g><g data-ecosystem-scene-nodes></g></svg></div>
       <div class=\"ecosystem-scene-actions\"><button type=\"button\" data-ecosystem-fit>Fit network</button><span data-ecosystem-selected tabindex=\"-1\" aria-live=\"polite\">No instance selected.</span></div>
-      <ol data-ecosystem-graph class=\"ecosystem-graph\" aria-label=\"Directed, root-observed completed messages\"></ol>
+      <ol data-ecosystem-graph class=\"ecosystem-graph\" aria-label=\"Directed list of root-observed completed events\"></ol>
       <p data-ecosystem-graph-empty class=\"ecosystem-empty\">No verified completed-message relations are available.</p>
-      <p class=\"ecosystem-legend\"><span aria-hidden=\"true\">●</span> Instance &nbsp; <span aria-hidden=\"true\">→</span> Verified sender to recipient &nbsp; <span data-ecosystem-motion>Motion only marks a new, fresh observed relation.</span></p>
+      <p class=\"ecosystem-legend\"><span aria-hidden=\"true\">●</span> Instance &nbsp; <span aria-hidden=\"true\">→</span> Observed completed event, sender to recipient &nbsp; <span data-ecosystem-motion>A finite pulse marks one newly observed completed event; it does not indicate ongoing dialogue.</span></p>
       <h3>Verified Team membership</h3><ol data-ecosystem-teams class=\"ecosystem-teams\"></ol><p data-ecosystem-teams-empty class=\"ecosystem-empty\">No independently verified Team membership is available.</p></section>
   </div>
   <section class=\"ecosystem-panel ecosystem-detail\" aria-labelledby=\"ecosystem-detail-title\" aria-live=\"polite\"><h2 id=\"ecosystem-detail-title\">Instance detail</h2><p data-ecosystem-detail>Select an instance to inspect its observed source and events.</p><ol data-ecosystem-events></ol></section>
@@ -88,7 +88,9 @@ _MOUNT = r'''function mount(container, api) {
   const teamsEmpty = $('[data-ecosystem-teams-empty]'), detail = $('[data-ecosystem-detail]');
   const eventList = $('[data-ecosystem-events]');
   let stopped = false, loading = false, generation = 0, snapshot = null, selectedId = null, sceneVisible = true, freshnessTimer = null;
-  const seenPulses = new Set();
+  const seenPulses = new Map();
+  const pulseLedgerLimit = 2000;
+  function pruneSeenPulses(now=Date.now()) { for(const [id,expiresAt] of seenPulses)if(expiresAt<=now)seenPulses.delete(id); }
   const listeners = new AbortController();
   const instanceStates = new Set(['admitted','running','responded','completed','unknown']);
   const lineageStates = new Set(['current','historical','stale','partial']);
@@ -225,7 +227,7 @@ _MOUNT = r'''function mount(container, api) {
       const from=points.get(relation.from),to=points.get(relation.to); if(!from||!to)continue;
       const path=document.createElementNS('http://www.w3.org/2000/svg','path');
       path.setAttribute('d',`M ${from.x} ${from.y} L ${to.x} ${to.y}`);path.setAttribute('class','ecosystem-scene-link');
-      path.setAttribute('aria-label',`${relation.from_name} to ${relation.to_name}: verified completed message`);sceneLinks.append(path);
+      path.setAttribute('aria-label',`${relation.from_name} to ${relation.to_name}: observed completed event`);sceneLinks.append(path);
     }
     for (const row of sceneRows) {
       const point=points.get(row.id),group=document.createElementNS('http://www.w3.org/2000/svg','g');
@@ -245,13 +247,14 @@ _MOUNT = r'''function mount(container, api) {
     for (const relation of ordered) {
       const li=document.createElement('li'); li.dataset.relationId=relation.id;
       const source=textNode('span',relation.from_name,'ecosystem-endpoint');
-      const arrow=textNode('span','→','ecosystem-arrow'); arrow.setAttribute('aria-label','sent a verified completed message to');
+      const arrow=textNode('span','→','ecosystem-arrow'); arrow.setAttribute('aria-label','observed completed event from sender to recipient');
       const target=textNode('span',relation.to_name,'ecosystem-endpoint');
-      const details=textNode('small',`Relation ${relation.id} · Team ${relation.team_execution_key} (${relation.team_name}) · Mission ${relation.mission_id} rev ${relation.mission_revision} · ${relation.from} → ${relation.to} · ${relation.at} · ${root.dataset.state==='stale'?'stale snapshot · ':''}${relation.state} · ${relation.coverage}`);
+      const details=textNode('small',`Observed completed event ${relation.id} · Team ${relation.team_execution_key} (${relation.team_name}) · Mission ${relation.mission_id} rev ${relation.mission_revision} · ${relation.from} → ${relation.to} · ${relation.at} · ${root.dataset.state==='stale'?'stale snapshot · ':''}${relation.state} · ${relation.coverage}`);
       const endpoints=document.createElement('div'); endpoints.className='ecosystem-relation-endpoints'; endpoints.append(source,arrow,target);
       li.append(endpoints,details);
-      const canPulse=liveNow(relation) && !seenPulses.has(relation.id);
-      if (canPulse) { seenPulses.add(relation.id); if(seenPulses.size>200)seenPulses.delete(seenPulses.values().next().value); arrow.dataset.pulse='true'; arrow.addEventListener('animationend',()=>delete arrow.dataset.pulse,{once:true}); }
+      pruneSeenPulses();
+      const canPulse=liveNow(relation) && !seenPulses.has(relation.id) && seenPulses.size<pulseLedgerLimit;
+      if (canPulse) { seenPulses.set(relation.id,Math.min(snapshot.observedAt+120000,relation.at_ms+120000)); arrow.dataset.pulse='true'; arrow.addEventListener('animationend',()=>delete arrow.dataset.pulse,{once:true}); }
       graph.append(li);
     }
     const teams=snapshot.teams.filter(team=>team.members.some(id=>visibleIds.has(id))
