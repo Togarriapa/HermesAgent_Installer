@@ -10,6 +10,7 @@ from hermes_installer.remote.jarvis_chat import (
     JarvisChatDenied,
     JarvisChatStore,
 )
+from hermes_installer.remote.jarvis_activity_assets import FEATURE_ASSETS
 
 
 def _principal(subject="owner-a", generation="core-generation-a"):
@@ -121,3 +122,105 @@ def test_native_child_correlation_is_private_stable_and_turn_scoped(tmp_path):
     assert len(child_rows[0]["child_ref"]) == 64
     with pytest.raises(JarvisChatDenied, match="turn is unavailable"):
         activity.native_child_events_for_turn("owner-b", turn_id)
+
+
+def test_activity_decision_dom_serializes_exact_review_and_reconciles_observed_status():
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is needed to execute the Activity decision race fixture")
+    harness = r'''
+class Target {
+  constructor() { this.children=[]; this.listeners={}; this.disabled=false; this.hidden=false; this.textContent=''; this.style={}; }
+  addEventListener(name,fn) { this.listeners[name]=fn; }
+  removeEventListener(name) { delete this.listeners[name]; }
+  replaceChildren(...items) { this.children=[...items]; }
+  append(...items) { this.children.push(...items); }
+  contains(node) { return this===node || this.children.some(child=>child.contains?.(node)); }
+  setAttribute() {}
+  fire(name) { return this.listeners[name]?.(); }
+}
+function deferred() { let resolve,reject; const promise=new Promise((a,b)=>{resolve=a;reject=b}); return {promise,resolve,reject}; }
+const selectors=['[data-events]','[data-usage]','[data-empty]','[data-note]','[data-final-effects]','[data-final-effects-empty]','[data-final-effects-note]','[data-refresh]'];
+const nodes=new Map(selectors.map(selector=>[selector,new Target()]));
+const root={querySelector:selector=>nodes.get(selector)};
+global.document={createElement:()=>new Target()};
+let poll, intervalCleared=false, effectRows=[]; const posts=[]; let keyCount=0;
+global.window={setInterval(fn){poll=fn;return 91;},clearInterval(id){assert.equal(id,91);intervalCleared=true;}};
+global.crypto={randomUUID(){keyCount++;return `key-${keyCount}`;}};
+const api={
+ get(path){
+  if(path==='/chat/api/activity?limit=50')return Promise.resolve({events:[{turnId:'turn-1',type:'approval',status:'pending'}]});
+  if(path==='/chat/api/turns/turn-1/usage')return Promise.resolve({usage:{input:1,output:2,total:3,calls:1,reasoning:0,cost_usd:null}});
+  if(path==='/chat/api/turns/turn-1/final-effects')return Promise.resolve({turnId:'turn-1',requests:effectRows});
+  throw Error('unexpected GET '+path);
+ },
+ post(path,body){const d=deferred();posts.push({path,body,d});return d.promise;}
+};
+const mount=new Function('return ('+MOUNT+')')();
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+const buttons=()=>nodes.get('[data-final-effects]').children[0]?.children[2]?.children||[];
+const effectsNote=()=>nodes.get('[data-final-effects-note]').textContent;
+async function pollOnce(){await poll();await flush();await flush();}
+(async()=>{
+ const cleanup=mount(root,api); await flush(); await flush(); await flush();
+ const pending={pendingId:'1'.repeat(64),turnId:'turn-1',reviewSha256:'2'.repeat(64),toolName:'write_file',preview:{tool_name:'write_file'},status:'pending'};
+ effectRows=[pending]; await pollOnce();
+ const staleApprove=buttons()[0]; await pollOnce(); await staleApprove.fire('click');
+ assert.equal(posts.length,0,'callback from a replaced row is ignored');
+ const [approve,deny]=buttons();
+ const firstDecision=approve.fire('click'); await flush();
+ await deny.fire('click'); await approve.fire('click');
+ assert.equal(posts.length,1,'opposing and repeated clicks share one decision request');
+ assert.equal(posts[0].path,'/chat/api/turns/turn-1/final-effects/decision');
+ assert.deepEqual(posts[0].body,{pending_id:pending.pendingId,review_sha256:pending.reviewSha256,decision:'approve',idempotency_key:'key-1'});
+ assert.equal(approve.disabled,true); assert.equal(deny.disabled,true);
+ posts[0].d.resolve({pendingId:'9'.repeat(64),status:'approved'});
+ await firstDecision; await flush(); await flush();
+ assert.match(effectsNote(),/outcome unknown/i,'mismatched response cannot confirm a decision');
+ assert.equal(buttons()[0].disabled,true); assert.equal(buttons()[1].disabled,true);
+ assert.equal(posts.length,1,'unknown decision is never automatically replayed');
+ effectRows=[{...pending,status:'approved'}]; await pollOnce();
+ assert.match(effectsNote(),/Owner decision observed: approved/i);
+ assert.match(effectsNote(),/does not confirm that the tool action completed/i);
+ assert.equal(buttons().length,0,'only current observed status clears the pending decision');
+
+ const pendingDeny={...pending,pendingId:'3'.repeat(64),reviewSha256:'4'.repeat(64),status:'pending'};
+ effectRows=[pendingDeny]; await pollOnce();
+ const denyRetry=buttons()[1].fire('click'); await flush();
+ assert.equal(posts.length,2); posts[1].d.reject(Error('response lost')); await denyRetry;
+ assert.match(effectsNote(),/outcome unknown/i);
+ await pollOnce(); assert.equal(buttons()[0].disabled,true); assert.equal(buttons()[1].disabled,true);
+ assert.equal(posts.length,2,'polling an unresolved review does not issue another decision');
+ effectRows=[{...pendingDeny,status:'denied'}]; await pollOnce();
+ assert.match(effectsNote(),/Owner decision observed: denied/i);
+
+ const pendingAccepted={...pending,pendingId:'7'.repeat(64),reviewSha256:'8'.repeat(64),status:'pending'};
+ effectRows=[pendingAccepted]; await pollOnce();
+ const acceptedDecision=buttons()[0].fire('click'); await flush();
+ assert.equal(posts.length,3);
+ posts[2].d.resolve({pendingId:pendingAccepted.pendingId,status:'approved'}); await acceptedDecision;
+ assert.match(effectsNote(),/current status still shows this review pending/i);
+ assert.doesNotMatch(effectsNote(),/Owner decision observed/i,'POST response alone does not reconcile read status');
+ assert.equal(buttons()[0].disabled,true); assert.equal(buttons()[1].disabled,true);
+ effectRows=[{...pendingAccepted,status:'approved'}]; await pollOnce();
+ assert.match(effectsNote(),/Owner decision observed: approved/i);
+
+ const pendingUnmount={...pending,pendingId:'5'.repeat(64),reviewSha256:'6'.repeat(64),status:'pending'};
+ effectRows=[pendingUnmount]; await pollOnce();
+ const unmountedDecision=buttons()[0].fire('click'); await flush();
+ assert.equal(posts.length,4);
+ const beforeUnmount=effectsNote(); cleanup(); posts[3].d.reject(Error('late response')); await unmountedDecision;
+ assert.equal(effectsNote(),beforeUnmount,'late decision failure cannot update an unmounted view');
+ assert.equal(intervalCleared,true);
+ assert.equal(posts.length,4,'unmount does not replay an unresolved decision');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''.replace('MOUNT', FEATURE_ASSETS.mount_js)
+    with tempfile.TemporaryDirectory() as temporary:
+        script = Path(temporary) / "activity-decision-race.js"
+        script.write_text("const assert=require('node:assert/strict');\n" + harness, encoding="utf-8")
+        result = subprocess.run(["node", str(script)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
