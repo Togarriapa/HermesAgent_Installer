@@ -275,7 +275,6 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
                     or recipient["mission_id"] != relation["mission_id"]
                     or sender["mission_revision"] != relation["mission_revision"]
                     or recipient["mission_revision"] != relation["mission_revision"]
-                    or sender["profile_id"] == recipient["profile_id"]
                     or event_seconds < max(sender["created_at"], recipient["created_at"])
                     or event_seconds > recipient["updated_at"]
                     or relation["state"] in {"current", "historical"}
