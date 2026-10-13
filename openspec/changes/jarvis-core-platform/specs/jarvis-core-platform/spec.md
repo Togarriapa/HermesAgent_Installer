@@ -1997,6 +1997,11 @@ Conversation-local customization SHALL reuse existing session-scoped finite cont
 ### Requirement: Accessible purposeful command-centre visuals
 Original restrained dark/cyan layered visuals and responsive phone/tablet/wide layouts SHALL preserve readable real measurement provenance, unknown/stale states, keyboard focus, touch actions and mobile composer usability. Purposeful motion SHALL reuse CSS tokens, opacity/transform and bounded transitions with OS/local reduced-motion and pointer gating; frequent keyboard/view navigation SHALL remain immediate.
 
+#### Scenario: Workspace search and note actions retain usable touch targets
+- **WHEN** #29 Extensions inventory or #31 Projects owner-note controls render on phone/tablet/wide
+- **THEN** main search/filter/preview/link/removal targets retain at least44px effective usable width and height, actual center-hit reachability, visible keyboard focus and no overflow/occlusion. Scoped CSS may correct undersizing without changing handlers, managed-action semantics, protected owner/CAS boundaries or routes.
+- **AND** candidate-bound affected/full-shell Chromium review retains the existing measured gate; synthetic GET data and unsaved note drafts prove layout only, never native writes/account/device acceptance.
+
 #### Scenario: Reduced motion and missing measurements
 - **WHEN** reduced motion is requested or source measurements are unavailable/stale
 - **THEN** continuous movement is suppressed with gentle static/color/opacity state distinctions, and unavailable metrics remain unknown/stale rather than decorative fake telemetry.
