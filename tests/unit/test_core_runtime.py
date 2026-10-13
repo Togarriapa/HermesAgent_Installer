@@ -4,6 +4,7 @@ These tests use temporary files and mocked systemd calls; target acceptance is
 performed separately on the enrolled Pi.
 """
 import hashlib
+import io
 import json
 import os
 import pwd
@@ -14,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from types import MappingProxyType, ModuleType, SimpleNamespace
 
@@ -178,6 +180,10 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
                         var / "core-runtime" / "adapter-update-cohort.json")
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS",
                         var / "core-runtime" / "adapter-update-backups")
+    monkeypatch.setattr(core, "RESOURCES_RECORD",
+                        var / "core-runtime" / "resources-discovery.json")
+    monkeypatch.setattr(core, "RESOURCES_CAS",
+                        var / "core-runtime" / "resources-cas")
     monkeypatch.setattr(core, "UNIT", unit_dir / core.SERVICE)
     monkeypatch.setattr(core, "LAUNCHER", libexec / "hermes-jarvis-core-launcher")
     monkeypatch.setattr(core, "HOME", home.parent)
@@ -206,10 +212,78 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     monkeypatch.setattr(core, "_launcher",
                         lambda adapter_source=None: b"test fixed core launcher")
     monkeypatch.setattr(core, "_install_bundled_resources", lambda _account: _resource_receipt())
-    monkeypatch.setattr(core, "_write_resources_discovery", lambda: {
-        "resource_counts": {"native_skills": 396, "source_profiles_preserved": 208},
-        "active_prompt_matches_bundled_primary": False,
-    })
+
+    def write_fixture_resources_discovery(*, repair_umask_dirs=False):
+        """Write a source-bound receipt and real immutable archive for cohort tests."""
+        from hermes_installer.registry import manual_jarvis_skills as native
+
+        archive = native.build_manual_jarvis_skills_artifact()
+        artifact_sha = hashlib.sha256(archive).hexdigest()
+        manifest, files = native._read_artifact(archive, artifact_sha)
+        journal_raw = core._projection_file(
+            core.JOURNAL, owner=core.ROOT_UID, group=core.ROOT_UID,
+            mode=0o600, maximum=64 * 1024)
+        core._ensure_dir(core.RESOURCES_CAS, core.ROOT_UID, core.ROOT_UID, 0o700)
+        core._atomic_replace(core.RESOURCES_CAS / (artifact_sha + ".zip"),
+                             archive, 0o600, core.ROOT_UID, core.ROOT_UID)
+        record = {
+            "schema": 3,
+            "native_readback_method": "root-pinned-hermes-loader-v2",
+            "core_source_generation": core._core_source_generation(),
+            "core_ownership_sha256": hashlib.sha256(journal_raw).hexdigest(),
+            "hermes_revision": core.COMMIT,
+            "python_version": "3.14.7",
+            "resources_revision": manifest["source"]["revision"],
+            "resources_tree": manifest["source"]["git_tree"],
+            "artifact_sha256": artifact_sha,
+            "ownership_manifest_sha256": hashlib.sha256(
+                native._canonical_json(manifest)).hexdigest(),
+            "loaded_skill_inventory_sha256": hashlib.sha256(
+                native._canonical_json([
+                    {"path": name, "size_bytes": len(content),
+                     "sha256": hashlib.sha256(content).hexdigest()}
+                    for name, content in sorted(files.items())])).hexdigest(),
+            "active_primary_prompt_sha256": hashlib.sha256(b"fixture active prompt").hexdigest(),
+            "bundled_primary_prompt_sha256": hashlib.sha256(
+                files["registry/profiles/hermes/SOUL.md"]).hexdigest(),
+            "active_prompt_matches_bundled_primary": False,
+            "effective_overlay": manifest["effective_overlay"],
+            "resource_counts": {"native_skills": 396, "internal_profiles": 207,
+                                "source_profiles_preserved": 208,
+                                "other_declarations_preserved": 88},
+            "observed_at_utc": "2026-10-13T00:00:00Z",
+            "state": "discovered", "functional": False,
+            "enabled": False, "target_verified": False,
+        }
+        core._atomic_replace(
+            core.RESOURCES_RECORD,
+            (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"),
+            0o600, core.ROOT_UID, core.ROOT_UID)
+        return record
+
+    monkeypatch.setattr(core, "_write_resources_discovery", write_fixture_resources_discovery)
+
+    def read_fixture_resources_discovery(*, core_source_generation):
+        """Project only a fixture receipt whose journal and CAS still join."""
+        try:
+            raw = core._projection_file(core.RESOURCES_RECORD, owner=core.ROOT_UID,
+                                        group=core.ROOT_UID, mode=0o600, maximum=16 * 1024)
+            record = json.loads(raw)
+            journal_raw = core._projection_file(core.JOURNAL, owner=core.ROOT_UID,
+                group=core.ROOT_UID, mode=0o600, maximum=64 * 1024)
+            archive = core._projection_file(core.RESOURCES_CAS / (record["artifact_sha256"] + ".zip"),
+                owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o600, maximum=16 * 1024 * 1024)
+        except (OSError, KeyError, ValueError, TypeError):
+            return {"resources_state": "stale"}
+        if (record.get("core_source_generation") != core_source_generation
+                or record.get("core_ownership_sha256") != hashlib.sha256(journal_raw).hexdigest()
+                or hashlib.sha256(archive).hexdigest() != record.get("artifact_sha256")
+                or record.get("state") != "discovered"):
+            return {"resources_state": "stale"}
+        return {"resources_state": "discovered", "artifact_sha256": record["artifact_sha256"],
+                "resource_counts": record["resource_counts"]}
+
+    monkeypatch.setattr(core, "read_current_resources_discovery", read_fixture_resources_discovery)
 
     calls = []
     enabled = {"value": False}
@@ -507,6 +581,21 @@ def _rebind_migrated_fixture_to_prior_generation():
         "launcher_sha256": hashlib.sha256(launcher).hexdigest(),
     })
     core._replace_journal(updated)
+    # The controlled discovery projection follows the exact migrated journal;
+    # it is not left bound to the pre-migration service snapshot.
+    resources_raw = core._projection_file(
+        core.RESOURCES_RECORD, owner=core.ROOT_UID, group=core.ROOT_UID,
+        mode=0o600, maximum=16 * 1024)
+    resources = json.loads(resources_raw)
+    current_journal = core._projection_file(
+        core.JOURNAL, owner=core.ROOT_UID, group=core.ROOT_UID,
+        mode=0o600, maximum=64 * 1024)
+    resources["core_source_generation"] = core._core_source_generation()
+    resources["core_ownership_sha256"] = hashlib.sha256(current_journal).hexdigest()
+    core._atomic_replace(
+        core.RESOURCES_RECORD,
+        (json.dumps(resources, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"),
+        0o600, core.ROOT_UID, core.ROOT_UID)
     return source
 
 
@@ -567,6 +656,75 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
     monkeypatch.setattr(core, "_stop_owned_core_for_adapter_update", stop_owned)
     monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
     monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
+
+
+def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
+    """Install a real old-helper generation and bind its receipt to the current journal."""
+    from hermes_installer.registry import manual_jarvis_skills as native
+
+    archive = native.build_manual_jarvis_skills_artifact()
+    artifact_sha = hashlib.sha256(archive).hexdigest()
+    manifest, files = native._read_artifact(archive, artifact_sha)
+    previous_helper = b"retained helper from the controlled prior generation\n"
+    manifest["installer"] = {
+        "archive_path": "manual_stage_jarvis_skills.py",
+        "size_bytes": len(previous_helper),
+        "sha256": hashlib.sha256(previous_helper).hexdigest(),
+    }
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as package:
+        native._zip_write(package, "manifest.json", native._canonical_json(manifest))
+        for name, content in sorted(files.items()):
+            native._zip_write(package, name, content)
+        native._zip_write(package, "manual_stage_jarvis_skills.py", previous_helper)
+    old_archive = stream.getvalue()
+    old_sha = hashlib.sha256(old_archive).hexdigest()
+
+    # _hash_generation_tree enforces real root-owned ancestors and the exact
+    # admin-owned .hermes subtree; keep the fixture inside a private root path.
+    sandbox = Path(tempfile.mkdtemp(prefix="hermes-adapter-home-", dir="/root"))
+    sandbox.chmod(0o700)
+    request.addfinalizer(lambda: shutil.rmtree(sandbox, ignore_errors=True))
+    admin_home = sandbox / "admin"
+    home = admin_home / ".hermes"
+    admin_home.mkdir(mode=0o700)
+    home.mkdir(mode=0o700)
+    monkeypatch.setattr(core, "HOME", admin_home)
+    monkeypatch.setattr(core, "HERMES_HOME", home)
+    monkeypatch.setattr(native, "_JARVIS_HOME", home)
+    native.install_manual_jarvis_skills(
+        old_archive, hermes_home=home, expected_sha256=old_sha)
+
+    account = core.pwd.getpwnam("admin")
+    for root, directories, filenames in os.walk(home, topdown=False, followlinks=False):
+        for filename in filenames:
+            os.chown(Path(root) / filename, account.pw_uid, account.pw_gid,
+                     follow_symlinks=False)
+        for dirname in directories:
+            os.chown(Path(root) / dirname, account.pw_uid, account.pw_gid,
+                     follow_symlinks=False)
+    os.chown(home, account.pw_uid, account.pw_gid)
+    os.chown(admin_home, account.pw_uid, account.pw_gid)
+    os.chmod(home, 0o700)
+    os.chmod(admin_home, 0o700)
+
+    # Keep the receipt and immutable CAS tied to the actual prior-helper bytes.
+    current_record = core._write_resources_discovery()
+    current_record.update({
+        "artifact_sha256": old_sha,
+        "ownership_manifest_sha256": hashlib.sha256(
+            native._canonical_json(manifest)).hexdigest(),
+    })
+    core._atomic_replace(core.RESOURCES_CAS / (old_sha + ".zip"), old_archive,
+                         0o600, core.ROOT_UID, core.ROOT_UID)
+    core._atomic_replace(
+        core.RESOURCES_RECORD,
+        (json.dumps(current_record, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"),
+        0o600, core.ROOT_UID, core.ROOT_UID)
+    assert core._hash_generation_tree(home, manifest, files, old_sha)
+    assert core.read_current_resources_discovery(
+        core_source_generation=current_record["core_source_generation"]
+    )["resources_state"] == "discovered"
 
 
 def _fixed_service_path_identity():
@@ -670,10 +828,11 @@ def test_post_migration_recovery_refuses_changed_current_launcher_before_touchin
 def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_launcher(tmp_path, monkeypatch, request):
     calls, enabled, _old_launcher, selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
+    core.migrate_owned_core_to_adapter_path()
+    _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
     memory = core.HERMES_HOME / "memories" / "owner.md"
     memory.parent.mkdir(parents=True)
     memory.write_text("existing owner memory")
-    core.migrate_owned_core_to_adapter_path()
     _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
     prior = json.loads(core.JOURNAL.read_text())
@@ -744,6 +903,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
+    _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
     _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
@@ -783,6 +943,7 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
+    _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
     _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
@@ -830,6 +991,7 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
+    _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
     _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
