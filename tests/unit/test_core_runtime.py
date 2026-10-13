@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from types import MappingProxyType, ModuleType, SimpleNamespace
@@ -395,9 +396,119 @@ def _bounded_owner_generation_restore_failure():
         sys.settrace(previous)
 
 
+def _systemd_decoded_exec_start_pre(unit_bytes):
+    """Read the manager-decoded ExecStartPre argv for an exact temporary unit."""
+    if os.geteuid() != 0:
+        raise AssertionError("systemd directive decoding requires the enrolled Pi root actor")
+    directive = next((row for row in unit_bytes.splitlines()
+                      if row.startswith(b"ExecStartPre=")), None)
+    if directive is None or len(directive) > 256 * 1024:
+        raise AssertionError("bounded generated ExecStartPre is required")
+    root = Path("/run/systemd/system")
+    root_info = root.lstat()
+    if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != 0
+            or root_info.st_gid != 0 or stat.S_IMODE(root_info.st_mode) & 0o022):
+        raise AssertionError("systemd runtime unit directory custody differs")
+    fixed_paths_before = _fixed_service_path_identity()
+    name = f"hermes-guard-decode-{os.getpid()}-{time.monotonic_ns()}.service"
+    path = root / name
+    content = (b"[Unit]\nDescription=No-start ExecStartPre decoder fixture\n"
+               b"[Service]\nType=oneshot\n" + directive + b"\nExecStart=/usr/bin/true\n")
+    def checked(argv, *, maximum=1024 * 1024):
+        result = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, check=False, timeout=15,
+                                close_fds=True)
+        if (result.returncode != 0 or len(result.stdout) > maximum
+                or len(result.stderr) > 8192):
+            raise AssertionError("bounded systemd parser query failed")
+        return result.stdout
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                 | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o644)
+    identity = None
+    try:
+        opened = os.fstat(fd)
+        identity = (opened.st_dev, opened.st_ino)
+        os.fchown(fd, 0, 0)
+        os.fchmod(fd, 0o644)
+        view = memoryview(content)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("short probe unit write")
+            view = view[written:]
+        os.fsync(fd)
+        final = os.fstat(fd)
+        if (not stat.S_ISREG(final.st_mode) or final.st_uid != 0 or final.st_gid != 0
+                or stat.S_IMODE(final.st_mode) != 0o644 or final.st_nlink != 1
+                or final.st_size != len(content)):
+            raise AssertionError("temporary parser unit custody differs")
+    except BaseException:
+        if identity is not None:
+            try:
+                current = path.lstat()
+                if ((current.st_dev, current.st_ino) == identity
+                        and stat.S_ISREG(current.st_mode) and current.st_uid == 0
+                        and current.st_gid == 0 and current.st_nlink == 1):
+                    path.unlink()
+            except OSError:
+                pass
+        raise
+    finally:
+        os.close(fd)
+    loaded = False
+    try:
+        loaded = True
+        checked(("systemctl", "daemon-reload"), maximum=65536)
+        raw = checked(("busctl", "--json=short", "call",
+            "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager", "LoadUnit", "s", name))
+        loaded_result = json.loads(raw)
+        object_path = loaded_result.get("data") if type(loaded_result) is dict else None
+        if type(object_path) is list and len(object_path) == 1:
+            object_path = object_path[0]
+        expected_path = "/org/freedesktop/systemd1/unit/" + name.replace(
+            "\\", "_5c").replace("-", "_2d").replace(".", "_2e")
+        if (type(loaded_result) is not dict or loaded_result.get("type") != "o"
+                or object_path != expected_path):
+            raise AssertionError("systemd returned an unexpected probe unit")
+        raw = checked(("busctl", "--json=short", "get-property",
+            "org.freedesktop.systemd1", object_path,
+            "org.freedesktop.systemd1.Service", "ExecStartPre"))
+        payload = json.loads(raw)
+        if type(payload) is not dict or payload.get("type") != "a(sasbttttuii)":
+            raise AssertionError("systemd returned an unexpected ExecStartPre type")
+        rows = payload.get("data")
+        if type(rows) is not list or len(rows) != 1:
+            raise AssertionError("systemd returned an unexpected ExecStartPre count")
+        row = rows[0]
+        if (type(row) is not list or len(row) != 10 or type(row[0]) is not str
+                or type(row[1]) is not list
+                or any(type(value) is not str for value in row[1])
+                or type(row[2]) is not bool
+                or any(type(value) is not int for value in row[3:])):
+            raise AssertionError("systemd returned an unexpected ExecStartPre row")
+        if (row[0] != str(core.PYTHON) or len(row[1]) != 5
+                or row[1][0] != str(core.PYTHON)
+                or row[1][1:4] != ["-I", "-S", "-c"]):
+            raise AssertionError("systemd returned an unexpected guard argv")
+        return tuple(row[1])
+    finally:
+        current = path.lstat()
+        if (identity is None or (current.st_dev, current.st_ino) != identity
+                or not stat.S_ISREG(current.st_mode) or current.st_uid != 0
+                or current.st_gid != 0 or stat.S_IMODE(current.st_mode) != 0o644
+                or current.st_nlink != 1 or current.read_bytes() != content):
+            raise AssertionError("temporary parser unit cleanup refused")
+        path.unlink()
+        if loaded:
+            checked(("systemctl", "daemon-reload"), maximum=65536)
+        if _fixed_service_path_identity() != fixed_paths_before:
+            raise AssertionError("parser fixture changed a fixed Core service file")
+
+
 def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None,
                     runner=None, diagnostic=False, service_sources=None,
-                    return_result=False):
+                    return_result=False, systemd_argv=None):
     """Run the untouched generated guard as admin in a private mount view."""
     if os.geteuid() != 0:
         raise AssertionError("the Pi startup-guard fixture requires root to model admin")
@@ -462,7 +573,8 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
                 os.chown(target, mutation[1], mutation[2])
         os.chown(cred_dir, admin.pw_uid, admin.pw_gid)
         os.chmod(cred_dir, 0o500)
-        command = shlex.split(line.partition("=")[2])
+        command = (list(systemd_argv) if systemd_argv is not None
+                   else shlex.split(line.partition("=")[2]))
         original_command = list(command)
         if diagnostic:
             try:
@@ -2451,7 +2563,7 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     expected_new_unit = core._unit(
         adapter_source=Path(updated["adapter_source"]), cohort_gate=True,
         backup_generation=prior["adapter_generation"], native_plugin_transition=True,
-        failure_diagnostics=True)
+        failure_diagnostics=True, whole_guard_encoding=True)
     backup_credentials = [row for row in expected_new_unit.decode().splitlines()
         if row.startswith("LoadCredential=adapter-backup-")]
     assert len(backup_credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 3
@@ -3695,8 +3807,13 @@ def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypat
         backup_generation="a" * 64, native_plugin_transition=True)
     assert unit != legacy_unit
     assert b"HERMES_CORE_START_GUARD_FAILURE_V1=" not in legacy_unit
+    guard_argv = _systemd_decoded_exec_start_pre(unit)
+    decoded_guard = guard_argv[4]
+    assert decoded_guard.startswith("exec(bytes.fromhex(")
+    compile(decoded_guard, "<systemd-decoded-native-guard>", "exec")
 
-    successful = _exec_start_pre(unit, expect_success=True, return_result=True)
+    successful = _exec_start_pre(unit, expect_success=True, return_result=True,
+                                 systemd_argv=guard_argv)
     assert successful.returncode == 0
     assert successful.stdout == b"FIXTURE_NAMESPACE_READY\n"
     assert successful.stderr == b""
@@ -3706,7 +3823,7 @@ def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypat
     token_name = token_row.partition("=")[2].partition(":")[0]
     sentinel = b"guard-telemetry-secret-sentinel"
     denied = _exec_start_pre(unit, credential_mutations={token_name: ("bytes", sentinel)},
-        expect_success=False, return_result=True)
+        expect_success=False, return_result=True, systemd_argv=guard_argv)
     assert denied.returncode == 1
     assert denied.stdout == b"FIXTURE_NAMESPACE_READY\n"
     assert sentinel not in denied.stderr
@@ -3738,7 +3855,8 @@ def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypat
                       if row.startswith("LoadCredential=adapter-update-cohort:"))
     cohort_name = cohort_row.partition("=")[2].partition(":")[0]
     denied_cohort = _exec_start_pre(unit, credential_mutations={
-        cohort_name: ("bytes", b"{}\n")}, expect_success=False, return_result=True)
+        cohort_name: ("bytes", b"{}\n")}, expect_success=False, return_result=True,
+        systemd_argv=guard_argv)
     assert denied_cohort.returncode == 1
     assert denied_cohort.stdout == b"FIXTURE_NAMESPACE_READY\n"
     assert len(denied_cohort.stderr.splitlines()) == 1
@@ -3762,33 +3880,43 @@ def test_m1_cohort_accepts_only_its_exact_legacy_or_diagnostic_guard_recipe(
         tmp_path, monkeypatch, request)
     source = Path(cohort["new_source"])
     launcher_sha = hashlib.sha256(core._launcher(adapter_source=source)).hexdigest()
-    for diagnostic in (False, True):
-        unit = core._unit(adapter_source=source, cohort_gate=True,
-            backup_generation=cohort["old_adapter_generation"],
-            native_plugin_transition=False, failure_diagnostics=diagnostic)
-        unit_sha = hashlib.sha256(unit).hexdigest()
-        recipe = core._adapter_recipe_sha256(
-            str(source), cohort["new_adapter_generation"], unit_sha, launcher_sha)
-        bound = dict(cohort, new_unit_sha256=unit_sha,
-                     new_launcher_sha256=launcher_sha,
-                     new_source_recipe_sha256=recipe)
-        assert core._cohort_guard_unit(bound, source=source,
-            backup_generation=cohort["old_adapter_generation"],
-            native_plugin_transition=False) == unit
-        tampered = dict(bound, new_source_recipe_sha256="f" * 64)
-        with pytest.raises(core.CoreRuntimeError, match="exact generated recipes"):
-            core._cohort_guard_unit(tampered, source=source,
+    for native_transition in (False, True):
+        variants = [(False, False), (True, False)]
+        if native_transition:
+            variants.append((True, True))
+        for diagnostic, whole_encoded in variants:
+            unit = core._unit(adapter_source=source, cohort_gate=True,
                 backup_generation=cohort["old_adapter_generation"],
-                native_plugin_transition=False)
-        forged_unit_sha = hashlib.sha256(b"forged unit bytes\n").hexdigest()
-        forged_recipe = core._adapter_recipe_sha256(
-            str(source), cohort["new_adapter_generation"], forged_unit_sha, launcher_sha)
-        forged = dict(bound, new_unit_sha256=forged_unit_sha,
-                      new_source_recipe_sha256=forged_recipe)
-        with pytest.raises(core.CoreRuntimeError, match="exact generated recipes"):
-            core._cohort_guard_unit(forged, source=source,
+                native_plugin_transition=native_transition,
+                failure_diagnostics=diagnostic,
+                whole_guard_encoding=whole_encoded)
+            unit_sha = hashlib.sha256(unit).hexdigest()
+            recipe = core._adapter_recipe_sha256(
+                str(source), cohort["new_adapter_generation"], unit_sha, launcher_sha)
+            bound = dict(cohort, new_unit_sha256=unit_sha,
+                         new_launcher_sha256=launcher_sha,
+                         new_source_recipe_sha256=recipe)
+            assert core._cohort_guard_unit(bound, source=source,
                 backup_generation=cohort["old_adapter_generation"],
-                native_plugin_transition=False)
+                native_plugin_transition=native_transition) == unit
+            tampered = dict(bound, new_source_recipe_sha256="f" * 64)
+            with pytest.raises(core.CoreRuntimeError, match="exact generated recipes"):
+                core._cohort_guard_unit(tampered, source=source,
+                    backup_generation=cohort["old_adapter_generation"],
+                    native_plugin_transition=native_transition)
+            forged_unit_sha = hashlib.sha256(b"forged unit bytes\n").hexdigest()
+            forged_recipe = core._adapter_recipe_sha256(
+                str(source), cohort["new_adapter_generation"], forged_unit_sha, launcher_sha)
+            forged = dict(bound, new_unit_sha256=forged_unit_sha,
+                          new_source_recipe_sha256=forged_recipe)
+            with pytest.raises(core.CoreRuntimeError, match="exact generated recipes"):
+                core._cohort_guard_unit(forged, source=source,
+                    backup_generation=cohort["old_adapter_generation"],
+                    native_plugin_transition=native_transition)
+            if native_transition and whole_encoded:
+                assert unit != core._unit(adapter_source=source, cohort_gate=True,
+                    backup_generation=cohort["old_adapter_generation"],
+                    native_plugin_transition=True, failure_diagnostics=True)
     with pytest.raises(core.CoreRuntimeError, match="source-cohort unit"):
         core._unit(adapter_source=source, failure_diagnostics=True)
 
@@ -3856,7 +3984,7 @@ def _native_plugin_starting_fixture(tmp_path, monkeypatch, request, *, empty_opt
 
     new_unit = core._unit(adapter_source=Path(cohort["new_source"]), cohort_gate=True,
         backup_generation=cohort["old_adapter_generation"], native_plugin_transition=True,
-        failure_diagnostics=True)
+        failure_diagnostics=True, whole_guard_encoding=True)
     journal["unit_sha256"] = hashlib.sha256(new_unit).hexdigest()
     journal_raw = core._canonical_json(journal)
     core.JOURNAL.write_bytes(journal_raw)
@@ -3899,19 +4027,33 @@ def test_m1_boot_gate_checks_typed_native_plugin_transition_quickly(
     assert len(credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 3
     assert "LoadCredential=adapter-backup-native-plugin-plugin-yaml" in credentials
     assert "LoadCredential=adapter-backup-native-plugin-__init__-py" in credentials
-    assert _exec_start_pre(unit, expect_success=True) == 0
+    # The effect test must execute the exact typed argv returned by systemd,
+    # not a shlex reconstruction of the ExecStartPre source.
+    systemd_argv = _systemd_decoded_exec_start_pre(unit)
+    compile(systemd_argv[4], "<systemd-decoded-native-guard>", "exec")
+    # The retained inline diagnostic recipe is intentionally still available
+    # for exact old-cohort custody, but systemd's C-unescaping corrupts it.
+    # New native-plugin cohorts therefore use the separately recipe-bound
+    # whole-program encoded variant above.
+    legacy_inline = core._unit(adapter_source=Path("/opt/hermes-installer-core-fixture/src"),
+        cohort_gate=True, backup_generation="a" * 64, native_plugin_transition=True,
+        failure_diagnostics=True)
+    legacy_argv = _systemd_decoded_exec_start_pre(legacy_inline)
+    with pytest.raises(SyntaxError):
+        compile(legacy_argv[4], "<systemd-decoded-retained-inline-guard>", "exec")
+    assert _exec_start_pre(unit, expect_success=True, systemd_argv=systemd_argv) == 0
     assert _exec_start_pre(unit, credential_mutations={
         "adapter-backup-native-plugin-__init__-py": ("remove",)},
-        expect_success=False) != 0
+        expect_success=False, systemd_argv=systemd_argv) != 0
     module = plugin / "__init__.py"
     module.write_bytes(b"foreign plugin bytes\n")
     os.chown(module, core.ROOT_UID, core.ROOT_UID)
     module.chmod(0o444)
-    assert _exec_start_pre(unit, expect_success=False) != 0
+    assert _exec_start_pre(unit, expect_success=False, systemd_argv=systemd_argv) != 0
     module.write_bytes(new_members["__init__.py"])
     os.chown(module, core.ROOT_UID, core.ROOT_UID)
     module.chmod(0o444)
-    assert _exec_start_pre(unit, expect_success=True) == 0
+    assert _exec_start_pre(unit, expect_success=True, systemd_argv=systemd_argv) == 0
 
 
 def _committed_initial_primary_guard_fixture(tmp_path, monkeypatch, request):
