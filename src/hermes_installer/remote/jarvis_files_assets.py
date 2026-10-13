@@ -72,6 +72,7 @@ const previewBytes = root.querySelector('[data-preview-bytes]');
 const list = root.querySelector('[data-files]');
 const empty = root.querySelector('[data-empty]');
 let stopped = false, busy = false, pendingAttempt = null, conversationId = '', previewRevision = 0;
+let filesReadRevision = 0;
 function call(method, path, body) {
 if (stopped) return Promise.reject(new Error('View closed'));
 return method === 'GET' ? api.get(path) : api.post(path, body);
@@ -98,11 +99,13 @@ list.append(row);
 empty.hidden = list.childElementCount > 0;
 }
 async function refreshFiles() {
-if (stopped || busy || !conversationId) return;
-busy = true; refreshButton.disabled = true;
-try { const data = await call('GET', filesPath()); if (!stopped) renderFiles(data && data.files); }
-catch (_) { if (!stopped) note.textContent = 'File status is temporarily unavailable.'; }
-finally { busy = false; if (!stopped) refreshButton.disabled = false; }
+if (stopped || !conversationId) return;
+const targetConversation = conversationId, revision = ++filesReadRevision;
+const isCurrent = () => !stopped && revision === filesReadRevision && targetConversation === conversationId;
+refreshButton.disabled = true;
+try { const data = await call('GET', filesPath(targetConversation)); if (isCurrent()) renderFiles(data && data.files); }
+catch (_) { if (isCurrent()) note.textContent = 'File status is temporarily unavailable.'; }
+finally { if (isCurrent()) refreshButton.disabled = busy; }
 }
 async function loadConversations() {
 try {
@@ -201,6 +204,7 @@ uploadButton.disabled = !conversationId || !fileInput.files?.length;
 }
 function onConversationChange() {
 conversationId = conversationSelect.value || '';
+filesReadRevision++;
 pendingAttempt = null;
 renderFiles([]);
 uploadButton.disabled = true;
