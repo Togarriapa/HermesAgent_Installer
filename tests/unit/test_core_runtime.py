@@ -362,7 +362,9 @@ def _bounded_owner_generation_restore_failure():
                         "prior_artifact": parsed.get("artifact_sha256") == old_sha,
                         "target_path": parsed.get("generation_path") == str(target),
                         "new_artifact_retained": parsed.get("retained_artifact_sha256") == new_sha,
-                        "backup_path": parsed.get("retained_generation_backup") == str(HERMES_HOME / name),
+                        "backup_path": (isinstance(name, str) and
+                                        parsed.get("retained_generation_backup") ==
+                                        str(core.HERMES_HOME / name)),
                     }
             observed.append({
                 "process_present": process is not None,
