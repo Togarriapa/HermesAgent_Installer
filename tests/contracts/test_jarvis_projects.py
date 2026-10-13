@@ -174,7 +174,12 @@ def test_projects_assets_describe_the_verified_turn_context_boundary():
     assert "data-note-selected" in html and "data-note-more" in html
     assert "noteSearchButton.addEventListener('click', searchNotes" in js and "noteBrowse.addEventListener" in js
     assert "loadNotePage('recent', '', null, false)" in js
-    assert "'/chat/api/second-brain/notes?'" in js and "'/chat/api/second-brain/search?'" in js
+    assert "return '/chat/api/second-brain/' + (mode === 'search' ? 'search' : 'notes') + '?' + params.toString()" in js
+    routes = set(FEATURE_ASSETS.api_routes)
+    assert ("GET", "/chat/api/second-brain/notes") in routes
+    assert ("GET", "/chat/api/second-brain/search") in routes
+    assert ("GET", "/chat/api/second-brain/notes/{note_id}") in routes
+    assert not any(method == "POST" and path.startswith("/chat/api/second-brain/") for method, path in routes)
     assert "'/chat/api/second-brain/notes/' + encodeURIComponent(noteId)" in js
     assert "noteReadRevision" in js and "capturedProjectRevision === projectRevision" in js
     assert "previewRevision" in js and "expectedDigest !== note.contentSha256" in js
