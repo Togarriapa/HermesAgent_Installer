@@ -258,6 +258,182 @@ compiled and passed strict specs/plan validation on the Pi. Archive SHA-256
 No runtime checks or deployment were repeated for this specification-only
 leaf. Luna's bounded implementation follows the validated Sol handoff.
 
+The v90 candidate `a3633c70fb5e4c09e55b4ed58af064ce9c2ad13b` compiled
+and passed strict specs/plan validation on the Pi; affected contract group156
+passed in12.83s. Archive SHA-256
+`0a5794e7b0a8b1f7bcd832ef5a503c03bcf346a3011bb92165d5563ba4197174`.
+The one full-cycle positive failed in319.47s after the genuine importer receipt
+and independent new generation tree passed. The next guarded read refused
+listener custody; the fixture still reached the real PIDFD listener reader
+despite using a controlled service/process model. A bounded test-only correction
+must join that model to the actual guarded-read predicates. Recovery also
+refused the retained prior marker. No production deployment or full update,
+oversized-receipt, recovery or new-read acceptance is claimed from this run.
+
+The v91 fixture candidate `e9f86147dc32fbc42a7d8cccd75bedbb3cf85c21`
+compiled and passed strict specs/plan checks. Archive SHA-256
+`904bc60488eebf6c2920dd176ba5f19de93fde76d61a89b53ce59347b7be9712`.
+Its process model supplies a fresh pipe-backed held handle per restart and a
+real PIDFD for the test process's listener recheck. The first case remained
+CPU-active; Root interrupted only the identified Root pytest process after
+verifying exact command, source working directory and private mount namespace.
+Pytest reports KeyboardInterrupt in its YAML emitter after534.77s; no selected
+case completed, so this run establishes no pass/failure acceptance. The test
+diagnostic tracer had traced library frames and handled every return event.
+v92 filters call tracing to the three reviewed source modules and caches
+filename classification. Runtime clocks, seals, admission and source pins are
+unchanged. The interrupted fixture never changed the live Core service.
+
+The v92 fixture candidate `5b97da0b5f00c51bbb32bd4449153c23210d8718`
+compiled and passed strict specs/plan validation; one full-cycle positive failed
+in139.59s. Archive SHA-256
+`355f97fa56465aef8bcc28be66ce144438682312419cbba4b8821b59299f6580`.
+The filtered diagnostic advanced through the genuine import, tree proof and
+new-read issuance. Initial primary adoption then called its early root-context
+journal reader outside the existing authorized initial-adoption scope; the
+normal starting-journal recovery gate correctly refused. The minimal manager
+correction enters that validated scope for this one read, with custody checks
+before/after and normal Root/lock/journal admission unchanged. Sol reviewed
+the manager delta and its exact one-entry source pin. Live deployment and
+full update/recovery acceptance remain pending.
+
+The v98 diagnostic candidate `d8fbb3ade7bceac14172c1efdf396f4ea34577ee`
+compiled and passed strict specs/plan validation; one positive failed in138.44s.
+Archive SHA-256
+`0a8fe061c84315751519f7ca667d439df9468f76efb10b6b789959865f0542d9`.
+Its false-return probe identified the initial validator's caught-exception
+return. The existing exception pool stopped recording after80 events, obscuring
+the later exception. The next test-only probe keeps the first30 plus latest50
+sites, and separately at most12 internal initial-validator exception sites.
+Source admission, leases and runtime code are unchanged; no acceptance follows
+this diagnostic candidate.
+
+The v99 diagnostic candidate `b4fdf7eab68771530483325d21f0207a033d8ba5`
+compiled and passed strict specs/plan validation; one positive failed in139.05s.
+Archive SHA-256
+`1e3fb809d6e4f9ec9a0ae3be5d80e245b9ddfa3258fa19ad4585aceace7f22a9`.
+Recent source locations identified an actual reader/producer mismatch: stage
+recording writes the preparing manager digest into the cohort, but its reader
+still required absence for both pending and preparing states. The finite
+correction requires absence before recording, the exact preparing/writing/
+adopted digest in its corresponding stage, and the immutable backup digest
+equal to the retained prior SOUL. Existing closed progress, phase, after-Resources
+and rolling-back proofs remain. Sol reviewed that repair and the exact Core
+source pin. No live update or acceptance is claimed; the live Primary journal
+remains restored to its original absent state.
+
+The v93 candidate `bd9906eca2e44fbd89c7b565f31304db968b4279` compiled
+and passed strict specs/plan validation; the affected contracts plus Primary
+manager group168 passed in54.19s. Archive SHA-256
+`7f78b9650d34d8eac1758be9b540f787ed25ac42fbe7401eaafb96875531d096`.
+The full-cycle positive failed in139.05s with a PrimaryPromptAdoptionError
+after entering the corrected early scope. The bounded probe omitted that
+module's frames; v94 adds its filename to the same bounded call/site/context
+filter. No runtime change or acceptance follows the diagnostic-only leaf.
+
+The v94 diagnostic candidate `fc2af8ff7242642f961c150a18c15a397138e80a`
+compiled and passed strict specs/plan validation; one positive failed in139.66s.
+Archive SHA-256
+`7911f3805f6779190bb88930d6641d40b89cb7515e09234a6849d30f7947d18c`.
+The exact Primary manager frame was its source-receipt gate: the fixture
+discovery projection omitted `resources_revision`, although its real CAS and
+record contained it. v95 independently validates record revision/tree against
+the parsed CAS manifest and includes the required revision in the projection.
+This test-only correction does not relax production source admission or claim
+successful profile/update/recovery effects. Unchanged168 checks were not
+repeated for the diagnostic-only candidate.
+
+The v95 fixture candidate `3b95ba26c5dc5fde2c838a1555c7bdd5599dcd91`
+compiled and passed strict specs/plan validation; one positive failed in137.79s.
+Archive SHA-256
+`87a15f4a1c28c033966f6278215908f7ef9d0df125f571f9b75765f5176154f5`.
+It passed the corrected source-receipt join, then exposed another actual
+initial-adoption ordering bug: preparing manager record publication preceded
+the immutable owner SOUL backup, so the immediate custody check and recovery
+both refused the missing backup. The minimal initial-only manager correction
+durably writes/readbacks the exact backup under validated scope before the
+preparing record, with custody checks and owner lock retained. Record failure
+keeps the immutable orphan; it does not grant ownership or remove owner data.
+Ordinary adoption and existing resume paths are unchanged. Sol reviewed the
+finite correction and exact Primary manager source pin; full Pi acceptance
+and any target deployment remain pending.
+
+The v96 candidate `929ca443193449754a28a8697224512f0ded5faf` compiled
+and passed strict specs/plan validation; affected group170 passed in54.54s,
+and one positive failed in59.05s before update effects because it found a
+preparing primary record. Archive SHA-256
+`11dbc75c62b5de14e830be0078c894f2900af116cb1e9a0024d638369bd491e5`.
+**Fixture isolation incident:** its main journal/CAS were temporary, but
+Primary journal/backups and Resources overlay/lock constants had not been
+redirected. Pi95 had written the live preparing Primary record. Generic
+directories/locks were also exposed. The private HOME bind protected the actual
+SOUL path; the failed test was not free of host metadata effects. Earlier scoped
+isolation descriptions must not be read as blanket host-effect guarantees.
+
+Root's strict closed-record/custody read joined the record to the retained
+Pi95 cohort: fixture source `/opt/hermes-installer-core-3b95ba26c/src`,
+Core generation `c` repeated64, exact artifact/source-prompt/managed-block,
+prior/desired SOUL digests and signature. Its exact known fixture prior bytes,
+prefix length, empty result signature and null native proof matched; the actual
+SOUL was not those fixture bytes. No hash-named immutable backup existed.
+Record SHA-256
+`cb3c4f819834a24734bdc0b3a424667935fc1bc05e12ba57ab54eda46280c8bb`;
+retained cohort SHA-256
+`12446d0a8d49efba6bbd7483b025e9f8c029e60516cc5e77a26aaa0fb70042df`.
+Root preserved exact raw record, cohort and private provenance snapshots in
+Root0700 `test-fixture-quarantine-20261013/` under the live Core runtime
+directory, rechecked original inode/metadata/bytes, atomically moved only the
+proven fixture record, and fsynced both directories. Original absent Primary
+ownership is restored. Generic locks/directories and unrelated data remain.
+
+The quarantine operation's before/after SOUL, present auth file, Core/Resources,
+Obsidian registration and overlay-active digests matched. Separately all four
+live units are active at old source0cbf9b819. Registration/vault digests still
+match the earlier live preflight. This is bounded recovery evidence, not proof
+of every historical test effect or successful Jarvis adoption. v97 redirects
+and asserts all named Core metadata write paths under `tmp_path`; Sol reviewed
+the finite fix before another test. Private HOME and `/opt` isolation remain
+independently checked. No new Core has been deployed or accepted.
+
+The v97 isolated fixture candidate `012c75e36cd0a57949d997385c2122e4bea3fb8e`
+compiled and passed strict specs/plan validation. One positive failed in139.01s
+after immutable backup, preparing manager record and stage recording. Archive
+SHA-256 `68bace9923e64e29ab558b142078e495301063f299e990868828bf0a263de335`.
+The next initial-custody predicate returned false; a test-only probe retains
+at most12 filename/function/line tuples for selected false returns so the exact
+gate can be identified without values or clock/admission changes. The live
+Primary journal remained absent during and after v97. Source/tools match v96,
+whose170 checks were not repeated; broader changed fixture qualification and
+full update/recovery acceptance remain pending.
+
+The v101 candidate `456a9314e851abc16b367f9b4dd928f326a8027a`
+compiled on the Pi and passed strict specs/plan validation. Archive SHA-256
+`50cb77fd218101b86d790c709d1f70950a75996d4c22fa4a7d3c1ce9017eab10`.
+The affected gateway/lifecycle/plugin/Primary group passed170 tests. The
+selected Core group returned one failure and six passes in193.62s. Fresh
+writing metadata, prewrite/read-failure and drift-during-native-readback
+refusals passed. Complete update now reaches `_verified_resources_payload`
+and its controlled native readback: the fixture incorrectly asserts that an
+unspecified managed-block expectation means the SOUL cannot contain a managed
+block, even after genuine initial adoption has written it. Native/provider
+readbacks remain explicit fixture substitutes. A test-only correction is
+pending; complete update/recovery and actual target acceptance remain open.
+
+The v100 candidate `0540742ca98920cf20a76156278519a7806cc6c2`
+compiled on the Pi and passed strict specs/plan validation. Archive SHA-256
+`fbc50b7a1a674df45973429f5644f78232c29545b08ba95a56255a3c319307d7`.
+The affected gateway, lifecycle, plugin transition and Primary group passed
+170 tests in54.73s. The selected Core group returned one failure and one pass
+in145.05s: the preparing/writing/adopted manager-digest admission/refusal case
+passed, while complete update advanced through actual immutable backup and
+private SOUL replacement to `refresh_initial_primary_starting_tuple`. That
+reader demanded the adopted signature from a writing record whose signature
+is still empty; the manager persists it only after refresh. Sol reviewed the
+narrow correction: exact writing-record digest and custody joins, fresh desired
+SOUL bytes with original owner/mode/link metadata, then exact signature/bytes
+and record recheck after A1 readback. The correction remains subject to Pi101
+qualification. No live candidate deployment or native chat acceptance follows.
+
 The v69 specification-only candidate
 `6b4621209a11895ce9f7894013ce034e1bdb3b05` compiled on the Pi and passed
 strict specs/plan validation. Archive SHA-256
