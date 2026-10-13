@@ -176,6 +176,22 @@ def test_overview_reactor_uses_observed_activity_and_keeps_controls_accessible()
     assert "commandInput.value = button.dataset.commandPrompt" in js
 
 
+def test_overview_reactor_has_authored_static_iris_and_measured_flank_cards():
+    html, css = FEATURE_ASSETS.view_html, FEATURE_ASSETS.css
+    assert html.count('class="reactor-iris-blade"') == 6
+    for layer in ("reactor-segment-north", "reactor-segment-east", "reactor-segment-south",
+                  "reactor-segment-west", "reactor-instrument-track", "reactor-chamber",
+                  "reactor-core", "reactor-lens", "reactor-aperture"):
+        assert f'class="{layer}"' in html
+    assert ".reactor-segment{fill:none;stroke:" in css
+    iris_rule = css[css.index(".reactor-iris-blade{"):css.index(".reactor-core{")]
+    assert "stroke:" in iris_rule and "animation:" not in iris_rule
+    for metric in ("total", "completed", "active", "failed"):
+        assert f'data-metric="{metric}">Unknown' in html
+    assert 'data-conversation-count>Unknown' in html
+    assert ".command-centre-shell .overview-readout{position:relative" in css
+
+
 def test_overview_command_submission_preserves_text_on_denial_and_recovers():
     js = FEATURE_ASSETS.mount_js
     start = js.index("  async function submitCommand(event) {")
