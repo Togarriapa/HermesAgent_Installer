@@ -88,7 +88,8 @@ _CSS = """
 [data-feature-root=\"projects\"] .project-note-results li,[data-feature-root=\"projects\"] .project-note-chips li{display:flex;align-items:center;justify-content:space-between;gap:.55rem;padding:.5rem .6rem;border:1px solid var(--border,#294047);border-radius:8px;min-width:0}
 [data-feature-root=\"projects\"] .project-note-results li span,[data-feature-root=\"projects\"] .project-note-chips li span{overflow-wrap:anywhere}
 [data-feature-root=\"projects\"] .project-note-row-actions{display:flex;gap:.35rem;flex:none}
-[data-feature-root=\"projects\"] .project-note-row-actions button,[data-feature-root=\"projects\"] .project-note-chips button{min-height:38px;font-size:.74rem}
+[data-feature-root=\"projects\"] [data-note-query],[data-feature-root=\"projects\"] .project-note-row-actions button,[data-feature-root=\"projects\"] .project-note-chips button{min-width:44px;min-height:44px}
+[data-feature-root=\"projects\"] .project-note-row-actions button,[data-feature-root=\"projects\"] .project-note-chips button{font-size:.74rem}
 [data-feature-root=\"projects\"] .project-note-preview{border:1px solid var(--border,#294047);border-radius:9px;padding:.7rem;background:rgba(7,22,28,.55);min-width:0}
 [data-feature-root=\"projects\"] .project-note-preview pre{max-height:20rem;overflow:auto;margin:.55rem 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.77rem;line-height:1.55;color:#d7e7e9}
 [data-feature-root=\"projects\"] .project-actions{display:flex;flex-wrap:wrap;gap:.5rem}
