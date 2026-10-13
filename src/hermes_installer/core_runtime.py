@@ -2815,7 +2815,7 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
   gate_code=""
  diagnostic_code=""
  if failure_diagnostics:
-  diagnostic_code=(
+  diagnostic_body=(
    "def _diag_value(fn):\n"
    " try:\n"
    "  value=fn()\n"
@@ -2844,6 +2844,9 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
    "if not ok:\n"
    " try: _diag_emit()\n"
    " except BaseException: pass\n")
+  diagnostic_code=("exec(bytes.fromhex("+
+   repr(diagnostic_body.encode("ascii").hex())+
+   ").decode('ascii')); ")
  return base_code+gate_code+diagnostic_code+"raise SystemExit(0 if ok else 1)"
 def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False,backup_generation=None,
           native_plugin_transition=False,failure_diagnostics=False):

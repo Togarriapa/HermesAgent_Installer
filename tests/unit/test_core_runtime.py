@@ -3642,6 +3642,9 @@ def test_m1_guard_diagnostic_runs_only_after_original_guard_denies(
 def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypatch, request):
     unit, _plugin, _old_members, _new_members = _native_plugin_starting_fixture(
         tmp_path, monkeypatch, request)
+    guard_rows = [row for row in unit.decode().splitlines()
+                  if row.startswith("ExecStartPre=")]
+    assert len(guard_rows) == 1
     source = Path("/opt/hermes-installer-core-fixture/src")
     legacy_unit = core._unit(adapter_source=source, cohort_gate=True,
         backup_generation="a" * 64, native_plugin_transition=True)
