@@ -2583,7 +2583,7 @@ The Android companion SHALL provide owned text chat, foreground PTT to editable 
 - **AND** Root Pi backend evidence and actual per-build Pixel10/HonorX5bPlus/tablet audio/lifecycle/accessibility plus candidate-bound affected/full-flow UX revision precede acceptance; assistant-role/hotword/background/HA/ROM/notifications remain separate open obligations.
 
 ### Requirement: Original administrator is explicitly enrolled by trusted setup
-Global Profiles and native skill-source administration SHALL require a Root-enrolled immutable signed identity, independently checked at backend and native effect boundaries. Explicit trusted setup SHALL verify fresh identity and fixed Home custody; allowlist order, first login or frontend roles SHALL NOT enroll. Missing/revoked/changed registration SHALL deny global access while ordinary approved family chat and private owner data remain available.
+Household global Profiles/native-skill access SHALL require explicit Root enrollment and independent backend/native identity checks. Genuinely absent registration MAY preserve existing matching-singleton access, never an enrolled role; absent-union, malformed, revoked or mismatched records SHALL deny without fallback. Setup SHALL verify fresh signed identity/Home; allowlist order, first login or frontend roles SHALL NOT enroll. Family chat and private ownership SHALL remain unchanged.
 
 #### Scenario: Original administrator operates within household admission
 - **WHEN** explicit Root setup confirms its selected original-owner email and verifies fresh current issuer/audience/subject and Home, then that enrolled identity accesses global Profiles/native skills under a multi-email allowlist
@@ -2594,3 +2594,20 @@ Global Profiles and native skill-source administration SHALL require a Root-enro
 - **WHEN** Root revokes/reactivates an enrollment, an old preview is submitted, or source update/rollback/restart or interrupted enrollment occurs
 - **THEN** exclusive writer/shared native-transaction lock order and expected registration revision/SHA linearize authority; stale approvals deny even for the same subject, current tombstone is retained and uncertain bytes/effects are not silently overwritten/replayed.
 - **AND** fixed Root custody/no-follow/CAS/atomic fsync remains; identity transfers/migrations require separate review, token/claims remain redacted, ordinary owner lease expiry is unchanged, and Root Pi effect/denial/recovery plus mandatory full-flow UI qualification precedes acceptance.
+
+### Requirement: Native admin calls consume fresh bounded child issuance
+Backend global-admin access SHALL first obtain independent current Root status. Each native action SHALL consume a fresh action-bound one-use child derived from its still-current original retained ingress parent, within original deadlines and at most16 children. Children SHALL NOT authorize other purposes or derivation. Scope SHALL remain request-local and exact-read-bound; caches, consumed proof reuse or renewed expiry SHALL NOT supply authority.
+
+#### Scenario: One HTTP flow performs several native admin calls
+- **WHEN** Profiles resolves/list/reads/previews/saves or Extensions lists skill sources/archives and performs finite read/write/readback
+- **THEN** status independently validates original current ingress/identity/registry before any native access; each action consumes its own Root-derived child, and Root still independently checks the captured registration/current native scope under its held lock.
+- **AND** selector-free status requires no native profile/file selector; exact native selectors remain strict. No class-global owner/Core scope map can substitute for the exact current-request/read snapshot or mint administrator status.
+
+#### Scenario: Expired, replayed, exhausted or foreign-purpose child
+- **WHEN** original parent/JWT/current caller/peer/config/Core or enrollment changes, a child repeats or is used by another Root consumer, or the original parent already derives16 children
+- **THEN** native access denies without deadline extension, consumed-proof reuse or further child derivation; explicit new authenticated read/status supplies recovery, never an automatic uncertain mutation retry.
+- **AND** exact Root verified original deadline bounds every child, old preview fails after revoke/reactivate, concurrent requests cannot borrow newer cached scope, and genuine retained-issuance multi-call effect/denial/recovery tests on Pi precede integration/acceptance.
+
+#### Scenario: Absent-record singleton compatibility is separate from enrollment
+- **WHEN** the registry is genuinely absent and exactly one configured approved matching caller uses existing Source33 native file access
+- **THEN** compatibility may remain visibly legacy-singleton without granting original-admin status; a household union still requires genuine enrollment, and malformed/unreadable/revoked/wrong-active registry never takes that fallback even under one email.
