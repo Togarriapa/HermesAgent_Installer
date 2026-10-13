@@ -184,6 +184,80 @@ stale/out-of-scope journal read after initial adoption, and absent new-read
 custody in startup context. Those were corrected without relaxing admission.
 All subsequent checks and production acceptance remain pending.
 
+The v83 candidate `e0ffd6bb4782d69a80fbe0ecd47e5e46a9199c9f` compiled
+on the Pi and passed strict specs/plan validation; the first group156 passed,
+and the expanded Core group4 failed/16 passed in220.20s. Archive SHA-256
+`0c5f3baed1d29d0c70c5fc8461827ebc1c2a50da9b19cca6e869291294eb9197`.
+One later fixture identity hook still used the old keyword signature. The
+real Root recovery path also called an admin-only generation verifier whose
+effective-UID check rejected Root. The correction uses the existing bounded
+Root descriptor/owner/tree verifier and preserves its exact generation,
+marker, member, digest and backup-path checks. Sol reviewed the finite fix.
+
+The v84 candidate `7b9cfd15c0c10ab2efb2e83003db923e672f8e2c` compiled
+on the Pi and passed strict specs/plan validation; the unchanged first
+group156 passed, and Core group4 failed/16 passed in221.87s. Archive SHA-256
+`57638bacfc55dc16dc1a911dca54a236419e6054396ff26ef55893754c095313`.
+The genuine root-to-admin importer closed its input before consuming the
+framed archives: the fixture's temporary home did not satisfy the importer's
+fixed `/home/admin/.hermes` contract. v85 changes only the fixture to bind a
+disposable owner tree at that exact path in a recursively private mount
+namespace, with checked namespace identity and unmount-before-delete cleanup.
+The real Pi home stays outside that namespace. Importer admission is unchanged.
+No production update or acceptance is claimed from these failed fixture runs.
+
+The v85 fixture candidate `bd3f3ac46bc50852fe90ee940773f25281816e5e`
+compiled and passed strict specs/plan validation on the Pi. Four affected
+update cycles failed and two unwritten-primary rollback cases passed in133.63s;
+the156 checks with unchanged source/tools were not repeated. Archive SHA-256
+`87e5baf924eeaf4f56d82ff955314bee2f312b152b387373ff78907097105b4e`.
+The fixed-home bind exposed another fixture leak before the importer: its
+registration path override did not redirect the production directory-FD
+lookup. It saw the actual Pi registration but no vault in the disposable
+home. The explicitly unregistered fixture now isolates that lookup in both
+the starting-cohort and actual updater helpers. Sol checked the helper call
+sites and corrected the first incomplete test-only patch before another run.
+Production registration, importer and vault custody rules remain unchanged;
+registered-vault update qualification is separate and still pending.
+
+The v86 test-only candidate `44c4e20943459ba3b99b01d307c8df3fa794e3e8`
+compiled and passed strict specs/plan validation on the Pi. Four full cycles
+failed and two unwritten-primary rollback cases passed in243.52s. Unchanged
+source/tools checks were not repeated. Archive SHA-256
+`58bda1b77438550cd4ef8662410bb2572f357c2fa3382f099e5a068eb1b1aaea`.
+The genuine importer completed its input pipe, then failed the bounded result
+gate. Recovery subsequently rejected the prior ownership marker. A test-only
+probe now captures return code/output lengths and exact reviewed constant
+refusal messages; raw child output, inputs, credentials and file contents are
+not emitted. One affected case is selected before another full rerun.
+
+Separately, read-only live registration/vault preflight using v86 source passed:
+fixed owner path, valid root-owned registration, vault UID1000/mode0700.
+Registration SHA-256
+`0efd4e6bedf799eddd50a5cc41f3c50f716ccc6f8dcf15ba9c1a4b26dd3fef42`;
+bounded vault tree SHA-256
+`99a15ddd8f0eadcbc48b04958e17b81cc4a2c9301e5ffadd0a04456ded3a7ce5`.
+This is before-update custody evidence only; it does not prove successful
+update, rollback, restart or knowledge operation. Production stays unchanged.
+
+The v87 diagnostic candidate `e188c853ad1cfaa6fea57e0f50b3815577ae9c0b`
+compiled and passed strict specs/plan validation; one selected full-cycle case
+failed in93.76s. Archive SHA-256
+`c35d94ea8602180d4ddaeadb0eb5d0621fa771642b2309ddb8a6d3361e185c4f`.
+The genuine importer returned0, stdout16807 bytes, stderr0 bytes. Core's
+16384-byte result cap therefore rejected a successful complete bundle receipt.
+Sol's finite four-artifact refinement admits a complete fixed receipt up to
+32768 bytes, retains the16384-byte stderr cap and all closed schema, exact
+inventory/path/backup and independent tree checks, and requires meaningful
+positive/oversized refusal evidence. No output truncation or unbounded receipt
+is admitted; actual runtime qualification remains open.
+
+The v89 specification candidate `2615ac44a461ef34dbc41ccce16b992b84f76e80`
+compiled and passed strict specs/plan validation on the Pi. Archive SHA-256
+`73a84ef6781f3c2ac0fa086a2547691e57704a033e6accdcd9c343cfd5db6507`.
+No runtime checks or deployment were repeated for this specification-only
+leaf. Luna's bounded implementation follows the validated Sol handoff.
+
 The v69 specification-only candidate
 `6b4621209a11895ce9f7894013ce034e1bdb3b05` compiled on the Pi and passed
 strict specs/plan validation. Archive SHA-256
