@@ -44,7 +44,12 @@ _VIEW = """<section class=\"second-brain-page\" aria-labelledby=\"second-brain-t
       <div class=\"brain-graph-zoom\" aria-label=\"Knowledge map controls\"><button type=\"button\" data-zoom-out aria-label=\"Zoom out\">−</button><button type=\"button\" data-zoom-in aria-label=\"Zoom in\">+</button><button type=\"button\" data-zoom-reset>Reset map</button></div></div>
     <div class=\"brain-graph-layout\"><svg data-graph viewBox=\"0 0 1000 620\" role=\"group\" tabindex=\"0\" aria-label=\"Map of actual linked notes. Drag to pan; use plus and minus buttons to zoom.\"><g data-graph-scene></g></svg>
       <section class=\"brain-graph-browse\" aria-label=\"Knowledge map lists\">
-        <h3>Notes in this map</h3><ol data-graph-notes aria-label=\"All visible notes\"></ol>
+        <aside class=\"brain-graph-detail\" data-graph-detail aria-label=\"Selected note detail\" aria-live=\"polite\">
+          <h3>Selected note</h3><div data-graph-detail-content><p>Select a note in the map or list to inspect its current vault details.</p></div>
+          <div class=\"brain-graph-detail-actions\"><button type=\"button\" data-graph-focus disabled>Focus neighborhood</button>
+            <button type=\"button\" data-graph-reset>Show full map</button><button type=\"button\" data-graph-back disabled>Back</button></div>
+        </aside>
+        <h3 data-graph-notes-title>Notes in this map</h3><ol data-graph-notes aria-label=\"All visible notes\"></ol>
         <h3>Resolved links</h3><ol data-graph-list aria-label=\"Knowledge map links\"></ol>
       </section></div>
   </section>
@@ -115,6 +120,12 @@ _CSS = """
 [data-feature-root=\"second-brain\"] [data-graph-list]{max-height:340px;overflow:auto;margin:.2rem 0;padding-left:1.25rem;color:#a9c6ca;font-size:.78rem;line-height:1.7}
 [data-feature-root=\"second-brain\"] .brain-graph-browse{min-width:0;max-height:620px;overflow:auto;padding:.2rem .6rem;border:1px solid rgba(91,199,211,.17);border-radius:10px;background:rgba(8,23,28,.45)}
 [data-feature-root=\"second-brain\"] .brain-graph-browse h3{position:sticky;top:0;margin:.25rem 0;padding:.45rem 0;background:#0b1d24;color:#a9c6ca;font-size:.8rem}
+[data-feature-root=\"second-brain\"] .brain-graph-detail{padding:.65rem;margin:.4rem 0 .8rem;border:1px solid rgba(91,199,211,.2);border-radius:9px;background:rgba(14,44,52,.55)}
+[data-feature-root=\"second-brain\"] .brain-graph-detail h3{position:static;margin:0 0 .4rem;padding:0;background:none}
+[data-feature-root=\"second-brain\"] .brain-graph-detail p,[data-feature-root=\"second-brain\"] .brain-graph-detail li{margin:.25rem 0;color:#a9c6ca;font-size:.75rem;line-height:1.5;overflow-wrap:anywhere}
+[data-feature-root=\"second-brain\"] .brain-graph-detail ul{list-style:none;margin:.2rem 0;padding:0}
+[data-feature-root=\"second-brain\"] .brain-graph-detail button{min-height:44px}
+[data-feature-root=\"second-brain\"] .brain-graph-detail-actions{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.5rem}
 [data-feature-root=\"second-brain\"] [data-graph-notes]{max-height:260px;overflow:auto;margin:.2rem 0 .8rem;padding-left:1.25rem;color:#a9c6ca;font-size:.78rem;line-height:1.55}
 [data-feature-root=\"second-brain\"] [data-graph-notes] li{padding:.12rem 0}
 [data-feature-root=\"second-brain\"] [data-graph-notes] button{display:inline-flex;align-items:center;gap:.45rem;max-width:100%;min-height:44px;border:0;padding:.2rem .25rem;color:#95e7e9;background:transparent;text-align:left;font-size:inherit}
@@ -129,6 +140,7 @@ _CSS = """
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:760px){[data-feature-root=\"second-brain\"] .brain-signal{grid-template-columns:1fr;gap:.8rem}[data-feature-root=\"second-brain\"] .brain-signal dl{grid-template-columns:repeat(2,minmax(0,1fr))}[data-feature-root=\"second-brain\"] .brain-workspace{grid-template-columns:1fr}[data-feature-root=\"second-brain\"] .brain-graph-layout{grid-template-columns:1fr}[data-feature-root=\"second-brain\"] .brain-graph [data-graph]{min-height:200px}}
 @media(max-width:520px){[data-feature-root=\"second-brain\"] .brain-links{grid-template-columns:1fr}[data-feature-root=\"second-brain\"] .brain-graph-heading{align-items:flex-start}[data-feature-root=\"second-brain\"] .brain-signal dl{gap:.65rem}.second-brain-page{padding:1rem}}
+@media(max-width:520px){[data-feature-root=\"second-brain\"] .brain-graph-detail-actions{display:grid;grid-template-columns:1fr}[data-feature-root=\"second-brain\"] .brain-graph-detail-actions button{width:100%}}
 @media(max-width:640px){[data-feature-root=\"second-brain\"] .brain-graph-tools{align-items:flex-start;flex-direction:column}[data-feature-root=\"second-brain\"] [data-graph]{min-height:220px}}
 @media(prefers-reduced-motion:reduce){[data-feature-root=\"second-brain\"] button{transition:none}[data-feature-root=\"second-brain\"] [data-graph] .brain-node circle{filter:none}}
 """
@@ -150,13 +162,20 @@ _MOUNT = r"""function mount(container, api, state) {
   const graphLegend = $('[data-graph-legend]');
   const graphList = $('[data-graph-list]');
   const graphNotes = $('[data-graph-notes]');
+  const graphNotesTitle = $('[data-graph-notes-title]');
+  const graphDetail = $('[data-graph-detail-content]');
+  const graphFocusButton = $('[data-graph-focus]');
+  const graphResetButton = $('[data-graph-reset]');
+  const graphBackButton = $('[data-graph-back]');
   const zoomInButton = $('[data-zoom-in]');
   const zoomOutButton = $('[data-zoom-out]');
   const zoomResetButton = $('[data-zoom-reset]');
   const noteLimit = 20;
   let stopped = false, busy = false, cursor = null, mode = 'recent', currentNoteId = null;
   let notes = [];
-  let graphData = null, selectedTags = null;
+  let graphData = null, selectedTags = null, graphFocusNoteId = null;
+  let currentNoteDetail = null, currentNoteRelationships = null;
+  const noteHistory = [];
   let graphScale = 1, graphPanX = 0, graphPanY = 0, drag = null;
   const apiRoot = '/chat/api/second-brain';
   const SVG = 'http://www.w3.org/2000/svg';
@@ -256,11 +275,19 @@ _MOUNT = r"""function mount(container, api, state) {
     }
     if (!target.childElementCount) addText(target, 'li', unresolved ? 'No unresolved links.' : 'No linked notes.');
   }
-  async function openNote(noteId) {
+  async function openNote(noteId, recordHistory = true) {
     if (stopped || busy) return;
+    if (recordHistory && currentNoteId && currentNoteId !== noteId) {
+      noteHistory.push(currentNoteId);
+      if (noteHistory.length > 40) noteHistory.shift();
+    }
     busy = true;
     currentNoteId = noteId;
+    graphFocusNoteId = graphData && graphData.nodes.some(node => node && node.noteId === noteId) ? noteId : null;
     setGraphSelection();
+    if (graphData) renderGraph(graphData);
+    currentNoteDetail = null; currentNoteRelationships = null;
+    renderGraphDetail();
     renderNoteRows(notes);
     $('[data-reader-title]').textContent = 'Loading note…';
     body.textContent = '';
@@ -275,6 +302,8 @@ _MOUNT = r"""function mount(container, api, state) {
       ]);
       if (stopped) return;
       if (!note || note.noteId !== noteId || typeof note.markdown !== 'string') throw new Error('This note is unavailable.');
+      currentNoteDetail = note; currentNoteRelationships = links;
+      renderGraphDetail();
       $('[data-reader-title]').textContent = typeof note.title === 'string' ? note.title : 'Untitled note';
       const summary = notes.find(item => item && item.noteId === noteId);
       const noteMetadata = [timestampShort(note.updatedAt), summary && Array.isArray(summary.tags) && summary.tags.length ? 'Tags: ' + summary.tags.join(', ') : 'Uncategorized', typeof note.contentSha256 === 'string' ? 'SHA-256 ' + note.contentSha256 : 'Content digest unavailable'].filter(Boolean);
@@ -288,6 +317,8 @@ _MOUNT = r"""function mount(container, api, state) {
       updateStatus('Opened ' + (typeof note.title === 'string' ? note.title : 'note') + '.');
     } catch (_) {
       if (!stopped) {
+        currentNoteDetail = null; currentNoteRelationships = null;
+        renderGraphDetail(true);
         $('[data-reader-title]').textContent = 'Note unavailable';
         body.textContent = 'The selected note or its link index could not be loaded.';
         updateStatus('This note or its link index is temporarily unavailable.', true);
@@ -367,11 +398,18 @@ _MOUNT = r"""function mount(container, api, state) {
     const button = document.createElement('button'); button.type = 'button';
     button.textContent = label; button.addEventListener('click', () => openNote(node.noteId)); parent.append(button); return button;
   }
-  function graphLayout(nodes, edges) {
+  function graphLayout(nodes, edges, centerId = null) {
     const positions = new Map(), forces = new Map();
+    let neighborIndex = 0;
     nodes.forEach((node, index) => {
-      const angle = index * 2.399963229728653;
-      const radius = nodes.length < 2 ? 0 : 210 * Math.sqrt((index + .5) / nodes.length);
+      if (centerId && node.noteId === centerId) {
+        positions.set(node.noteId, {x:500, y:310});
+        return;
+      }
+      const angle = (centerId ? neighborIndex : index) * 2.399963229728653;
+      const radialIndex = centerId ? neighborIndex++ : index;
+      const radialCount = Math.max(nodes.length - (centerId ? 1 : 0), 1);
+      const radius = !centerId && nodes.length < 2 ? 0 : 210 * Math.sqrt((radialIndex + .5) / radialCount);
       positions.set(node.noteId, {x: 500 + Math.cos(angle) * radius, y: 310 + Math.sin(angle) * radius});
     });
     const links = edges.filter(edge => positions.has(edge.fromNoteId) && positions.has(edge.toNoteId)
@@ -402,6 +440,7 @@ _MOUNT = r"""function mount(container, api, state) {
       }
       const cooling = 1 - iteration / 58;
       for (const node of nodes) {
+        if (centerId && node.noteId === centerId) continue;
         const point = positions.get(node.noteId), force = forces.get(node.noteId);
         point.x = Math.max(45, Math.min(955, point.x + force.x * cooling));
         point.y = Math.max(45, Math.min(575, point.y + force.y * cooling));
@@ -424,6 +463,74 @@ _MOUNT = r"""function mount(container, api, state) {
       arc.setAttribute('stroke', tagColor(tag)); arc.setAttribute('aria-hidden', 'true'); group.append(arc);
     });
   }
+  function renderGraphDetail(unavailable = false) {
+    graphDetail.replaceChildren();
+    if (!currentNoteId) {
+      addText(graphDetail, 'p', 'Select a note in the map or list to inspect its current vault details.');
+      graphFocusButton.disabled = true; graphBackButton.disabled = noteHistory.length === 0;
+      return;
+    }
+    const indexed = graphData && Array.isArray(graphData.nodes)
+      ? graphData.nodes.find(node => node && node.noteId === currentNoteId) : null;
+    const title = currentNoteDetail && currentNoteDetail.title || indexed && indexed.title || 'Selected note';
+    addText(graphDetail, 'p', title);
+    const tags = indexed && Array.isArray(indexed.tags) ? noteTags(indexed) : null;
+    addText(graphDetail, 'p', tags && tags.length ? 'Tags: ' + tags.join(' · ')
+      : tags ? 'Tags: Uncategorized' : 'Tags: not present in the current graph snapshot.');
+    if (currentNoteDetail) {
+      addText(graphDetail, 'p', 'Updated: ' + timestamp(currentNoteDetail.updatedAt));
+      addText(graphDetail, 'p', typeof currentNoteDetail.contentSha256 === 'string'
+        ? 'Content digest: ' + currentNoteDetail.contentSha256 : 'Content digest: unavailable.');
+    } else {
+      addText(graphDetail, 'p', unavailable ? 'The current private note read is unavailable.' : 'Loading current private note details…');
+    }
+    addText(graphDetail, 'p', 'Source: selected-owner Obsidian vault. Author and review lineage are not included in this note projection.');
+    const relationships = currentNoteRelationships && currentNoteRelationships.noteId === currentNoteId
+      ? currentNoteRelationships : null;
+    if (!relationships) {
+      addText(graphDetail, 'p', 'Current backlinks and unresolved references are unavailable.');
+    } else {
+      const backlinks = Array.isArray(relationships.backlinks) ? relationships.backlinks : [];
+      const outgoing = Array.isArray(relationships.links) ? relationships.links : [];
+      const unresolved = Array.isArray(relationships.unresolved) ? relationships.unresolved : [];
+      addText(graphDetail, 'p', `Links ${outgoing.length} · backlinks ${backlinks.length} · unresolved ${unresolved.length}`);
+      if (backlinks.length) {
+        addText(graphDetail, 'p', 'Backlinks');
+        const list = document.createElement('ul');
+        for (const link of backlinks.slice(0, 8)) {
+          if (!link || typeof link.fromNoteId !== 'string') continue;
+          const item = document.createElement('li');
+          const button = document.createElement('button'); button.type = 'button';
+          button.textContent = typeof link.label === 'string' ? link.label : 'Open backlink';
+          button.addEventListener('click', () => openNote(link.fromNoteId));
+          item.append(button); list.append(item);
+        }
+        if (backlinks.length > 8) addText(list, 'li', `${backlinks.length - 8} more backlinks are available in the note reader.`);
+        graphDetail.append(list);
+      }
+      if (unresolved.length) addText(graphDetail, 'p', 'Unresolved: ' + unresolved.slice(0, 4).map(link => link.label).join(' · ')
+        + (unresolved.length > 4 ? ` · ${unresolved.length - 4} more in the note reader` : ''));
+    }
+    graphFocusButton.disabled = !indexed;
+    graphBackButton.disabled = noteHistory.length === 0;
+  }
+  function focusNeighborhood(noteId = currentNoteId) {
+    if (!graphData || !graphData.nodes.some(node => node && node.noteId === noteId)) return;
+    graphFocusNoteId = noteId; graphScale = 1; graphPanX = 0; graphPanY = 0;
+    renderGraph(graphData);
+    graph.scrollIntoView({block:'nearest', behavior:'auto'});
+  }
+  function showFullGraph() {
+    graphFocusNoteId = null; graphScale = 1; graphPanX = 0; graphPanY = 0;
+    if (graphData) renderGraph(graphData);
+    graph.scrollIntoView({block:'nearest', behavior:'auto'});
+  }
+  async function goBackNote() {
+    if (stopped || busy || !noteHistory.length) return;
+    const noteId = noteHistory.pop();
+    graphBackButton.disabled = noteHistory.length === 0;
+    await openNote(noteId, false);
+  }
   function setGraphSelection() {
     graphScene.querySelectorAll('.brain-node').forEach(node => {
       const selected = node.getAttribute('data-note-id') === currentNoteId;
@@ -441,12 +548,31 @@ _MOUNT = r"""function mount(container, api, state) {
     const categories = graphCategories(allNodes);
     if (selectedTags !== null) for (const tag of [...selectedTags]) if (!categories.includes(tag)) selectedTags.delete(tag);
     renderGraphLegend(categories);
-    const nodes = allNodes.filter(node => selectedTags === null || (noteTags(node).length ? noteTags(node).some(tag => selectedTags.has(tag)) : selectedTags.has('Uncategorized')));
+    const matchesTags = node => selectedTags === null
+      || (noteTags(node).length ? noteTags(node).some(tag => selectedTags.has(tag)) : selectedTags.has('Uncategorized'));
+    const filteredNodes = allNodes.filter(matchesTags);
+    if (graphFocusNoteId && !filteredNodes.some(node => node.noteId === graphFocusNoteId)) graphFocusNoteId = null;
+    let nodes = filteredNodes;
+    if (graphFocusNoteId) {
+      const neighborhood = new Set([graphFocusNoteId]);
+      for (const edge of data.edges) {
+        if (!edge) continue;
+        if (edge.fromNoteId === graphFocusNoteId && filteredNodes.some(node => node.noteId === edge.toNoteId)) neighborhood.add(edge.toNoteId);
+        if (edge.toNoteId === graphFocusNoteId && filteredNodes.some(node => node.noteId === edge.fromNoteId)) neighborhood.add(edge.fromNoteId);
+      }
+      nodes = filteredNodes.filter(node => neighborhood.has(node.noteId));
+    }
     const ids = new Set(nodes.map(node => node.noteId));
     const edges = data.edges.filter(edge => edge && ids.has(edge.fromNoteId) && ids.has(edge.toNoteId));
+    const unresolvedCount = graphFocusNoteId
+      ? data.unresolved.filter(link => link && ids.has(link.fromNoteId)).length : data.unresolved.length;
+    const focusedNode = graphFocusNoteId ? allNodes.find(node => node.noteId === graphFocusNoteId) : null;
+    graphNotesTitle.textContent = focusedNode ? 'Neighborhood notes around ' + focusedNode.title : 'Notes in this map';
     $('[data-graph-status]').textContent = allNodes.length
-      ? `${nodes.length} of ${allNodes.length} indexed notes shown · ${edges.length} actual note links · ${data.unresolved.length} unresolved references${data.partial ? ' · partial coverage' : ''}. Colors and filters use note tags; only resolved vault links are drawn.`
+      ? `${focusedNode ? 'Focused on ' + focusedNode.title + ' · ' : ''}${nodes.length} of ${allNodes.length} indexed notes shown · ${Number.isSafeInteger(data.scanned) ? data.scanned : 'Unknown'} notes scanned · ${edges.length} actual note links · ${unresolvedCount} unresolved references${data.partial ? ' · partial coverage' : ''}. Colors and filters use note tags; only resolved vault links are drawn.`
       : 'No notes are present in this vault snapshot yet.';
+    renderGraphDetail();
+    graphFocusButton.disabled = !currentNoteId || !filteredNodes.some(node => node.noteId === currentNoteId);
     if (!nodes.length) { addText(graphNotes, 'li', 'No notes match these tag filters.'); addText(graphList, 'li', 'No resolved links match these tag filters.'); return; }
     for (const node of nodes) {
       const item = document.createElement('li');
@@ -457,7 +583,7 @@ _MOUNT = r"""function mount(container, api, state) {
       addText(button, 'span', node.title);
       button.addEventListener('click', () => openNote(node.noteId)); item.append(button); graphNotes.append(item);
     }
-    const positions = graphLayout(nodes, edges);
+    const positions = graphLayout(nodes, edges, graphFocusNoteId);
     const markerIds = new Map(), defs = document.createElementNS(SVG, 'defs');
     function markerFor(color) {
       if (markerIds.has(color)) return markerIds.get(color);
@@ -531,6 +657,9 @@ _MOUNT = r"""function mount(container, api, state) {
   function onZoomIn() { setGraphZoom(graphScale * 1.2); }
   function onZoomOut() { setGraphZoom(graphScale / 1.2); }
   function onZoomReset() { graphScale = 1; graphPanX = 0; graphPanY = 0; graphTransform(); }
+  function onGraphFocus() { focusNeighborhood(); }
+  function onGraphReset() { showFullGraph(); }
+  function onGraphBack() { void goBackNote(); }
   function onGraphPointerDown(event) {
     if (event.target.closest('.brain-node')) return;
     drag = {pointerId: event.pointerId, x: event.clientX, y: event.clientY};
@@ -572,6 +701,9 @@ _MOUNT = r"""function mount(container, api, state) {
   zoomInButton.addEventListener('click', onZoomIn);
   zoomOutButton.addEventListener('click', onZoomOut);
   zoomResetButton.addEventListener('click', onZoomReset);
+  graphFocusButton.addEventListener('click', onGraphFocus);
+  graphResetButton.addEventListener('click', onGraphReset);
+  graphBackButton.addEventListener('click', onGraphBack);
   function onSearch(event) {
     event.preventDefault();
     if (!queryInput.value.trim()) { mode = 'recent'; cursor = null; refreshNotes(); return; }
@@ -599,6 +731,9 @@ _MOUNT = r"""function mount(container, api, state) {
     zoomInButton.removeEventListener('click', onZoomIn);
     zoomOutButton.removeEventListener('click', onZoomOut);
     zoomResetButton.removeEventListener('click', onZoomReset);
+    graphFocusButton.removeEventListener('click', onGraphFocus);
+    graphResetButton.removeEventListener('click', onGraphReset);
+    graphBackButton.removeEventListener('click', onGraphBack);
   };
 }"""
 
