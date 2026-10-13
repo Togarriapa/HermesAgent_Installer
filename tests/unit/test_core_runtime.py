@@ -1551,6 +1551,14 @@ def test_adapter_migration_restores_exact_owned_files_after_restart_failure(tmp_
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
 def test_post_migration_recovery_restores_exact_legacy_files_and_selection(tmp_path, monkeypatch):
     calls, enabled, old_launcher, selection = _install_legacy_service_fixture(tmp_path, monkeypatch)
+    bootstrap = sys.modules["hermes_installer.remote.native_plugin_bootstrap"]
+    restore_selection = bootstrap.restore_native_resources_plugin_selection
+    def tracked_restore_selection(*args, **kwargs):
+        calls.append((("native-plugin", "restore-selection"),
+                      core._run(["systemctl", "is-active", core.SERVICE], False).stdout.strip()))
+        return restore_selection(*args, **kwargs)
+    monkeypatch.setattr(bootstrap, "restore_native_resources_plugin_selection",
+                        tracked_restore_selection)
     old_unit = core.UNIT.read_bytes()
     core.migrate_owned_core_to_adapter_path()
     assert core.LAUNCHER.read_bytes() != old_launcher
@@ -1571,7 +1579,7 @@ def test_post_migration_recovery_restores_exact_legacy_files_and_selection(tmp_p
     assert ordered.index(("systemctl", "stop", core.SERVICE)) < ordered.index(
         ("systemctl", "start", core.SERVICE))
     assert ordered.index(("systemctl", "stop", core.SERVICE)) < ordered.index(
-        ("native-plugin", "install")) < ordered.index(("systemctl", "start", core.SERVICE))
+        ("native-plugin", "restore-selection")) < ordered.index(("systemctl", "start", core.SERVICE))
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
