@@ -284,7 +284,7 @@ def test_extensions_feature_asset_uses_only_fixed_routes():
 def test_extensions_mount_unmount_remount_owns_one_submit_and_ignores_late_results():
     harness = r'''
 class Target {
-  constructor() { this.listeners = new Map(); this.children = []; this.disabled = false; this.textContent = ''; }
+  constructor(tagName = 'div') { this.tagName = tagName; this.listeners = new Map(); this.children = []; this.disabled = false; this.textContent = ''; this.value = ''; }
   addEventListener(type, listener, options = {}) {
     if (options.signal && options.signal.aborted) return;
     const entry = {listener, once: options.once === true};
@@ -299,23 +299,30 @@ class Target {
       await entry.listener(event);
     }
   }
-  append(...nodes) { this.children.push(...nodes); }
+  append(...nodes) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
   replaceChildren(...nodes) { this.children = [...nodes]; }
-  remove() { this.removed = true; }
-  querySelector(selector) { return this.selectors.get(selector); }
-  reset() { this.resetCount = (this.resetCount || 0) + 1; }
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter(node => node !== this); this.removed = true; }
+  querySelector(selector) {
+    if (this.selectors instanceof Map && this.selectors.has(selector)) return this.selectors.get(selector);
+    const wanted = selector.toLowerCase();
+    const visit = node => { for (const child of node.children || []) { if (child.tagName === wanted) return child; const found = visit(child); if (found) return found; } return null; };
+    return visit(this);
+  }
+  reset() { this.resetCount = (this.resetCount || 0) + 1; const input = this.querySelector('input'); if (input) input.value = ''; }
 }
 const root = new Target(); root.selectors = new Map();
 const list = new Target(), status = new Target(), refresh = new Target();
-const skillForm = new Target(); skillForm.value = 'web-facts';
+function makeAddForm(value = '') { const form = new Target('form'), input = new Target('input'), button = new Target('button'); input.value = value; form.append(input, button); return form; }
+const skillForm = makeAddForm('web-facts');
 for (const [selector, element] of [
   ['[data-extension-list]', list], ['[data-extension-status]', status],
   ['[data-extension-refresh]', refresh], ['[data-add-skill]', skillForm],
-  ['[data-add-plugin]', new Target()], ['[data-add-mcp]', new Target()]
+  ['[data-add-plugin]', makeAddForm()], ['[data-add-mcp]', makeAddForm()]
 ]) root.selectors.set(selector, element);
+root.append(list, status, refresh, ...['[data-add-skill]', '[data-add-plugin]', '[data-add-mcp]'].map(selector => root.selectors.get(selector)));
 root.querySelector = (selector) => selector === '[data-feature-root="extensions"]' ? root : Target.prototype.querySelector.call(root, selector);
 global.document = {createElement: () => new Target()};
-global.FormData = class { constructor(form) { this.form = form; } get(key) { return key === 'identifier' ? this.form.value : null; } };
+global.FormData = class { constructor(form) { this.form = form; } get(key) { return key === 'identifier' ? (this.form.querySelector('input') || {}).value || '' : null; } };
 global.window = {prompt: (message) => (message.match(/Type (.+) to confirm/) || [])[1] || null, confirm: () => true};
 global.crypto = {getRandomValues: (bytes) => { bytes.fill(7); return bytes; }};
 global.btoa = (value) => Buffer.from(value, 'binary').toString('base64');
@@ -414,6 +421,7 @@ global.FormData=class { constructor(form) { this.form=form; } get(key) { return 
 global.window={prompt:message=>{const match=message.match(/^Type (.+) to confirm/);return match?match[1]:null;},confirm:()=>true};
 global.crypto={getRandomValues:bytes=>{bytes.fill(5);return bytes;}};
 global.btoa=value=>Buffer.from(value,'binary').toString('base64');
+MOUNT
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
   const view=makeRoot(),api=makeApi(),unmount=mount(view.root,api);
@@ -561,7 +569,7 @@ global.crypto={getRandomValues:bytes=>{bytes.fill(5);return bytes;}};
 global.btoa=value=>Buffer.from(value,'binary').toString('base64');
 MOUNT
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
-function editor(view) { return all(view.list).find(node=>node.tagName==='dialog'); }
+function editor(view) { return all(view.root).find(node=>node.tagName==='dialog'); }
 function field(dialog,key) { return all(dialog).find(node=>node.id && node.id===key); }
 function settingInput(dialog,index) { return all(dialog).find(node=>node.id===`extension-setting-${index}`); }
 function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form'); form.dispatch('submit',{preventDefault(){this.prevented=true;}}); }
