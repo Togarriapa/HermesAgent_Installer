@@ -87,11 +87,10 @@ _MOUNT = r'''function mount(container, api) {
   const sensitiveSettingName = /(?:credential|secret|password|token|api[_ -]?key|private[_ -]?key|command|shell|path|file)/i;
   function safeSettingName(value, maximum) {
     return typeof value === 'string' && value.length > 0 && value.length <= maximum
-      && !/[\\/\x00-\x1f\x7f]/.test(value) && !sensitiveSettingName.test(value);
+      && !/[\x00-\x1f\x7f]/.test(value) && !sensitiveSettingName.test(value);
   }
   function safeSettingText(value, maximum=160) {
-    return safeSettingName(value, maximum) && !/[;|&<>$`]/.test(value)
-      && !/(?:^|\s)(?:sudo|sh|bash|zsh|python(?:\d+(?:\.\d+)?)?|node|curl|wget|chmod|rm|cat|exec)\b/i.test(value);
+    return typeof value === 'string' && value.length <= maximum;
   }
   function inspectPluginSettings(settings) {
     const kinds = new Set(['string','number','boolean','enum']), keys = new Set();
@@ -100,7 +99,7 @@ _MOUNT = r'''function mount(container, api) {
     const fields=[];
     for (const field of settings) {
       if (!field || typeof field !== 'object' || !kinds.has(field.type)
-          || !safeSettingName(field.key,64) || !/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(field.key)
+          || !safeSettingName(field.key,160)
           || keys.has(field.key) || (field.required !== undefined && typeof field.required !== 'boolean'))
         return {fields:[], pending:true};
       keys.add(field.key);
@@ -112,7 +111,7 @@ _MOUNT = r'''function mount(container, api) {
         return {fields:[], pending:true};
       const value=field.value;
       if (value !== undefined && value !== null) {
-        if (field.type === 'string' && (typeof value !== 'string' || value.length > 2048 || !safeSettingText(value,2048)))
+        if (field.type === 'string' && (typeof value !== 'string' || Array.from(value).length > 2048))
           return {fields:[], pending:true};
         if (field.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value)))
           return {fields:[], pending:true};
@@ -160,14 +159,18 @@ _MOUNT = r'''function mount(container, api) {
         const placeholder=document.createElement('option'); placeholder.value='';
         placeholder.textContent=field.type === 'boolean' ? 'Choose true or false' : 'Choose a value'; input.append(placeholder);
         const values=field.type === 'boolean' ? ['true','false'] : field.choices;
-        for (const choice of values) { const option=document.createElement('option'); option.value=String(choice); option.textContent=String(choice); input.append(option); }
-        if (field.type === 'boolean' && typeof field.value === 'boolean') input.value=String(field.value);
-        if (field.type === 'enum' && typeof field.value === 'string' && field.choices.includes(field.value)) input.value=field.value;
+        values.forEach((choice,choiceIndex)=>{
+          const option=document.createElement('option');
+          option.value=field.type === 'boolean' ? `boolean:${choice}` : `choice:${choiceIndex}`;
+          option.textContent=String(choice); input.append(option);
+        });
+        if (field.type === 'boolean' && typeof field.value === 'boolean') input.value=`boolean:${field.value}`;
+        if (field.type === 'enum' && typeof field.value === 'string' && field.choices.includes(field.value)) input.value=`choice:${field.choices.indexOf(field.value)}`;
       } else if (field.type === 'number') {
         input=document.createElement('input'); input.type='number'; input.step='any';
         if (typeof field.value === 'number' && Number.isFinite(field.value)) input.value=String(field.value);
       } else {
-        input=document.createElement('textarea'); input.maxLength=2048; input.rows=3;
+        input=document.createElement('textarea'); input.maxLength=4096; input.rows=3;
         if (typeof field.value === 'string') input.value=field.value;
         if (field.required) input.required=true;
       }
@@ -205,22 +208,24 @@ _MOUNT = r'''function mount(container, api) {
         dialog.close(); return;
       }
       if (schema.pending) return;
-      const values={}; let firstInvalid=null;
+      const values=Object.create(null); let firstInvalid=null;
       for (const entry of entries) {
         const {field,input,error}=entry, raw=input.value;
         let value, message='';
         if (field.type === 'boolean') {
-          if (raw !== 'true' && raw !== 'false') message='Choose true or false explicitly.';
-          else value=raw === 'true';
+          if (raw !== 'boolean:true' && raw !== 'boolean:false') message='Choose true or false explicitly.';
+          else value=raw === 'boolean:true';
         } else if (field.type === 'enum') {
-          if (typeof raw !== 'string' || !field.choices.includes(raw)) message='Choose one exact native option.';
-          else value=raw;
+          const match=typeof raw === 'string' && /^choice:(\d+)$/.exec(raw);
+          const index=match ? Number(match[1]) : -1;
+          if (!Number.isInteger(index) || index < 0 || index >= field.choices.length) message='Choose one exact native option.';
+          else value=field.choices[index];
         } else if (field.type === 'number') {
           if (typeof raw !== 'string' || !raw.trim()) message='Enter a finite number explicitly.';
           else { const number=Number(raw); if (!Number.isFinite(number)) message='Enter a finite number.'; else value=number; }
         } else {
-          if (typeof raw !== 'string' || raw.length > 2048) message='Use no more than 2048 characters.';
-          else if (field.required && !raw.trim()) message='This setting is required.';
+          if (typeof raw !== 'string' || Array.from(raw).length > 2048) message='Use no more than 2048 characters.';
+          else if (field.required && raw === '') message='This setting is required.';
           else value=raw;
         }
         if (message) {

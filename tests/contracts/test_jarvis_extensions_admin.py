@@ -542,7 +542,8 @@ function validSettings() { return [
   {key:'site_name',label:'Site name',type:'string',value:'Home',required:true},
   {key:'enabled',label:'Enabled',type:'boolean',value:true,required:true},
   {key:'mode',label:'Mode',type:'enum',choices:['safe','strict'],value:'strict',required:true},
-  {key:'limit',label:'Limit',type:'number',value:2,required:true}
+  {key:'limit',label:'Limit',type:'number',value:2,required:true},
+  {key:'notes',label:'Ordinary URL and markup text',type:'string',value:'https://docs.example/start',required:false}
 ]; }
 function makeRoot() {
   const root=new Target(); root.selectors=new Map();
@@ -571,22 +572,22 @@ function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form
   assert.match(all(dialog).map(node=>node.textContent).join(' '),/Plugin: safe-package · Source: useradded · Inventory revision: source-1 · Native settings revision: a{64}/);
   assert.match(all(dialog).map(node=>node.textContent).join(' '),/Nothing changes until you choose Save/);
   const string=settingInput(dialog,0),bool=settingInput(dialog,1),enumeration=settingInput(dialog,2),number=settingInput(dialog,3);
-  assert.equal(string.tagName,'textarea'); assert.equal(string.maxLength,2048);
+  assert.equal(string.tagName,'textarea'); assert.equal(string.maxLength,4096,'the form allows 2048 Unicode code points before applying the native limit');
   assert.equal(bool.tagName,'select'); assert.equal(enumeration.tagName,'select'); assert.equal(number.type,'number'); assert.equal(number.step,'any');
 
   // Each native type rejects implicit, empty, or invalid values before any POST.
   bool.value=''; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Choose true or false explicitly/); assert.equal(api.posts.length,0);
-  bool.value='false'; enumeration.value=''; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Choose one exact native option/); assert.equal(api.posts.length,0);
-  enumeration.value='safe'; number.value='Infinity'; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Enter a finite number/); assert.equal(api.posts.length,0);
+  bool.value='boolean:false'; enumeration.value=''; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Choose one exact native option/); assert.equal(api.posts.length,0);
+  enumeration.value='choice:0'; number.value='Infinity'; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Enter a finite number/); assert.equal(api.posts.length,0);
   number.value='2.5'; string.value='   '; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/This setting is required/); assert.equal(api.posts.length,0);
   assert.equal(document.activeElement,string,'invalid submission focuses the first invalid control');
 
-  string.value='Office'; submit(dialog); await flush();
+  string.value='Office'; settingInput(dialog,4).value=''; submit(dialog); await flush();
   assert.equal(api.posts.length,1); assert.equal(api.posts[0].path,'/chat/api/extensions/plugins/edit');
   assert.deepEqual(Object.keys(api.posts[0].body).sort(),['confirmation','idempotency_key','item_id','revision','values']);
   assert.equal(api.posts[0].body.item_id,'owner-plugin-id'); assert.equal(api.posts[0].body.revision,'source-1');
   assert.equal(api.posts[0].body.confirmation,'EDIT Safe package');
-  assert.deepEqual(api.posts[0].body.values,{site_name:'Office',enabled:false,mode:'safe',limit:2.5});
+  assert.deepEqual(api.posts[0].body.values,{site_name:'Office',enabled:false,mode:'safe',limit:2.5,notes:''});
   assert.match(api.posts[0].body.idempotency_key,/^[A-Za-z0-9_-]{32}$/);
   assert.ok(all(view.root).filter(node=>node.tagName==='button'&&node!==view.refresh).every(node=>node.disabled), 'all owner actions stay blocked during the confirmed mutation');
   api.posts[0].resolve({status:'applied'}); await flush(); assert.equal(api.gets.length,2);
@@ -609,6 +610,18 @@ function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form
   assert.equal(button(pending,'Save settings').disabled,true);
   assert.equal(all(pending).some(node=>node.textContent==='hidden'),false,'untrusted unsupported values are never rendered');
   pending.close(); assert.equal(badApi.posts.length,0); dispose();
+
+  // Schema-valid prose, URL-like values, optional empty strings, and markup-looking text remain inert DOM values.
+  const textView=makeRoot(),textApi=makeApi(),textCleanup=mount(textView.root,textApi);
+  const textSettings=[{key:'caption',label:'<em>Caption</em>',type:'string',value:'https://docs.example/start',required:false}];
+  textApi.gets[0].resolve(makeSnapshot('text-rev',textSettings)); await flush();
+  const textOpener=button(textView.list,'Edit settings'); textOpener.dispatch('click'); const textDialog=editor(textView);
+  assert.equal(all(textDialog).some(node=>node.tagName==='em'),false,'schema labels render as text, never markup');
+  const textValue=settingInput(textDialog,0); textValue.value='<img src=x onerror=alert(1)>';
+  submit(textDialog); await flush();
+  assert.equal(textApi.posts[0].body.values.caption,'<img src=x onerror=alert(1)>');
+  assert.equal(all(textView.root).some(node=>node.tagName==='img'),false,'schema values stay inert and do not create markup');
+  textApi.posts[0].resolve({status:'applied'}); await flush(); textApi.gets[1].resolve(makeSnapshot('text-rev-2',textSettings)); await flush(); textCleanup();
 
   // A refresh while an editor is open cannot rebind the form to a newer inventory revision.
   const staleView=makeRoot(),staleApi=makeApi(),clean=mount(staleView.root,staleApi);
