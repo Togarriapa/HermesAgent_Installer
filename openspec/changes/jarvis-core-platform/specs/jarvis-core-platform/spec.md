@@ -2622,3 +2622,16 @@ Backend global-admin access SHALL first obtain independent current Root status. 
 #### Scenario: Absent-record singleton compatibility is separate from enrollment
 - **WHEN** the registry is genuinely absent and exactly one configured approved matching caller uses existing Source33 native file access
 - **THEN** compatibility may remain visibly legacy-singleton without granting original-admin status; a household union still requires genuine enrollment, and malformed/unreadable/revoked/wrong-active registry never takes that fallback even under one email.
+
+### Requirement: Fixed Root qualification entry-only exception diagnostics
+The installer SHALL attach qualification diagnostic callbacks only to the exact verified Root CLI entry frame, preserve bounded original exception-origin traceback evidence, and retain all source custody, effect, receipt and deadline gates.
+
+#### Scenario: Nested failure reaches the verified entry point
+- **WHEN** the fixed adapter-update CLI encounters a nested candidate-source exception
+- **THEN** diagnostics capture its original type and bounded source-relative traceback locations at the verified entry frame without tracing nested frame execution or serializing exception values, arguments or output bytes.
+- **AND** meaningful Pi contracts prove nested-origin fidelity, absence of nested local callbacks, tracing-context refusal and reset after success or failure.
+
+#### Scenario: Changed diagnostics require exact qualification before actual retry
+- **WHEN** entry-only diagnostics replace the broad qualification tracer after candidate146 rollback
+- **THEN** Core9e70, original110s custody, outer300s timeout and real update/recovery assertions remain unchanged; Root validates the exact changed candidate and retries actual adoption separately.
+- **AND** prior fixture qualification and restored-old runtime retain their exact source evidence; reduced overhead alone proves neither the previous failure cause nor actual deployment acceptance.
