@@ -559,6 +559,10 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path) -> tuple[int
     captured: dict[str, dict | None] = {"origin": None}
 
     def trace(frame, event, arg):
+        if event == "call":
+            return trace if frame.f_code is main_code else None
+        if frame.f_code is not main_code:
+            return None
         if event == "exception" and frame.f_code is main_code:
             try:
                 if type(arg) is not tuple or len(arg) != 3:

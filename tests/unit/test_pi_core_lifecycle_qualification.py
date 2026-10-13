@@ -9,6 +9,7 @@ import importlib.util
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -170,6 +171,67 @@ def test_fixed_cli_trace_drops_caught_exception_when_cli_succeeds():
         RootSetup, Path(__file__).resolve().parent)
     assert cli_exit == 0
     assert origin is None
+
+
+def test_fixed_cli_trace_limits_local_events_to_main_but_keeps_nested_origin(monkeypatch):
+    def ordinary_calls(depth):
+        if depth:
+            return ordinary_calls(depth - 1)
+        return "completed"
+
+    def nested_failure():
+        raise LookupError("PRIVATE_NESTED_EXCEPTION_TEXT_MUST_NOT_ESCAPE")
+
+    class RootSetup:
+        @staticmethod
+        def main(argv):
+            assert argv == ["core-service", "adapter-update"]
+            assert ordinary_calls(32) == "completed"
+            nested_failure()
+
+    main_code = RootSetup.main.__code__
+    real_settrace = qualification.sys.settrace
+    events = []
+
+    def observe_settrace(callback):
+        if callback is None:
+            real_settrace(None)
+            return
+
+        def observe(frame, event, arg):
+            local = callback(frame, event, arg)
+            if event == "call":
+                events.append((frame.f_code is main_code, local is not None))
+            return observe if local is not None else None
+
+        real_settrace(observe)
+
+    monkeypatch.setattr(qualification.sys, "settrace", observe_settrace)
+    cli_exit, origin = qualification._run_fixed_root_adapter_update(
+        RootSetup, Path(__file__).resolve().parent)
+    assert cli_exit == 1
+    assert origin["exception_type"] == "LookupError"
+    functions = [frame["function"] for frame in origin["frames"]]
+    assert "main" in functions and "nested_failure" in functions
+    assert "ordinary_calls" not in functions
+    assert "PRIVATE_NESTED_EXCEPTION_TEXT_MUST_NOT_ESCAPE" not in repr(origin)
+    assert any(is_main and local_enabled for is_main, local_enabled in events)
+    assert any(not is_main and not local_enabled for is_main, local_enabled in events)
+    assert not any(not is_main and local_enabled for is_main, local_enabled in events)
+    assert qualification.sys.gettrace() is None
+
+
+def test_fixed_cli_trace_refuses_a_preexisting_trace():
+    def prior_trace(_frame, _event, _arg):
+        return prior_trace
+
+    sys.settrace(prior_trace)
+    try:
+        with pytest.raises(RuntimeError, match="untraced root CLI context"):
+            qualification._run_fixed_root_adapter_update(object(), Path(__file__).parent)
+    finally:
+        sys.settrace(None)
+    assert sys.gettrace() is None
 
 
 def _backup_fixture():
