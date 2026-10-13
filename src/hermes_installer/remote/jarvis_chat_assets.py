@@ -52,9 +52,14 @@ _HTML = '''<!doctype html>
       <nav class="primary-nav" aria-label="Jarvis sections">
         <button type="button" class="nav-item" data-view="overview">Overview</button>
         <button type="button" class="nav-item" data-view="chat">Chats</button>
-        <details class="nav-group" data-nav-group="work"><summary aria-expanded="false">Work</summary><div class="nav-menu"><!-- JARVIS_GROUP_WORK --></div></details>
-        <details class="nav-group" data-nav-group="resources"><summary aria-expanded="false">Resources</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><!-- JARVIS_GROUP_RESOURCES --></div></details>
-        <details class="nav-group" data-nav-group="system"><summary aria-expanded="false">System</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_SYSTEM --></div></details>
+        <details class="nav-group manage-group" data-nav-group="manage">
+          <summary aria-expanded="false">Manage</summary>
+          <div class="nav-menu" role="group" aria-label="Manage destinations">
+            <section class="nav-menu-section" aria-labelledby="manage-work-heading"><h2 class="nav-menu-heading" id="manage-work-heading">Work</h2><div class="nav-menu-items"><!-- JARVIS_GROUP_WORK --></div></section>
+            <section class="nav-menu-section" aria-labelledby="manage-resources-heading"><h2 class="nav-menu-heading" id="manage-resources-heading">Resources</h2><div class="nav-menu-items"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><!-- JARVIS_GROUP_RESOURCES --></div></section>
+            <section class="nav-menu-section" aria-labelledby="manage-system-heading"><h2 class="nav-menu-heading" id="manage-system-heading">System</h2><div class="nav-menu-items"><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_SYSTEM --></div></section>
+          </div>
+        </details>
       </nav>
       <button class="voice-entry" id="voice-entry" type="button" aria-label="Open voice controls" aria-controls="chat-preferences-panel" aria-expanded="false">Voice controls</button>
       <div class="assistant-hud" id="assistant-hud" data-state="checking" aria-label="Jarvis status">
@@ -335,7 +340,10 @@ html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,
 .nav-group[open]>summary,.nav-group>summary[aria-current="location"]{border-color:rgba(88,228,235,.25);background:rgba(88,228,235,.08);color:#ddfbfd}
 .nav-group[data-current="true"]>summary{color:#dcfafa}
 .nav-group>summary:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-.nav-menu{position:absolute;z-index:30;top:calc(100% + 7px);left:0;width:max-content;min-width:220px;max-width:min(300px,90vw);max-height:min(70dvh,560px);display:grid;gap:3px;overflow:auto;padding:7px;border:1px solid rgba(91,199,211,.3);border-radius:14px;background:rgba(5,22,29,.98);box-shadow:0 18px 48px rgba(0,0,0,.5),inset 0 1px rgba(255,255,255,.04);backdrop-filter:blur(18px)}
+.nav-menu{position:absolute;z-index:30;top:calc(100% + 7px);left:0;width:max-content;min-width:220px;max-width:min(300px,90vw);max-height:min(70dvh,560px);display:grid;gap:10px;overflow:auto;padding:10px;border:1px solid rgba(91,199,211,.3);border-radius:14px;background:rgba(5,22,29,.98);box-shadow:0 18px 48px rgba(0,0,0,.5),inset 0 1px rgba(255,255,255,.04);backdrop-filter:blur(18px)}
+.nav-menu-section{display:grid;gap:3px}
+.nav-menu-heading{margin:0;padding:5px 11px 3px;color:#83d9de;font-size:10px;font-weight:650;letter-spacing:.1em;line-height:1.3;text-transform:uppercase}
+.nav-menu-items{display:grid;gap:3px}
 .nav-group:nth-last-child(-n+2) .nav-menu{left:auto;right:0}
 .nav-menu .nav-item{width:100%;min-height:44px;display:flex;align-items:center;justify-content:flex-start;padding:0 12px;border-radius:8px;text-align:left;font-size:12px}
 .primary-nav .nav-item{transition:none}
@@ -473,7 +481,7 @@ html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,
 @media(max-width:760px){
   /* A filtered header traps fixed descendants inside its short box. */
   .topbar{background:rgba(5,17,22,.96);backdrop-filter:none;-webkit-backdrop-filter:none}
-  .primary-nav{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:1fr;align-items:stretch;justify-content:stretch;overflow:visible;overflow-x:visible;overflow-y:visible;overscroll-behavior-inline:auto;scroll-snap-type:none}
+  .primary-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:1fr;align-items:stretch;justify-content:stretch;overflow:visible;overflow-x:visible;overflow-y:visible;overscroll-behavior-inline:auto;scroll-snap-type:none}
   .primary-nav>.nav-item{font-size:10px}
   .nav-group{position:static;min-width:0;flex:none}
   .nav-group>summary{width:100%;min-width:0;height:100%;min-height:46px;justify-content:center;gap:3px;padding-inline:3px;font-size:clamp(8px,2.4vw,10px);line-height:1.05;letter-spacing:0;text-align:center;white-space:nowrap;overflow-wrap:normal}
@@ -1981,7 +1989,20 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const summary = group.querySelector("summary");
     const observer = new MutationObserver(() => summary.setAttribute("aria-expanded", String(group.open)));
     observer.observe(group, {attributes: true, attributeFilter: ["open"]});
+    group.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !group.open) return;
+      event.preventDefault();
+      group.open = false;
+      summary.setAttribute("aria-expanded", "false");
+      summary.focus();
+    });
   }
+  const manageMenu = document.querySelector(".manage-group");
+  document.addEventListener("click", (event) => {
+    if (!manageMenu?.open || manageMenu.contains(event.target)) return;
+    manageMenu.open = false;
+    manageMenu.querySelector("summary")?.setAttribute("aria-expanded", "false");
+  });
   function focusSelectedViewHeading(view) {
     const panel = [...document.querySelectorAll("[data-view-panel]")]
       .find((candidate) => candidate.dataset.viewPanel === view && !candidate.hidden);
