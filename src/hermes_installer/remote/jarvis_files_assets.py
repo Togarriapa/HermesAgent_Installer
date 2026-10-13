@@ -72,7 +72,7 @@ const previewBytes = root.querySelector('[data-preview-bytes]');
 const list = root.querySelector('[data-files]');
 const empty = root.querySelector('[data-empty]');
 let stopped = false, busy = false, pendingAttempt = null, conversationId = '', previewRevision = 0;
-let filesReadRevision = 0;
+let filesReadRevision = 0, stageRevision = 0;
 function call(method, path, body) {
 if (stopped) return Promise.reject(new Error('View closed'));
 return method === 'GET' ? api.get(path) : api.post(path, body);
@@ -163,7 +163,8 @@ uploadButton.disabled = !selectedConversation || !valid;
 }
 async function stageFile() {
 if (stopped || busy || !conversationId) return;
-const targetConversation = conversationId;
+const targetConversation = conversationId, operation = ++stageRevision;
+const stageIsCurrent = () => !stopped && operation === stageRevision && targetConversation === conversationId;
 const file = fileInput.files?.[0];
 if (!file) return;
 busy = true;
@@ -172,7 +173,7 @@ fileInput.disabled = true;
 conversationSelect.disabled = true;
 refreshButton.disabled = true;
 try {
-if (!(await previewSelectedFile(file, ++previewRevision)) || stopped || targetConversation !== conversationId || fileInput.files?.[0] !== file) return;
+if (!(await previewSelectedFile(file, ++previewRevision)) || !stageIsCurrent() || fileInput.files?.[0] !== file) return;
 note.textContent = 'Staging attachment…';
 if (!pendingAttempt || pendingAttempt.file !== file || pendingAttempt.conversationId !== targetConversation) {
 pendingAttempt = {file, conversationId: targetConversation, body: {
@@ -180,21 +181,21 @@ name: file.name, content_base64: toBase64(await file.arrayBuffer()),
 idempotency_key: crypto.randomUUID().replaceAll('-', '')
 }};
 }
-await call('POST', filesPath(targetConversation), pendingAttempt.body);
-if (stopped) return;
+const attempt = pendingAttempt;
+await call('POST', filesPath(targetConversation), attempt.body);
+if (!stageIsCurrent()) { if (pendingAttempt === attempt) pendingAttempt = null; return; }
 pendingAttempt = null;
 fileInput.value = '';
 note.textContent = 'Attachment staged for next message.';
-try {
-renderFiles((await call('GET', filesPath(targetConversation))).files);
+const receiptRevision = ++filesReadRevision;
+const receiptIsCurrent = () => stageIsCurrent() && receiptRevision === filesReadRevision;
+try { const receipt = await call('GET', filesPath(targetConversation)); if (receiptIsCurrent()) renderFiles(receipt && receipt.files); }
+catch (_) { if (receiptIsCurrent()) note.textContent = 'Staged; refresh status.'; }
 } catch (_) {
-if (!stopped) note.textContent = 'Staged; refresh status.';
-}
-} catch (_) {
-if (!stopped) note.textContent = 'No receipt; reselect same file to retry.';
+if (stageIsCurrent()) note.textContent = 'No receipt; reselect same file to retry.';
 } finally {
 busy = false;
-if (!stopped) {
+if (stageIsCurrent()) {
 conversationSelect.disabled = false;
 fileInput.disabled = false;
 refreshButton.disabled = false;
@@ -204,7 +205,7 @@ uploadButton.disabled = !conversationId || !fileInput.files?.length;
 }
 function onConversationChange() {
 conversationId = conversationSelect.value || '';
-filesReadRevision++;
+filesReadRevision++; stageRevision++;
 pendingAttempt = null;
 renderFiles([]);
 uploadButton.disabled = true;
@@ -212,7 +213,7 @@ previewChoice(fileInput.files?.[0]);
 refreshFiles();
 }
 function onFileChange() {
-pendingAttempt = null;
+pendingAttempt = null; stageRevision++;
 const file = fileInput.files?.[0];
 uploadButton.disabled = true;
 previewChoice(file);
@@ -223,7 +224,7 @@ uploadButton.addEventListener('click', stageFile);
 refreshButton.addEventListener('click', refreshFiles);
 loadConversations();
 return function cleanup() {
-stopped = true;
+stopped = true; stageRevision++; filesReadRevision++;
 previewRevision++;
 conversationSelect.removeEventListener('change', onConversationChange);
 fileInput.removeEventListener('change', onFileChange);

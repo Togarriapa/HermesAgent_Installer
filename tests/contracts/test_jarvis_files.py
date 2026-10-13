@@ -339,17 +339,20 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  assert.equal(select.disabled,true,'conversation switching stays locked during stage');
  refresh.fire('click');
  assert.equal(reads[6].path,'/chat/api/conversations/A/files','file status can refresh while the upload is in flight');
- reads[6].d.resolve({files:[{id:'during-stage',name:'During stage'}]}); await flush();
- assert.equal(list.children[0].children[0].children[0].textContent,'During stage');
  posts[0].d.resolve({id:'receipt'}); await flush();
  assert.equal(reads[7].path,'/chat/api/conversations/A/files','successful stage keeps its receipt readback');
  reads[7].d.resolve({files:[{id:'receipt',name:'Receipt'}]}); await staging;
  assert.equal(list.children[0].children[0].children[0].textContent,'Receipt');
- refresh.fire('click');
- assert.equal(reads[8].path,'/chat/api/conversations/A/files');
+ reads[6].d.resolve({files:[{id:'old-refresh',name:'Older refresh'}]}); await flush();
+ assert.equal(list.children[0].children[0].children[0].textContent,'Receipt','older in-flight refresh cannot overwrite newer stage receipt readback');
+ fileInput.files=[file]; fileInput.fire('change'); await flush();
+ const secondStage=upload.fire('click'); await flush();
+ assert.equal(posts.length,2);
+ posts[1].d.resolve({id:'second-receipt'}); await flush();
+ assert.equal(reads[8].path,'/chat/api/conversations/A/files','second successful stage begins guarded receipt readback');
  const beforeUnmount=list.children[0].children[0].children[0].textContent;
- cleanup(); reads[8].d.resolve({files:[{id:'late',name:'Late after unmount'}]}); await flush();
- assert.equal(list.children[0].children[0].children[0].textContent,beforeUnmount,'late refresh cannot update an unmounted view');
+ cleanup(); reads[8].d.resolve({files:[{id:'late-stage',name:'Late stage receipt'}]}); await secondStage;
+ assert.equal(list.children[0].children[0].children[0].textContent,beforeUnmount,'stage receipt completion cannot mutate an unmounted view');
 })().catch(error=>{console.error(error);process.exitCode=1});
 """.replace("MOUNT", FEATURE_ASSETS.mount_js)
     with tempfile.TemporaryDirectory() as temporary:
