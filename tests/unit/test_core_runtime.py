@@ -692,6 +692,8 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
     prior_soul = b"# Existing owner instructions\nKeep these bytes before adoption.\n"
     (home / "SOUL.md").write_bytes(prior_soul)
     (home / "SOUL.md").chmod(0o600)
+    # Capture while the migrated unit still matches the original HOME recipe.
+    active_record = core._journal()
     monkeypatch.setattr(core, "HOME", admin_home)
     monkeypatch.setattr(core, "HERMES_HOME", home)
     monkeypatch.setattr(native, "_JARVIS_HOME", home)
@@ -714,7 +716,6 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
     # The migrated adapter recipe embeds HOME paths. Rebuild its complete
     # journaled service files after selecting the isolated fixture home, before
     # the later helper rebind asks the production reader to verify that recipe.
-    active_record = core._journal()
     active_source = Path(active_record["adapter_source"])
     active_unit = core._unit(adapter_source=active_source)
     active_launcher = core._launcher(adapter_source=active_source)
