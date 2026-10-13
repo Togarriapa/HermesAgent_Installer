@@ -148,9 +148,10 @@ _HTML = '''<!doctype html>
                   <p id="voice-dock-status" role="status" aria-live="polite">Text chat is ready. Browser voice is off until you enable it.</p></div>
                 <div class="voice-dock-opt-ins">
                   <label class="chat-preference-toggle" id="chat-speech-consent-row"><input id="chat-speech-consent" type="checkbox"><span><strong>Allow browser voice input</strong><small>Microphone access is requested only when you start listening.</small></span></label>
-              <label class="chat-preference-toggle" id="chat-speech-output-row"><input id="chat-speech-output" type="checkbox"><span><strong>Allow browser read-aloud</strong><small>Used only when you choose Read latest reply aloud.</small></span></label>
+                  <label class="chat-preference-toggle" id="chat-speech-output-row"><input id="chat-speech-output" type="checkbox"><span><strong>Allow browser read-aloud</strong><small>Automatically reads new completed replies after opt-in. You can also choose Read latest reply aloud.</small></span></label>
                 </div>
               </div>
+              <p class="voice-dock-disclosure">Browser speech recognition may process microphone audio through your browser or platform service outside Jarvis. Audio is not sent to Jarvis. You can type instead; a transcript stays in the composer for review and is not sent until you submit.</p>
               <div class="voice-dock-controls" role="group" aria-label="Voice actions">
                 <button class="voice-button" id="voice-input" type="button" aria-label="Start push to talk" hidden>Push to talk</button>
                 <button class="voice-button" id="voice-stop" type="button" hidden>Stop listening</button>
@@ -206,7 +207,7 @@ _HTML = '''<!doctype html>
           <label class="voice-choice voice-select-row" id="speech-language-row"><span><strong>Recognition language</strong><select id="speech-language" aria-label="Speech recognition language"><option value="en-US">English (United States)</option><option value="en-GB">English (United Kingdom)</option><option value="pt-PT">Português (Portugal)</option><option value="pt-BR">Português (Brasil)</option><option value="es-ES">Español (España)</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="it-IT">Italiano</option></select><small>Applies to the next push-to-talk capture. The browser or operating system chooses the microphone; manage the input device there.</small></span></label>
           <p class="voice-unavailable" id="speech-unavailable" hidden></p>
           <h3 class="voice-group-title">Speech output</h3>
-          <label class="voice-choice" id="speech-output-row" hidden><input id="speech-output" type="checkbox"><span><strong>Allow browser read-aloud</strong><small>Used only when you choose Read latest reply aloud. Voices come from your browser or operating system, which may use its platform speech service; no separate Jarvis TTS provider is used.</small></span></label>
+          <label class="voice-choice" id="speech-output-row" hidden><input id="speech-output" type="checkbox"><span><strong>Allow browser read-aloud</strong><small>Automatically reads new completed replies after opt-in. You can also choose Read latest reply aloud. Voices come from your browser or operating system, which may use its platform speech service; no separate Jarvis TTS provider is used.</small></span></label>
           <label class="voice-choice voice-select-row" id="speech-voice-row" hidden><span><strong>Speech voice</strong><select id="speech-voice" aria-label="Speech voice"></select></span></label>
           <div class="voice-range-row" id="speech-tuning-row" hidden><label for="speech-rate"><strong>Speaking rate</strong><output id="speech-rate-value" for="speech-rate">1.0×</output><input id="speech-rate" type="range" min="0.5" max="2" step="0.1" value="1"></label><label for="speech-pitch"><strong>Voice pitch</strong><output id="speech-pitch-value" for="speech-pitch">1.0</output><input id="speech-pitch" type="range" min="0" max="2" step="0.1" value="1"></label></div>
           <p class="voice-unavailable" id="speech-voice-status" role="status" aria-live="polite" hidden></p>
@@ -464,6 +465,7 @@ html[data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{b
 .voice-dock-opt-ins .chat-preference-toggle{min-height:48px;align-items:flex-start;padding:5px 0;border-bottom:0}
 .voice-dock-opt-ins .chat-preference-toggle strong{font-size:11px}
 .voice-dock-opt-ins .chat-preference-toggle small{font-size:9px}
+.voice-dock-disclosure{margin:0;color:#9bb6bb;font-size:10px;line-height:1.5}
 .voice-dock-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .voice-dock-controls .voice-button{min-height:42px;padding-inline:13px}
 .voice-dock-controls .voice-button:disabled{opacity:.48}
@@ -1594,6 +1596,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         rememberCompletedReply(conversationAtStart, reply.content);
         closeStream();
         setConnection("ready", "Secure connection");
+        speakCompletedReply(reply.content);
         refreshConversationsInBackground();
         return true;
       }
@@ -1673,6 +1676,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       rememberCompletedReply(conversationAtStart, finalText);
       closeStream();
       loadTurnSelection(conversationAtStart);
+      speakCompletedReply(finalText);
       refreshConversationsInBackground();
     });
     eventSource.addEventListener("message.completed", () => { if (activeTurnId === turnId) waiting.remove(); });

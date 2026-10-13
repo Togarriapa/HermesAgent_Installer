@@ -461,20 +461,42 @@ class JarvisChatAssetTests(unittest.TestCase):
         reconcile = "async function reconcileCompletedTurn(" + client.split(
             "async function reconcileCompletedTurn(", 1)[1].split(
                 "\n  function startHeartbeat(", 1)[0]
+        speak = "function speakCompletedReply(text) {" + client.split(
+            "function speakCompletedReply(text) {", 1)[1].split(
+                "\n  function readLatestReplyAloud()", 1)[0]
         harness = r'''const assert = require("node:assert/strict");
 const API = "/chat/api";
 let request, activeTurnId = "old-success", conversationId = "conversation";
-let heartbeatNonce = "unchanged", closed = 0, errors = 0, connections = [], recoveredSpeech = [], completedReply = null;
+let heartbeatNonce = "unchanged", closed = 0, errors = 0, connections = [], completedReply = null;
+let readAloudEnabled = false, speechUtterance = null;
+const utterances = [];
+class FakeUtterance { constructor(text) { this.text = text; } }
+const ui = {speechStop:{hidden:true, disabled:true}};
+const uiPreferences = {voiceURI:""};
+const window = {SpeechSynthesisUtterance:FakeUtterance, speechSynthesis:{
+  cancel(){}, getVoices(){return [];}, speak(utterance){utterances.push(utterance);}
+}};
+const synthesisSupported = true;
+function byId(id) {
+  if (id === "speech-output") return {checked:readAloudEnabled};
+  if (id === "speech-rate") return {value:"1"};
+  if (id === "speech-pitch") return {value:"1"};
+  throw new Error(`unexpected element ${id}`);
+}
 function closeStream() { closed += 1; activeTurnId = null; }
 function showError(message) { errors += 1; }
+function showVoiceStatus() {}
+function setAssistantState() {}
+function renderVoiceDock() {}
+function stopSpeech() { speechUtterance = null; ui.speechStop.hidden = true; ui.speechStop.disabled = true; }
 function setConnection(state, label) { connections.push([state, label]); }
-function speakCompletedReply(text) { recoveredSpeech.push(text); }
 function rememberCompletedReply(id, text) { completedReply = id && text ? {id, text} : null; }
 function refreshConversations() { return Promise.resolve(); }
 const assistantBody = {textContent: "partial reply"};
 const waiting = {removed: false, remove() { this.removed = true; }};
 RENEW
 RECONCILE
+SPEAK
 (async () => {
   let resolveOld;
   request = () => new Promise((resolve) => { resolveOld = resolve; });
@@ -520,10 +542,31 @@ RECONCILE
   assert.equal(waiting.removed, true);
   assert.equal(closed, 2);
   assert.deepEqual(connections.at(-1), ["ready", "Secure connection"]);
-  assert.deepEqual(recoveredSpeech, [], "recovering a completed turn never starts TTS automatically");
+  assert.equal(utterances.length, 0, "the default-off preference keeps recovered replies silent");
   assert.deepEqual(completedReply, {id:"conversation", text:"Jarvis"}, "the explicit dock action can use the recovered reply");
+
+  readAloudEnabled = true;
+  activeTurnId = "completed-turn-opted-in";
+  conversationId = "conversation";
+  assistantBody.textContent = "partial reply";
+  waiting.removed = false;
+  request = async () => ({messages: [
+    {role: "user", content: "say this when opted in"},
+    {role: "assistant", content: "Jarvis with consent"}
+  ]});
+  await reconcileCompletedTurn("completed-turn-opted-in", "conversation", "say this when opted in", assistantBody, waiting);
+  assert.deepEqual(utterances.map((utterance) => utterance.text), ["Jarvis with consent"],
+    "the saved opt-in reads a current completed reply after secure readback");
+  assert.equal(ui.speechStop.hidden, false, "Stop audio is shown during playback");
+  utterances[0].onend();
+  assert.equal(ui.speechStop.hidden, true, "Stop audio hides when playback ends");
+  const beforeStale = utterances.length;
+  activeTurnId = "stale-turn";
+  conversationId = "another-conversation";
+  await reconcileCompletedTurn("stale-turn", "conversation", "say this when opted in", assistantBody, waiting);
+  assert.equal(utterances.length, beforeStale, "a completion from another conversation never starts playback");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
-'''.replace("RENEW", renew).replace("RECONCILE", reconcile)
+'''.replace("RENEW", renew).replace("RECONCILE", reconcile).replace("SPEAK", speak)
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "heartbeat-harness.js"
             path.write_text(harness, encoding="utf-8")
@@ -825,7 +868,8 @@ FEATURE_API
         self.assertIn("current.interimResults = false", source)
         self.assertIn("Transcript added to your message. Review it before sending.", source)
         self.assertIn("speakCompletedReply(lastCompletedReply.text)", source)
-        self.assertNotIn("speakCompletedReply(finalText)", source, "completed turns never start TTS without an explicit dock action")
+        self.assertIn("speakCompletedReply(finalText)", source, "the saved read-aloud opt-in is honored for current completed turns")
+        self.assertIn('Object.freeze({readAloud: false', source, "read-aloud defaults off")
         self.assertIn("utterance.onend", source)
         self.assertIn("stopRecognition(); stopSpeech();", source)
         self.assertGreaterEqual(source.count("if (recognition !== current) return;"), 3)
@@ -842,6 +886,11 @@ FEATURE_API
         markup = page.decode("utf-8")
         composer = markup.split('id="composer"', 1)[1].split("</form>", 1)[0]
         self.assertIn('class="voice-dock" aria-labelledby="voice-dock-title"', composer)
+        self.assertIn('class="voice-dock-disclosure"', composer)
+        disclosure = composer.split('class="voice-dock-disclosure">', 1)[1].split("</p>", 1)[0]
+        self.assertIn("outside Jarvis", disclosure)
+        self.assertIn("You can type instead", disclosure)
+        self.assertIn("not sent until you submit", disclosure)
         self.assertIn('id="voice-read-aloud" type="button" disabled', composer)
         self.assertIn('id="speech-stop" type="button" aria-label="Stop reply audio" hidden disabled', composer)
         self.assertIn("@media(max-width:390px){.voice-dock-opt-ins{grid-template-columns:1fr}", markup)
