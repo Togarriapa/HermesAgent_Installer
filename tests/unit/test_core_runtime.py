@@ -287,7 +287,8 @@ def _bounded_cohort_exception_sites():
         sys.settrace(previous)
 
 
-def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None, runner=None):
+def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None,
+                    runner=None, diagnostic=False):
     """Run the untouched generated guard as admin in a private mount view."""
     if os.geteuid() != 0:
         raise AssertionError("the Pi startup-guard fixture requires root to model admin")
@@ -341,6 +342,27 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
         os.chown(cred_dir, admin.pw_uid, admin.pw_gid)
         os.chmod(cred_dir, 0o500)
         command = shlex.split(line.partition("=")[2])
+        if diagnostic:
+            try:
+                code_index = command.index("-c")
+                guard_source = command[code_index + 1]
+            except (ValueError, IndexError):
+                raise AssertionError("generated guard command has no isolated source") from None
+            wrapper = (
+                "import json,sys\n"
+                "_guard_source=" + repr(guard_source) + "\n"
+                "def _guard_trace(frame,event,arg):\n"
+                " if frame.f_code.co_filename!='<untouched-generated-guard>' or event!='return': return _guard_trace\n"
+                " values=frame.f_locals\n"
+                " names=('ok','cp_ok','rp_ok','backup_ok','initial_ok','keys_ok','transition_ok','cohort_ok','starting','reconstruction_ok')\n"
+                " result={name:values[name] for name in names if type(values.get(name)) is bool}\n"
+                " if values.get('phase') in ('source-starting','bindings-verified','committed'): result['phase']=values['phase']\n"
+                " sys.stdout.write('GUARD_DIAGNOSTIC='+json.dumps(result,sort_keys=True,separators=(',',':'))+'\\n')\n"
+                " return _guard_trace\n"
+                "sys.settrace(_guard_trace)\n"
+                "exec(compile(_guard_source,'<untouched-generated-guard>','exec'),{'__name__':'__main__'})\n"
+            )
+            command[code_index + 1] = wrapper
         namespace_script = """\
 set -eu
 unit_source=$1; shift
@@ -384,10 +406,30 @@ exec "$runuser_bin" -u admin -- "$@"
                 and (result.returncode == 0) is not expect_success):
             outcome = "succeed" if expect_success else "fail closed"
             stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            diagnostic_summary = None
+            if diagnostic:
+                for row in stdout.splitlines():
+                    if row.startswith("GUARD_DIAGNOSTIC="):
+                        try:
+                            candidate = json.loads(row.partition("=")[2])
+                        except (ValueError, TypeError):
+                            candidate = None
+                        if (type(candidate) is dict
+                                and set(candidate) <= {
+                                    "ok", "cp_ok", "rp_ok", "backup_ok", "initial_ok",
+                                    "keys_ok", "transition_ok", "cohort_ok", "starting",
+                                    "reconstruction_ok", "phase"}
+                                and all(type(value) is bool for key, value in candidate.items()
+                                        if key != "phase")
+                                and ("phase" not in candidate or candidate["phase"] in {
+                                    "source-starting", "bindings-verified", "committed"})):
+                            diagnostic_summary = candidate
+                        break
             raise AssertionError(
                 f"generated ExecStartPre should {outcome}; exit={result.returncode}; "
-                f"stderr={stderr or '<empty>'}; "
-                f"stdout={result.stdout.decode('utf-8', errors='replace').strip() or '<empty>'}"
+                f"stderr={'<suppressed>' if diagnostic else (stderr or '<empty>')}; "
+                f"stdout={'<suppressed>' if diagnostic else (result.stdout.decode('utf-8', errors='replace').strip() or '<empty>')}"
+                + (f"; guard_flags={diagnostic_summary!r}" if diagnostic else "")
             )
         return result.returncode
     finally:
@@ -1545,7 +1587,7 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     assert core.UNIT.read_bytes() == expected_new_unit
     assert hashlib.sha256(expected_new_unit).hexdigest() == updated["unit_sha256"]
     assert _exec_start_pre(expected_new_unit, expect_success=True,
-                           runner=guard_runner) == 0
+                           runner=guard_runner, diagnostic=True) == 0
     assert _exec_start_pre(expected_new_unit,
         credential_mutations={"adapter-backup-native-plugin-__init__-py": ("remove",)},
         expect_success=False, runner=guard_runner) != 0
