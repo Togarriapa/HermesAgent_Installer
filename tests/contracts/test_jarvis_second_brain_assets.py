@@ -81,6 +81,25 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn("graphNotes.querySelectorAll('button[data-note-id]')", FEATURE_ASSETS.mount_js)
         self.assertIn("button.addEventListener('click', () => openNote(node.noteId))", FEATURE_ASSETS.mount_js)
 
+    def test_focused_neighborhood_detail_and_recovery_use_current_vault_dtos(self):
+        self.assertIn('data-graph-detail', FEATURE_ASSETS.view_html)
+        self.assertIn('data-graph-focus', FEATURE_ASSETS.view_html)
+        self.assertIn('data-graph-reset', FEATURE_ASSETS.view_html)
+        self.assertIn('data-graph-back', FEATURE_ASSETS.view_html)
+        self.assertIn('function focusNeighborhood(noteId = currentNoteId)', FEATURE_ASSETS.mount_js)
+        self.assertIn('function showFullGraph()', FEATURE_ASSETS.mount_js)
+        self.assertIn('async function goBackNote()', FEATURE_ASSETS.mount_js)
+        self.assertIn('new Set([graphFocusNoteId])', FEATURE_ASSETS.mount_js)
+        self.assertIn('graphLayout(nodes, edges, graphFocusNoteId)', FEATURE_ASSETS.mount_js)
+        self.assertIn("relationships.backlinks", FEATURE_ASSETS.mount_js)
+        self.assertIn("relationships.unresolved", FEATURE_ASSETS.mount_js)
+        self.assertIn('partial coverage', FEATURE_ASSETS.mount_js)
+        self.assertIn('Author and review lineage are not included in this note projection.', FEATURE_ASSETS.mount_js)
+        self.assertIn('function onGraphFocus()', FEATURE_ASSETS.mount_js)
+        self.assertIn('function onGraphReset()', FEATURE_ASSETS.mount_js)
+        self.assertIn('function onGraphBack()', FEATURE_ASSETS.mount_js)
+        self.assertIn('graphBackButton.removeEventListener(\'click\', onGraphBack)', FEATURE_ASSETS.mount_js)
+
 
 if __name__ == "__main__":
     unittest.main()
