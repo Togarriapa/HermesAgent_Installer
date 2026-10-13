@@ -437,6 +437,20 @@ def _record_initial_stage(core, custody) -> None:
         raise PrimaryPromptAdoptionError("starting-cohort manager stage did not bind") from exc
 
 
+def _persist_initial_preparing_record(core, custody, record, prior: bytes) -> None:
+    """Retain the exact owner backup before publishing its preparing reference."""
+    _require_initial_custody(core, custody)
+    with _initial_scope(core, custody):
+        _require_initial_custody(core, custody)
+        _backup_bytes(core, record, prior)
+    # A crash after the backup leaves only an immutable orphan. The manager
+    # record and Core stage are written only after the backup has been read
+    # back successfully; never remove that backup as cleanup.
+    _require_initial_custody(core, custody)
+    _write_record(core, record)
+    _record_initial_stage(core, custody)
+
+
 def _bind_initial_custody_fields(custody, *, prior_sha, prior_signature,
                                  source_prompt, block, desired, separator) -> None:
     if (custody.prior_soul_sha256 != prior_sha
@@ -561,11 +575,7 @@ def _adopt_primary_prompt_for_starting_cohort_locked(core, custody) -> dict[str,
         record = _new_record(source_generation, discovery, artifact_sha,
                              manifest["source"]["git_tree"], source_prompt, block,
                              prior, signature, prior, separator)
-        _require_initial_custody(core, custody)
-        _write_record(core, record)
-        _require_initial_custody(core, custody)
-        _backup_bytes(core, record, prior)
-        _record_initial_stage(core, custody)
+        _persist_initial_preparing_record(core, custody, record, prior)
     if record.get("state") == "preparing":
         _require_initial_custody(core, custody)
         record["state"] = "writing"

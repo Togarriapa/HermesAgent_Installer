@@ -103,6 +103,55 @@ def test_starting_cohort_root_context_check_runs_inside_sealed_scope(monkeypatch
     assert events.index("scope-exit") < events.index("ensure-dirs")
 
 
+@pytest.mark.parametrize("failure", ["backup", "manager-record"])
+def test_initial_preparing_record_never_precedes_immutable_backup(monkeypatch, failure):
+    effects = []
+    backup = []
+    scoped = {"active": False}
+
+    @contextlib.contextmanager
+    def initial_scope(_core, _custody):
+        scoped["active"] = True
+        effects.append("scope-enter")
+        try:
+            yield
+        finally:
+            effects.append("scope-exit")
+            scoped["active"] = False
+
+    def retain_backup(_core, _record, prior):
+        assert scoped["active"]
+        backup.append(prior)
+        effects.append("backup")
+        if failure == "backup":
+            raise OSError("injected backup readback failure")
+
+    def write_record(_core, _record):
+        effects.append("manager-record")
+        if failure == "manager-record":
+            raise OSError("injected preparing-record failure")
+
+    monkeypatch.setattr(manager, "_require_initial_custody",
+                        lambda *_args: effects.append("custody"))
+    monkeypatch.setattr(manager, "_initial_scope", initial_scope)
+    monkeypatch.setattr(manager, "_backup_bytes", retain_backup)
+    monkeypatch.setattr(manager, "_write_record", write_record)
+    monkeypatch.setattr(manager, "_record_initial_stage",
+                        lambda *_args: effects.append("cohort-stage"))
+
+    with pytest.raises(OSError, match="injected"):
+        manager._persist_initial_preparing_record(
+            SimpleNamespace(), object(), {"state": "preparing"}, b"exact prior SOUL")
+
+    assert backup == [b"exact prior SOUL"]
+    assert "cohort-stage" not in effects
+    if failure == "backup":
+        assert "manager-record" not in effects
+        assert backup == [b"exact prior SOUL"]  # retained orphan; no cleanup/unlink
+    else:
+        assert effects.index("backup") < effects.index("manager-record")
+
+
 def test_atomic_admin_replace_preserves_file_identity_contract_and_refuses_stale_prefix(tmp_path, monkeypatch):
     uid, gid = os.getuid(), os.getgid()
     home = tmp_path / "hermes"
