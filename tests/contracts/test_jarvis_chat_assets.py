@@ -1102,6 +1102,9 @@ HANDLER
         stop_start = client.index("  function stopRecognition(message = \"\") {")
         stop_end = client.index("\n  function stopSpeech(", stop_start)
         stop_source = client[stop_start:stop_end]
+        dock_start = client.index("  function renderVoiceDock() {")
+        dock_end = client.index("\n  function rememberCompletedReply(", dock_start)
+        dock_source = client[dock_start:dock_end]
         start = client.index("  function startRecognition(mode = \"ptt\") {")
         end = client.index("\n  function clearError()", start)
         function_source = client[start:end]
@@ -1114,6 +1117,7 @@ function element(id) {
 }
 const ui = {input:element("input"), voiceInput:element("voice-input"),
   voiceStop:element("voice-stop"), voiceWake:element("voice-wake"),
+  voiceRead:element("voice-read-aloud"),
   connection:{dataset:{state:"ready"}, lastElementChild:{textContent:"Secure connection"}},
   form:{requestSubmit(){throw Error("unexpected submit");}}};
 element("speech-consent").checked = true;
@@ -1122,7 +1126,9 @@ element("speech-language").value = "en-US";
 element("voice-wake-controls");
 const states = [];
 let visibleStatus = "";
-let voiceSupported = true, activeTurnId = null, recognition = null, recognitionMode = "", wakePhraseHeard = false;
+let voiceSupported = true, synthesisSupported = true, activeTurnId = null;
+let conversationId = "conversation", lastCompletedReply = null;
+let recognition = null, recognitionMode = "", wakePhraseHeard = false;
 const document = {visibilityState:"visible"};
 const instances = [];
 // This fake emits lifecycle events only; it captures and supplies no audio.
@@ -1137,6 +1143,7 @@ const pushToTalkEnabled = () => element("speech-consent").checked;
 const stopSpeech = () => {};
 const showVoiceStatus = (message) => { visibleStatus = message; };
 const setAssistantState = (state, label) => { states.push({state,label}); };
+DOCK_SOURCE
 STOP_SOURCE
 FUNCTION_SOURCE
 startRecognition("ptt");
@@ -1180,7 +1187,7 @@ assert.equal(states.length, stateCountAfterStop, "a late browser start event aft
 assert.equal(ui.voiceInput.dataset.listening, "false");
 assert.match(visibleStatus, /stopped/);
 assert.equal(element("speech-consent").checked, true, "stop does not silently revoke explicit page consent");
-'''.replace("STOP_SOURCE", stop_source).replace("FUNCTION_SOURCE", function_source)
+'''.replace("DOCK_SOURCE", dock_source).replace("STOP_SOURCE", stop_source).replace("FUNCTION_SOURCE", function_source)
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "jarvis-voice-lifecycle-harness.js"
             path.write_text(harness, encoding="utf-8")
