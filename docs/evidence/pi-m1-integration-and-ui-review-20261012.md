@@ -71,6 +71,17 @@ Four old Core fixtures now reach the genuine Resources cohort snapshot but
 do not supply its required discovery state/source joins. Those positive
 cycle fixtures remain pending repair; no production proof is weakened.
 
+The v72 candidate `766e360a81ef30759585993a722185ae0e3756bd` compiled
+on the Pi and passed strict specs/plan validation. The first group passed
+all156 checks in12.80s; expanded Core group4 failed/14 passed in84.32s.
+Archive SHA-256
+`3ebd243d8459b65677f22a2f0c1dd355e15ee0164776b40237543d2b645aef13`.
+Each failed positive cycle stopped at its missing temporary HOME/SOUL.md.
+Source inspection also identified fixed native readback/startup-provider calls
+that require explicit fixture providers before those unit paths advance.
+They were not reached in this run. Real provider/startup evidence remains
+separate from controlled update-ordering and rollback tests.
+
 The v69 specification-only candidate
 `6b4621209a11895ce9f7894013ce034e1bdb3b05` compiled on the Pi and passed
 strict specs/plan validation. Archive SHA-256
