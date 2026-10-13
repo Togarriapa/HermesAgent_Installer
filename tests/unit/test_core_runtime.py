@@ -57,6 +57,7 @@ def _bounded_cohort_exception_sites():
     first_substantive = []
     importer_outcomes = []
     custody_false_returns = []
+    initial_primary_exceptions = []
     routine = {"GeneratorExit", "StopIteration", "StopAsyncIteration"}
     allowed = {"core_runtime.py", "manual_jarvis_skills.py",
                "resources_skill_overlay.py", "primary_prompt_manager.py"}
@@ -100,6 +101,14 @@ def _bounded_cohort_exception_sites():
                 site = (kind, frame.f_code.co_name, frame.f_lineno, exception_type)
                 if len(sites) < 80:
                     sites.append(site)
+                else:
+                    del sites[30]
+                    sites.append(site)
+                if (kind == "core_runtime.py"
+                        and frame.f_code.co_name == "_initial_primary_current"):
+                    initial_primary_exceptions.append(site)
+                    if len(initial_primary_exceptions) > 12:
+                        del initial_primary_exceptions[0]
                 if not first_substantive and exception_type != "CoreRuntimeError":
                     first_substantive.append(site)
         return trace
@@ -128,8 +137,9 @@ def _bounded_cohort_exception_sites():
             current = current.__context__
         print("bounded exception context chain: " + repr(contexts))
         print("first substantive non-CoreRuntimeError site: " + repr(first_substantive[:1]))
-        print("bounded cohort exception sites: " + repr(sites[:30] + sites[-30:]))
+        print("bounded cohort exception sites: " + repr(sites[:30] + sites[-50:]))
         print("bounded custody false-return sites: " + repr(custody_false_returns[-12:]))
+        print("bounded initial-primary predicate exceptions: " + repr(initial_primary_exceptions[-12:]))
         # Read only outcome metadata from the genuine fixed importer frame.
         # Never print child stdout or stderr; the sole textual diagnostic is
         # an exact constant message reviewed in manual_jarvis_skills.py.
