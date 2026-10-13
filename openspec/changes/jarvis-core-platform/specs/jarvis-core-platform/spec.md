@@ -1662,7 +1662,7 @@ The installer SHALL satisfy: Expose polished responsive Jarvis through protected
 #### Scenario: Real named fleet and directed communications
 - **WHEN** feature leaf #18 renders the existing sanitized native ecosystem schema1/2
 - **THEN** actual distinct execution aliases, verified Team member joins and included same-Team/Mission/revision sender-to-recipient completed-message relations MUST drive an operable roster/network/detail view with bounded layout and text alternative.
-- **AND** partial/historical/stale/missing sources cannot animate live or grant authority; fresh relation pulses are finite and deduplicated, actual running state is separately observed, and fixture layout never proves native Team dialogue. Root alone composes the finite static module into Overview.
+- **AND** partial aggregate coverage and unknown totals/durations remain visible; only exact fresh current nonpartial completed-event relations with included current nonstale endpoints may pulse finitely once per ID as observed events. Historical/stale/unknown/partial records never animate live or grant authority; completed history cannot imply continuous talking. Root Pi validates motion refinement, actual running state remains separate, and fixture layout never proves native Team dialogue.
 
 #### Scenario: Complete finite profile and plugin controls
 - **WHEN** existing feature leaves #15/#16 present profile files or editable native plugin settings
