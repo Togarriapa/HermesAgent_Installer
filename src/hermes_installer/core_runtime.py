@@ -4967,7 +4967,10 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
  if cohort is not None and cohort["phase"]!="rolling-back":
   rolling=dict(cohort); rolling["phase"]="rolling-back"
   initial=rolling.get("initial_primary_transition")
-  if type(initial) is dict and initial.get("state")!="pending":
+  if type(initial) is dict:
+   # Even a still-pending primary transition needs a journaled rollback phase:
+   # recovery validates that state before it can prove the original SOUL and
+   # absence of a primary record.
    initial=dict(initial); initial["state"]="rolling-back"
    rolling["initial_primary_transition"]=initial
   reconstruction=dict(rolling["reconstruction"]); reconstruction["phase"]="rolling-back"
@@ -5922,7 +5925,11 @@ def _update_owned_core_adapter_locked():
    raise CoreRuntimeError("source overlay base digest changed during preparation")
   self_manifest_sha=hashlib.sha256(_canonical_json(old_manifest)).hexdigest()
   next_manifest_sha=hashlib.sha256(_canonical_json(new_manifest)).hexdigest()
+  prepared_primary_values={key:primary_values[key] for key in (
+   "primary_record_sha256","soul_sha256","soul_signature","owner_prefix_sha256",
+   "owner_prefix_length","owner_separator_hex","managed_block_sha256","prior_backup_sha256")}
   prepared_values={"purpose":"helper-only","cohort_transaction_id":cohort_id,
+   "home_role":"jarvis-primary-home",
    "old_source_generation":old_core,"new_source_generation":old_core,
    "old_adapter_generation":old_adapter,"new_adapter_generation":new_adapter,
    "old_source_recipe_sha256":old_recipe,"new_source_recipe_sha256":new_recipe,
@@ -5945,7 +5952,7 @@ def _update_owned_core_adapter_locked():
    "old_discovery_sha256":hashlib.sha256(resources_raw).hexdigest(),
    "overlay_record_sha256":hashlib.sha256(overlay_raw).hexdigest() if overlay_raw else _ABSENT_DIGEST,
    "obsidian_registration_state":obsidian_state,"obsidian_registration_sha256":obsidian_sha,
-   **primary_values}
+   **prepared_primary_values}
   prepared=_seal_prepared_same_materialization_transition(current_check=current_check,**prepared_values)
   state["prepared"]=prepared
   old_proof=_current_resources_overlay_artifact(old_base,
