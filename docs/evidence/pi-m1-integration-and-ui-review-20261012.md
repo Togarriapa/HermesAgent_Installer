@@ -47,6 +47,26 @@ Logs and status JSON are under
 reported `spec-driven`, `ready`, eight total/zero complete/eight remaining;
 no archive or canonical runtime acceptance was performed.
 
+The v69 specification-only candidate
+`6b4621209a11895ce9f7894013ce034e1bdb3b05` compiled on the Pi and passed
+strict specs/plan validation. Archive SHA-256
+`909b867f3d89acffbc84e88d47a5f840f6448afadd8b1741435208404ed605ae`.
+It defines the fixed two-file native plugin generation transition; no runtime
+test or target deployment was repeated for that specification leaf.
+
+The staged v68 actual target apply returned4 and restored the prior Core and
+ingress. Its protected redacted diagnostic identified `CoreInspectionDenied`
+at `verify_staged_native_resources_plugin`, before plugin replacement or Core
+source transition. Actual installed `plugin.yaml` matched both source bundles;
+installed `__init__.py` matched only the old0cb bundle. Both files were
+root:root0444 under the fixed0555 directory. The updater was checking those
+old installed bytes against the incoming bundle before replacing them.
+The v69 refinement therefore retains old plugin bytes in the existing update
+backup and permits replacement only while the captured old Core is stopped.
+Fresh recovery readback retained all four old services, the single-address Pi
+allowlist and the digest-addressed completed ingress history. This is failure
+diagnosis and rollback evidence, not new-source startup or chat acceptance.
+
 The staged v62 target `--apply` returned4 before effects because the fixed ingress
 slot already contains the completed current0cb legacy-migration backup. Its
 strict parser, current Gateway digest, effective runtime Inspector digest and
