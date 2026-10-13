@@ -259,7 +259,7 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     identity = {"commit": core.COMMIT, "lock_sha256": core.LOCK_SHA256,
                 "python_sha256": "a" * 64, "python_link": "pinned-link",
                 "python_uid": 1000, "python_gid": 1000, "python_mode": 0o755}
-    monkeypatch.setattr(core, "_identity", lambda: identity)
+    monkeypatch.setattr(core, "_identity", lambda **_kwargs: identity)
     monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: True)
     monkeypatch.setattr(core, "_launcher",
                         lambda adapter_source=None: b"test fixed core launcher")
@@ -1576,6 +1576,54 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request):
     core._write_adapter_update_cohort(cohort, expected_raw=None)
     assert core._read_adapter_update_cohort()[0] == cohort
     return new_unit, cohort, journal_raw, resources_raw
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="cohort journal requires the enrolled Pi root actor")
+def test_unwritten_initial_primary_rollback_is_closed_and_partial_without_backup_is_denied(
+        tmp_path, monkeypatch, request):
+    _unit_bytes, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request)
+    current_raw = core._projection_file(
+        core.ADAPTER_UPDATE_COHORT, owner=core.ROOT_UID, group=core.ROOT_UID,
+        mode=0o400, maximum=128 * 1024)
+    transition = {
+        "schema": 1, "purpose": "initial-primary-adoption", "state": "rolling-back",
+        "prior_record_state": "absent", "prior_soul_sha256": "a" * 64,
+        "prior_soul_signature": [1, 2, stat.S_IFREG | 0o600, 1000, 1000, 1, 42, 1, 1],
+        "source_prompt_sha256": "b" * 64, "managed_block_sha256": "c" * 64,
+        "desired_soul_sha256": "d" * 64, "owner_separator_hex": "0a",
+        "owner_backup_sha256": None, "preparing_record_sha256": None,
+        "writing_record_sha256": None, "adopted_record_sha256": None,
+        "before_resources_record_sha256": cohort["old_resources_record_sha256"],
+        "after_resources_record_sha256": None,
+    }
+    cohort["phase"] = "rolling-back"
+    cohort["initial_primary_transition"] = transition
+    reconstruction = dict(cohort["reconstruction"])
+    reconstruction["phase"] = "rolling-back"
+    cohort["reconstruction"] = reconstruction
+    cohort["reconstruction_sha256"] = hashlib.sha256(
+        core._canonical_json(reconstruction)).hexdigest()
+    raw = core._write_adapter_update_cohort(cohort, expected_raw=current_raw)
+    parsed, parsed_raw = core._read_adapter_update_cohort()
+    assert parsed_raw == raw
+    assert parsed["primary_record_sha256"] == core._ABSENT_DIGEST
+    assert parsed["initial_primary_transition"] == transition
+
+    partial = dict(parsed)
+    partial_transition = dict(transition)
+    partial_transition["preparing_record_sha256"] = "e" * 64
+    partial["initial_primary_transition"] = partial_transition
+    raw = core._write_adapter_update_cohort(partial, expected_raw=parsed_raw)
+    with pytest.raises(core.CoreRuntimeError, match="malformed or foreign"):
+        core._read_adapter_update_cohort()
+    parsed_raw = raw
+
+    foreign = dict(parsed)
+    foreign["primary_record_sha256"] = "f" * 64
+    raw = core._write_adapter_update_cohort(foreign, expected_raw=parsed_raw)
+    with pytest.raises(core.CoreRuntimeError, match="malformed or foreign"):
+        core._read_adapter_update_cohort()
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")

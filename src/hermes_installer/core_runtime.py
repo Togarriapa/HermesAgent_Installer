@@ -661,7 +661,17 @@ def _read_adapter_update_cohort(*,allow_absent=False):
     item=initial.get(key)
     if item is not None and (not isinstance(item,str) or re.fullmatch(r"[0-9a-f]{64}",item) is None):
      raise ValueError
-   progress={
+   progress_keys=("preparing_record_sha256","writing_record_sha256",
+                  "adopted_record_sha256","after_resources_record_sha256")
+   unwritten_rollback=(initial["state"]=="rolling-back"
+       and all(initial.get(key) is None for key in progress_keys)
+       and initial.get("owner_backup_sha256") is None)
+   if unwritten_rollback:
+    if row["primary_record_sha256"]!=_ABSENT_DIGEST:
+     raise ValueError
+    progress=(False,False,False,False)
+   else:
+    progress={
     "pending":(False,False,False,False),
     "preparing":(None,False,False,False),
     "writing":(True,True,False,None),
@@ -669,13 +679,12 @@ def _read_adapter_update_cohort(*,allow_absent=False):
     "rolling-back":(True,initial.get("writing_record_sha256") is not None,
       initial.get("adopted_record_sha256") is not None,
       initial.get("after_resources_record_sha256") is not None),
-   }[initial["state"]]
-   for key,present in zip(("preparing_record_sha256","writing_record_sha256",
-                           "adopted_record_sha256","after_resources_record_sha256"),progress):
+    }[initial["state"]]
+   for key,present in zip(progress_keys,progress):
     if present is not None and (initial.get(key) is not None)!=present:
      raise ValueError
    if (initial["state"] not in {"pending","preparing"}
-       and initial.get("owner_backup_sha256") is None):
+       and not unwritten_rollback and initial.get("owner_backup_sha256") is None):
     raise ValueError
    if (initial["state"]=="preparing" and initial.get("preparing_record_sha256") is not None
        and initial.get("owner_backup_sha256") is None): raise ValueError
@@ -4883,7 +4892,21 @@ def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
    if current_primary is not None:
     raise CoreRuntimeError("primary adoption appeared during an unadopted source cohort")
   elif type(initial) is dict:
-   if initial.get("state") in {"pending","preparing"} and initial.get("preparing_record_sha256") is None:
+   stage_keys=("preparing_record_sha256","writing_record_sha256",
+    "adopted_record_sha256","after_resources_record_sha256")
+   unwritten_rollback=(initial.get("state")=="rolling-back"
+    and all(initial.get(key) is None for key in stage_keys)
+    and initial.get("owner_backup_sha256") is None)
+   if unwritten_rollback:
+    if current_primary is not None:
+     raise CoreRuntimeError("unwritten initial-primary rollback found a manager record")
+    from . import primary_prompt_manager as primary
+    soul,signature=primary._read_soul(sys.modules[__name__])
+    if (hashlib.sha256(soul).hexdigest()!=initial.get("prior_soul_sha256")
+        or not _restored_soul_signature_matches(
+         signature,initial.get("prior_soul_signature",()))):
+     raise CoreRuntimeError("unwritten initial-primary rollback lost original owner SOUL")
+   elif initial.get("state") in {"pending","preparing"} and initial.get("preparing_record_sha256") is None:
     if initial.get("state")=="pending" and current_primary is not None:
      raise CoreRuntimeError("initial primary journal appeared outside its exact staged transition")
     if initial.get("state")=="preparing" and current_primary is not None:
