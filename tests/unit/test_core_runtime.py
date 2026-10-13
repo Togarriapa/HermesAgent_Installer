@@ -1515,6 +1515,15 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request):
     monkeypatch.setattr(core, "LAUNCHER", libexec / "launcher")
     monkeypatch.setattr(core, "TOKEN", token_path)
     monkeypatch.setattr(obsidian, "OWNER_REGISTRATION", runtime / "obsidian-registration.json")
+    # read_registration deliberately opens its fixed root-owned directory via
+    # directory FDs, so changing OWNER_REGISTRATION alone does not redirect
+    # that lookup. Keep this cohort fixture hermetic and match its closed
+    # `obsidian_registration_state=absent` row instead of hashing the Pi's
+    # real registered vault after /home/admin/.hermes is privately bind-mounted.
+    def fixture_registration_absent():
+        raise FileNotFoundError
+
+    monkeypatch.setattr(obsidian, "read_registration", fixture_registration_absent)
     token = b"test-session-token\n"
     token_path.write_bytes(token)
 
