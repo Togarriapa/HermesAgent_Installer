@@ -2512,3 +2512,18 @@ The read-only ecosystem projection SHALL accept an individually valid completed-
 #### Scenario: Staged native recipient lacks reviewed distinct-child proof
 - **WHEN** message preparation provides a source delivery handle without the reviewed exact different native child/execution chain
 - **THEN** issue #27 stays Planned and actual native same-profile communication plus #18 acceptance stays pending; no profile-inequality deletion, mock graph or portable receipt substitutes for genuine Root-held identity and Pi effect/denial/recovery evidence.
+
+### Requirement: Native workbench visible feature increments
+Existing native workbench features SHALL provide current safe skill source review and exact archived-version selection (#29), a real returned-window timezone-aware Calendar agenda (#30), and Project owner-note discovery/preview/link selection (#31). They SHALL preserve current owner/revision/native policy, explicit mutation review, uncertainty recovery, retained data and unavailable adapter/account states. Each SHALL require source review, Pi contract/effect/denial/recovery and affected/full-shell rendered UI revision separately.
+
+#### Scenario: Reviewed current skill edit or archive restore
+- **WHEN** the owner selects a current editable skill or actual archived restore ID/digest from the exact inventory revision
+- **THEN** the workbench shows current source/provenance and explicit exact edit or restore review using existing finite APIs; changed source/revision denies before mutation, lost result blocks repeated mutation until explicit fresh read, and native usage/effect remains separately qualified.
+
+#### Scenario: Bounded real Calendar agenda
+- **WHEN** the protected projection returns verified events and its exact date window/timezone
+- **THEN** the agenda groups actual timed/all-day events correctly, lets the owner inspect/filter existing events without provider writes, and preserves partial/unavailable statuses; disabling display immediately clears data and late old replies cannot revive it.
+
+#### Scenario: Owner Project note discovery and retained references
+- **WHEN** the owner browses/searches notes or previews an exact current owner note before editing project links
+- **THEN** only explicit project Save persists captured selected IDs/current version; missing saved IDs survive filtered/failed reads, foreign/stale preview denies, Markdown stays inert, and genuine supported turn-context use remains separate from note selection metadata.
