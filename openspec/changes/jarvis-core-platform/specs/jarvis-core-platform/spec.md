@@ -2439,6 +2439,7 @@ Within R0045/R0055/R0153/R0172, root SHALL derive current owned Resources from p
 #### Scenario: Post-overlay generation and changed helper only
 - **WHEN** a reviewed helper change alters artifact SHA while current post-overlay materialization is independently verified identical
 - **THEN** exact old/new archive parsing, every non-installer manifest field and materialized path/size/byte join the current protected root record/CAS/generation; the new fixed helper metadata/bytes are separately source-verified and old helper is not executed. The finite prepared/consumed root transition atomically backs up/rebinds owned generation and independently proves new discovery without assuming legacy f734.
+- **AND** the prior schema-3 discovery receipt is verified against its recorded A0 CAS, old Core journal, reconstructed overlay chain, installed A0 owner manifest/materialization and active/bundled prompt joins. This migration-only verification does not call the incoming normal discovery reader to rebuild A0; normal discovery remains strict and A1 must pass it after rebind.
 
 #### Scenario: Semantic change, caller archive or owner edit
 - **WHEN** any non-installer field/member differs, prior archive/journal custody is missing/stale/foreign, or owner edits conflict

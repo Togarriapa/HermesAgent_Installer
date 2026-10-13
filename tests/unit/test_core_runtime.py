@@ -25,6 +25,7 @@ from types import MappingProxyType, ModuleType, SimpleNamespace
 import pytest
 
 from hermes_installer import core_runtime as core
+_PRODUCTION_READ_CURRENT_RESOURCES_DISCOVERY = core.read_current_resources_discovery
 
 
 _KNOWN_HELPER_IMPORTER_ERRORS = {
@@ -817,6 +818,15 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
                 or record.get("resources_revision") != source.get("revision")
                 or record.get("resources_tree") != source.get("git_tree")):
             return {"resources_state": "stale"}
+        overlay_record, overlay_contents, overlay_raw = core._resources_skill_overlay_read()
+        try:
+            effective_archive, effective_sha = core._current_resources_overlay_artifact(
+                native.build_manual_jarvis_skills_artifact(), overlay_record,
+                overlay_contents, overlay_raw)
+        except core.CoreRuntimeError:
+            return {"resources_state": "stale"}
+        if effective_sha != record["artifact_sha256"] or effective_archive != archive:
+            return {"resources_state": "stale"}
         return {"resources_state": "discovered", "artifact_sha256": record["artifact_sha256"],
                 "resources_revision": source["revision"],
                 "resource_counts": record["resource_counts"]}
@@ -1257,7 +1267,7 @@ def _rebind_fixture_resources_to_current_journal():
         0o600, core.ROOT_UID, core.ROOT_UID)
     assert core.read_current_resources_discovery(
         core_source_generation=resources["core_source_generation"]
-    )["resources_state"] == "discovered"
+    )["resources_state"] == "stale"
 
 
 def _fake_update_pidfd(monkeypatch, enabled, request):
@@ -1353,7 +1363,7 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
 
 
 def _prepare_cohort_resource_materialization(
-        tmp_path, monkeypatch, request, *, registered_obsidian=False):
+        tmp_path, monkeypatch, request, *, registered_obsidian=False, owner_overlay=False):
     """Install a real old-helper generation and bind its receipt to the current journal."""
     from hermes_installer.registry import manual_jarvis_skills as native
     from hermes_installer.remote import obsidian_owner_lifecycle as obsidian
@@ -1433,6 +1443,31 @@ def _prepare_cohort_resource_materialization(
         native._zip_write(package, "manual_stage_jarvis_skills.py", previous_helper)
     old_archive = stream.getvalue()
     old_sha = hashlib.sha256(old_archive).hexdigest()
+    old_base_archive, old_base_sha = old_archive, old_sha
+    if owner_overlay:
+        from hermes_installer.registry import resources_skill_overlay as transform
+
+        skill_id = manifest["skill_members"][0]["skill_id"]
+        overlay_content = f"---\nname: {skill_id}\n---\ncontrolled owner overlay\n".encode("utf-8")
+        old_archive, old_sha = transform.build_effective_artifact(
+            old_base_archive, skill_id, overlay_content)
+        manifest, files = native._read_artifact(old_archive, old_sha)
+        content_sha = hashlib.sha256(overlay_content).hexdigest()
+        overlay_record = {
+            "schema": 1,
+            "base_artifact_sha256": old_base_sha,
+            "skills": {skill_id: {
+                "content_sha256": content_sha,
+                "archive_sha256": old_sha,
+            }},
+        }
+        overlay_root = core.RESOURCES_SKILL_OVERLAYS
+        overlay_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        overlay_raw = native._canonical_json(overlay_record)
+        core._atomic_replace(overlay_root / "active.json", overlay_raw,
+            0o600, core.ROOT_UID, core.ROOT_UID)
+        core._atomic_replace(overlay_root / (content_sha + ".bin"), overlay_content,
+            0o600, core.ROOT_UID, core.ROOT_UID)
 
     # _hash_generation_tree enforces real root-owned ancestors and the exact
     # admin-owned .hermes subtree; keep the fixture inside a private root path.
@@ -1501,13 +1536,31 @@ def _prepare_cohort_resource_materialization(
 
     # Keep the receipt and immutable CAS tied to the actual prior-helper bytes.
     current_record = core._write_resources_discovery()
+    ownership_sha = core._hash_generation_tree(home, manifest, files, old_sha)
+    skill_inventory = native._canonical_json([
+        {"skill_id": row["skill_id"],
+         "sha256": hashlib.sha256(files[row["archive_path"]]).hexdigest()}
+        for row in sorted(manifest["skill_members"], key=lambda item: item["skill_id"])
+    ])
+    active_prompt_sha = hashlib.sha256(prior_soul).hexdigest()
+    bundled_prompt_sha = hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest()
+    effective_overlay = manifest["effective_overlay"]
     current_record.update({
         "artifact_sha256": old_sha,
-        "ownership_manifest_sha256": hashlib.sha256(
-            native._canonical_json(manifest)).hexdigest(),
+        "ownership_manifest_sha256": ownership_sha,
+        "loaded_skill_inventory_sha256": hashlib.sha256(skill_inventory).hexdigest(),
+        "active_primary_prompt_sha256": active_prompt_sha,
+        "bundled_primary_prompt_sha256": bundled_prompt_sha,
+        "active_prompt_matches_bundled_primary": active_prompt_sha == bundled_prompt_sha,
+        "effective_overlay": {key: effective_overlay.get(key) for key in (
+            "overlay_id", "approval_commit", "sha256", "upstream_revision", "upstream_tree",
+            "source_declarations", "compiled_profiles", "compiled_bundle")},
     })
     core._atomic_replace(core.RESOURCES_CAS / (old_sha + ".zip"), old_archive,
                          0o600, core.ROOT_UID, core.ROOT_UID)
+    if owner_overlay:
+        core._atomic_replace(core.RESOURCES_CAS / (old_base_sha + ".zip"), old_base_archive,
+                             0o600, core.ROOT_UID, core.ROOT_UID)
     core._atomic_replace(
         core.RESOURCES_RECORD,
         (json.dumps(current_record, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"),
@@ -1522,8 +1575,10 @@ def _prepare_cohort_resource_materialization(
     fixture_discovery = core.read_current_resources_discovery(
         core_source_generation=current_record["core_source_generation"]
     )
-    assert fixture_discovery["resources_state"] == "discovered"
-    assert fixture_discovery["resources_revision"] == manifest["source"]["revision"]
+    # Normal discovery uses the incoming helper and must stay strict: the
+    # previous A0 helper differs, so only the locked migration verifier may
+    # admit this exact old receipt during the transition.
+    assert fixture_discovery["resources_state"] == "stale"
     assert current_record["resources_tree"] == manifest["source"]["git_tree"]
 
     # Cohort unit tests cover the filesystem/journal effects, while native
@@ -1598,6 +1653,81 @@ def _assert_registered_obsidian_fixture_preserved(fixture):
     assert actual_files == fixture["vault_files"]
 
 
+def _adapter_a0_migration_proof_inputs():
+    """Build the real protected A0/A1 proof inputs without invoking migration."""
+    from hermes_installer.registry import manual_jarvis_skills as native
+
+    record, journal_raw, _files = core._read_active_adapter_runtime()
+    journal_before, journal_identity = core._projection_file_snapshot(
+        core.JOURNAL, owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o600,
+        maximum=64 * 1024)
+    assert journal_before == journal_raw
+    snapshots = core._snapshot_adapter_update_bindings(
+        core_source_generation=record["core_source_generation"])
+    old_discovery = json.loads(snapshots["resources_record"])
+    old_artifact = old_discovery["artifact_sha256"]
+    old_archive, old_archive_identity = core._projection_file_snapshot(
+        core.RESOURCES_CAS / (old_artifact + ".zip"), owner=core.ROOT_UID,
+        group=core.ROOT_UID, mode=0o600, maximum=16 * 1024 * 1024)
+    overlay_record, overlay_contents, overlay_raw, overlay_identity, content_identities = (
+        core._read_adapter_overlay_snapshot(with_identity=True))
+    if overlay_raw is None:
+        old_base, old_base_identity = old_archive, old_archive_identity
+    else:
+        base_sha = overlay_record["base_artifact_sha256"]
+        old_base, old_base_identity = core._projection_file_snapshot(
+            core.RESOURCES_CAS / (base_sha + ".zip"), owner=core.ROOT_UID,
+            group=core.ROOT_UID, mode=0o600, maximum=16 * 1024 * 1024)
+    marker = core._projection_file(
+        core.HERMES_HOME / "skills" / native._GENERATION / native._OWNER_FILE,
+        owner=1000, group=1000, mode=0o600, maximum=2 * 1024 * 1024)
+    new_base = native.build_manual_jarvis_skills_artifact()
+    reconstruction = core._make_adapter_update_reconstruction(
+        old_base, new_base, old_archive, overlay_record, overlay_contents, overlay_raw,
+        marker, snapshots["resources_record"])
+    old_manifest, old_files, old_helper = native._read_transition_archive(
+        old_archive, old_artifact)
+    _new_manifest, _new_files, new_helper = native._read_transition_archive(
+        new_base, hashlib.sha256(new_base).hexdigest())
+    assert old_helper != new_helper
+    assert reconstruction.new_composed_artifact_sha256 != old_artifact
+    return ({
+        "core_source_generation": record["core_source_generation"],
+        "journal_raw": journal_raw,
+        "journal_identity": journal_identity,
+        "snapshots": snapshots,
+        "overlay_record": overlay_record,
+        "overlay_contents": overlay_contents,
+        "overlay_raw": overlay_raw,
+        "overlay_identity": overlay_identity,
+        "overlay_content_identities": content_identities,
+        "old_artifact": old_artifact,
+        "old_archive": old_archive,
+        "old_archive_identity": old_archive_identity,
+        "old_base_archive": old_base,
+        "old_base_identity": old_base_identity,
+        "reconstruction": reconstruction,
+        "old_manifest": old_manifest,
+        "old_files": old_files,
+    }, core.read_current_resources_discovery(
+        core_source_generation=record["core_source_generation"])["resources_state"])
+
+
+def _verify_adapter_a0_migration_proof(inputs):
+    return core._verify_migration_old_resources_snapshot(
+        core_source_generation=inputs["core_source_generation"],
+        journal_raw=inputs["journal_raw"], journal_identity=inputs["journal_identity"],
+        snapshots=inputs["snapshots"], overlay_record=inputs["overlay_record"],
+        overlay_contents=inputs["overlay_contents"], overlay_raw=inputs["overlay_raw"],
+        overlay_identity=inputs["overlay_identity"],
+        overlay_content_identities=inputs["overlay_content_identities"],
+        old_artifact=inputs["old_artifact"], old_archive=inputs["old_archive"],
+        old_archive_identity=inputs["old_archive_identity"],
+        old_base_archive=inputs["old_base_archive"],
+        old_base_identity=inputs["old_base_identity"],
+        reconstruction=inputs["reconstruction"])
+
+
 def _assert_registered_obsidian_snapshot(fixture):
     if fixture is None:
         return
@@ -1628,6 +1758,136 @@ def _fixed_service_path_identity():
                          info.st_mtime_ns, info.st_ctime_ns,
                          hashlib.sha256(path.read_bytes()).hexdigest()))
     return tuple(identity)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="adapter update proof requires the real root actor")
+@pytest.mark.parametrize("owner_overlay", [False, True])
+def test_incoming_adapter_verifies_old_a0_without_relaxing_public_discovery(
+        tmp_path, monkeypatch, request, owner_overlay):
+    calls, enabled, _launcher, _selection = _install_legacy_service_fixture(
+        tmp_path, monkeypatch, journal_state="installed")
+    core.migrate_owned_core_to_adapter_path()
+    _prepare_cohort_resource_materialization(
+        tmp_path, monkeypatch, request, owner_overlay=owner_overlay)
+    _rebind_migrated_fixture_to_prior_generation()
+    calls_before = list(calls)
+
+    with core._adapter_update_lock():
+        inputs, public_state = _adapter_a0_migration_proof_inputs()
+        assert public_state == "stale"
+        manifest, files, ownership_sha = _verify_adapter_a0_migration_proof(inputs)
+        assert manifest == inputs["old_manifest"]
+        assert files == inputs["old_files"]
+        assert re.fullmatch(r"[0-9a-f]{64}", ownership_sha)
+
+    assert calls == calls_before
+    assert enabled["value"]
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="adapter update proof requires the real root actor")
+@pytest.mark.parametrize("tamper", [
+    "receipt", "inventory", "tree", "soul", "aba", "cas", "cas-custody", "owner",
+    "journal", "overlay", "overlay-content", "overlay-appearance",
+])
+def test_incoming_adapter_old_a0_proof_denies_tamper_before_effects(
+        tmp_path, monkeypatch, request, tamper):
+    calls, enabled, _launcher, _selection = _install_legacy_service_fixture(
+        tmp_path, monkeypatch, journal_state="installed")
+    core.migrate_owned_core_to_adapter_path()
+    _prepare_cohort_resource_materialization(
+        tmp_path, monkeypatch, request,
+        owner_overlay=tamper in {"overlay", "overlay-content"})
+    _rebind_migrated_fixture_to_prior_generation()
+    calls_before = list(calls)
+    receipt_path = core.RESOURCES_RECORD
+    original_receipt = receipt_path.read_bytes()
+    changed_path = None
+    changed_bytes = None
+    changed_mode = None
+    changed_identity_path = None
+    changed_identity_bytes = None
+
+    if tamper in {"receipt", "inventory"}:
+        row = json.loads(original_receipt)
+        key = "resources_tree" if tamper == "receipt" else "loaded_skill_inventory_sha256"
+        row[key] = "a" * (40 if tamper == "receipt" else 64)
+        core._atomic_replace(receipt_path,
+            (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"),
+            0o600, core.ROOT_UID, core.ROOT_UID)
+
+    with core._adapter_update_lock():
+        inputs, public_state = _adapter_a0_migration_proof_inputs()
+        assert public_state == "stale"
+        if tamper == "tree":
+            from hermes_installer.registry import manual_jarvis_skills as native
+            relative = next(iter(inputs["old_files"]))
+            changed_path = core.HERMES_HOME / "skills" / native._GENERATION / relative
+            changed_bytes = changed_path.read_bytes()
+            changed_path.write_bytes(changed_bytes + b"foreign")
+        elif tamper == "soul":
+            changed_path = core.HERMES_HOME / "SOUL.md"
+            changed_bytes = changed_path.read_bytes()
+            changed_path.write_bytes(changed_bytes + b"foreign")
+        elif tamper == "aba":
+            # Restore identical bytes through a new inode after a transient
+            # different receipt; the captured protected identity must still fail.
+            core._atomic_replace(receipt_path, original_receipt + b" ",
+                0o600, core.ROOT_UID, core.ROOT_UID)
+            core._atomic_replace(receipt_path, original_receipt,
+                0o600, core.ROOT_UID, core.ROOT_UID)
+        elif tamper == "cas":
+            changed_path = core.RESOURCES_CAS / (inputs["old_artifact"] + ".zip")
+            changed_bytes = changed_path.read_bytes()
+            changed_path.write_bytes(changed_bytes + b"foreign")
+        elif tamper == "cas-custody":
+            changed_path = core.RESOURCES_CAS / (inputs["old_artifact"] + ".zip")
+            changed_mode = stat.S_IMODE(changed_path.stat(follow_symlinks=False).st_mode)
+            changed_path.chmod(0o644)
+        elif tamper == "owner":
+            from hermes_installer.registry import manual_jarvis_skills as native
+            changed_path = (core.HERMES_HOME / "skills" / native._GENERATION /
+                            native._OWNER_FILE)
+            changed_bytes = changed_path.read_bytes()
+            changed_path.write_bytes(changed_bytes + b"foreign")
+        elif tamper == "journal":
+            changed_path = core.JOURNAL
+            changed_bytes = changed_path.read_bytes()
+            core._atomic_replace(changed_path, changed_bytes + b" ",
+                0o600, core.ROOT_UID, core.ROOT_UID)
+        elif tamper == "overlay":
+            changed_identity_path = core.RESOURCES_SKILL_OVERLAYS / "active.json"
+            changed_identity_bytes = changed_identity_path.read_bytes()
+            changed_identity_path.write_bytes(changed_identity_bytes + b" ")
+        elif tamper == "overlay-content":
+            assert inputs["overlay_contents"]
+            from hermes_installer.registry import manual_jarvis_skills as native
+            skill_id = sorted(inputs["overlay_contents"])[0]
+            digest = inputs["overlay_record"]["skills"][skill_id]["content_sha256"]
+            changed_identity_path = core.RESOURCES_SKILL_OVERLAYS / (digest + ".bin")
+            changed_identity_bytes = changed_identity_path.read_bytes()
+            changed_identity_path.write_bytes(changed_identity_bytes + b"foreign")
+        elif tamper == "overlay-appearance":
+            overlay_root = core.RESOURCES_SKILL_OVERLAYS
+            overlay_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            changed_identity_path = overlay_root / "active.json"
+            changed_identity_bytes = None
+            core._atomic_replace(changed_identity_path, core._canonical_json({
+                "schema": 1,
+                "base_artifact_sha256": inputs["old_artifact"],
+                "skills": {},
+            }), 0o600, core.ROOT_UID, core.ROOT_UID)
+        with pytest.raises(core.CoreRuntimeError):
+            _verify_adapter_a0_migration_proof(inputs)
+        if changed_path is not None and changed_bytes is not None:
+            changed_path.write_bytes(changed_bytes)
+        if changed_mode is not None:
+            changed_path.chmod(changed_mode)
+        if changed_identity_path is not None and changed_identity_bytes is not None:
+            changed_identity_path.write_bytes(changed_identity_bytes)
+    core._atomic_replace(receipt_path, original_receipt,
+        0o600, core.ROOT_UID, core.ROOT_UID)
+    assert calls == calls_before
+    assert enabled["value"]
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
@@ -1776,6 +2036,13 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     updated = json.loads(core.JOURNAL.read_text())
     assert "updated to the verified adapter generation" in result
     cohort, _cohort_raw = core._read_adapter_update_cohort()
+    # The old A0 receipt is intentionally stale to ordinary incoming
+    # discovery; after the guarded exchange, that reader must validate A1.
+    assert _PRODUCTION_READ_CURRENT_RESOURCES_DISCOVERY(
+        core_source_generation=updated["core_source_generation"]
+    )["resources_state"] == "discovered"
+    assert json.loads(core.RESOURCES_RECORD.read_bytes())["artifact_sha256"] == (
+        cohort["new_composed_artifact_sha256"])
     if obsidian_fixture is not None:
         assert cohort["phase"] == "committed"
         assert cohort["obsidian_registration_state"] == "registered"

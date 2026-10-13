@@ -1081,8 +1081,8 @@ def _atomic_replace(path,body,mode,uid=0,gid=0):
  finally:
   tmp.unlink(missing_ok=True)
 
-def _projection_file(path,*,owner,group=None,mode=None,maximum):
- """Read one bounded no-follow file and reject replacement or metadata races."""
+def _projection_file_snapshot(path,*,owner,group=None,mode=None,maximum):
+ """Read one bounded no-follow file and retain its stable filesystem identity."""
  fd=os.open(path,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0))
  try:
   before=os.fstat(fd)
@@ -1104,9 +1104,13 @@ def _projection_file(path,*,owner,group=None,mode=None,maximum):
   if (len(data)!=before.st_size or len(data)>maximum or signature(before)!=signature(after)
       or signature(before)!=signature(named)):
    raise CoreRuntimeError("fixed projection file changed while reading")
-  return bytes(data)
+  return bytes(data),signature(before)
  finally:
   os.close(fd)
+
+def _projection_file(path,*,owner,group=None,mode=None,maximum):
+ """Read one bounded no-follow file and reject replacement or metadata races."""
+ return _projection_file_snapshot(path,owner=owner,group=group,mode=mode,maximum=maximum)[0]
 
 def _projection_at(parent_fd,name,*,owner,group=None,mode=None,maximum):
  """Read one bounded file through an already verified directory descriptor."""
@@ -1522,6 +1526,23 @@ def _current_primary_prompt():
   return _projection_at(current,"SOUL.md",owner=1000,maximum=1024*1024)
  finally:
   for fd in reversed(fds): os.close(fd)
+
+def _current_primary_prompt_snapshot():
+ """Return the verified HOME prompt and reject replacement across the read."""
+ path=HERMES_HOME/"SOUL.md"
+ def identity(info):
+  return (info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_gid,
+          info.st_nlink,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+ try: before=os.stat(path,follow_symlinks=False)
+ except OSError as exc: raise CoreRuntimeError("owned primary prompt is unavailable") from exc
+ if not stat.S_ISREG(before.st_mode) or before.st_uid!=1000 or before.st_nlink!=1:
+  raise CoreRuntimeError("owned primary prompt custody differs")
+ prompt=_current_primary_prompt()
+ try: after=os.stat(path,follow_symlinks=False)
+ except OSError as exc: raise CoreRuntimeError("owned primary prompt changed during read") from exc
+ if identity(before)!=identity(after) or len(prompt)!=before.st_size:
+  raise CoreRuntimeError("owned primary prompt changed during read")
+ return prompt,identity(before)
 
 def _root_native_readback(manifest,files,active_prompt,*,expected_managed_block_sha256=None):
  """Independently ask the pinned native loader to read the root-verified files."""
@@ -4402,19 +4423,20 @@ def _validate_adapter_update_history(record):
 
 def _snapshot_adapter_update_bindings(*,core_source_generation):
  """Capture the exact old Resources, overlay, primary and optional vault custody."""
- resources=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+ resources,resources_identity=_projection_file_snapshot(
+  RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
  try: discovery=json.loads(resources)
  except (ValueError,TypeError): raise CoreRuntimeError("current Resources discovery record is malformed") from None
  if (discovery.get("core_source_generation")!=core_source_generation
      or discovery.get("state")!="discovered" or discovery.get("functional") is not False
      or discovery.get("enabled") is not False or discovery.get("target_verified") is not False):
   raise CoreRuntimeError("current Resources discovery is not eligible for a source cohort")
- try: overlay=_projection_file(RESOURCES_SKILL_OVERLAYS/"active.json",owner=ROOT_UID,
-                               group=ROOT_UID,mode=0o600,maximum=256*1024)
- except FileNotFoundError: overlay=b""
- try: primary=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
-                               group=ROOT_UID,mode=0o600,maximum=64*1024)
- except FileNotFoundError: primary=b""
+ try: overlay,overlay_identity=_projection_file_snapshot(RESOURCES_SKILL_OVERLAYS/"active.json",
+                               owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
+ except FileNotFoundError: overlay=b""; overlay_identity=None
+ try: primary,primary_identity=_projection_file_snapshot(PRIMARY_PROMPT_JOURNAL,
+                               owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ except FileNotFoundError: primary=b""; primary_identity=None
  try:
   prior_cohort=_projection_file(ADAPTER_UPDATE_COHORT,owner=ROOT_UID,
                                 group=ROOT_UID,mode=0o400,maximum=128*1024)
@@ -4442,14 +4464,19 @@ def _snapshot_adapter_update_bindings(*,core_source_generation):
   "obsidian_registration":registration,"obsidian_registration_state":registration_state,
   "obsidian_registration_sha256":registration_sha,"obsidian_vault_tree_sha256":vault_sha,
   "resources_record_sha256":hashlib.sha256(resources).hexdigest(),
+  "resources_record_identity":resources_identity,
+  "overlay_record_identity":overlay_identity,
+  "primary_record_identity":primary_identity,
   "overlay_record_sha256":hashlib.sha256(overlay).hexdigest() if overlay else _ABSENT_DIGEST,
   "primary_record_sha256":hashlib.sha256(primary).hexdigest() if primary else _ABSENT_DIGEST}
 
-def _read_adapter_overlay_snapshot():
+def _read_adapter_overlay_snapshot(*,with_identity=False):
  """Read exact overlay bytes/content without requiring the future base to match."""
  path=RESOURCES_SKILL_OVERLAYS/"active.json"
- try: raw=_projection_file(path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
- except FileNotFoundError: return None,{},None
+ try: raw,record_identity=_projection_file_snapshot(path,owner=ROOT_UID,group=ROOT_UID,
+  mode=0o600,maximum=256*1024)
+ except FileNotFoundError:
+  return (None,{},None,None,{}) if with_identity else (None,{},None)
  try:
   def unique(pairs):
    row={}
@@ -4462,19 +4489,164 @@ def _read_adapter_overlay_snapshot():
       or type(record["schema"]) is not int or record["schema"]!=1
       or re.fullmatch(r"[0-9a-f]{64}",str(record["base_artifact_sha256"])) is None
       or type(record["skills"]) is not dict or len(record["skills"])>396): raise ValueError
-  contents={}
+  contents={};content_identities={}
   for skill_id,item in record["skills"].items():
    if (not isinstance(skill_id,str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",skill_id) is None
        or type(item) is not dict or set(item)!={"content_sha256","archive_sha256"}
        or any(not isinstance(item[key],str) or re.fullmatch(r"[0-9a-f]{64}",item[key]) is None
               for key in item)): raise ValueError
-   content=_projection_file(RESOURCES_SKILL_OVERLAYS/(item["content_sha256"]+".bin"),
+   content,content_identity=_projection_file_snapshot(
+    RESOURCES_SKILL_OVERLAYS/(item["content_sha256"]+".bin"),
     owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
    if hashlib.sha256(content).hexdigest()!=item["content_sha256"]: raise ValueError
    contents[skill_id]=content
-  return record,contents,raw
+   content_identities[skill_id]=content_identity
+  return (record,contents,raw,record_identity,content_identities) if with_identity else (record,contents,raw)
  except Exception:
   raise CoreRuntimeError("protected Resources overlay snapshot is malformed") from None
+
+def _verify_migration_old_resources_snapshot(*,core_source_generation,journal_raw,
+                                              journal_identity,snapshots,
+                                              overlay_record,overlay_contents,
+                                              overlay_raw,overlay_identity,
+                                              overlay_content_identities,
+                                              old_artifact,old_archive,old_archive_identity,
+                                              old_base_archive,old_base_identity,
+                                              reconstruction):
+ """Verify the prior A0 receipt without rebuilding it with the incoming helper.
+
+ Ordinary discovery intentionally rebuilds the current artifact from this
+ source. During a helper-only transition that would compare A0 with A1 too
+ early. This fixed migration boundary instead verifies the protected prior
+ receipt against its exact A0 CAS, historical overlay chain, installed bytes,
+ prompt and source/journal joins, then rechecks identities to reject ABA.
+ """
+ if os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get():
+  raise CoreRuntimeError("prior Resources migration proof requires the held Root update lock")
+ if not isinstance(old_artifact,str) or re.fullmatch(r"[0-9a-f]{64}",old_artifact) is None:
+  raise CoreRuntimeError("prior Resources artifact identity is malformed")
+ def unique(pairs):
+  value={}
+  for key,item in pairs:
+   if key in value: raise ValueError
+   value[key]=item
+  return value
+ try: record=json.loads(snapshots["resources_record"],object_pairs_hook=unique)
+ except (ValueError,TypeError): raise CoreRuntimeError("prior Resources receipt is malformed") from None
+ fields={"schema","native_readback_method","core_source_generation","core_ownership_sha256",
+  "hermes_revision","python_version","resources_revision","resources_tree","artifact_sha256",
+  "ownership_manifest_sha256","loaded_skill_inventory_sha256","active_primary_prompt_sha256",
+  "bundled_primary_prompt_sha256","active_prompt_matches_bundled_primary","effective_overlay",
+  "resource_counts","observed_at_utc","state","functional","enabled","target_verified"}
+ try: canonical_record=_canonical_json(record) if type(record) is dict else None
+ except (TypeError,ValueError):
+  raise CoreRuntimeError("prior Resources receipt is malformed") from None
+ if (type(record) is not dict or set(record)!=fields
+     or canonical_record!=snapshots["resources_record"]
+     or type(record.get("schema")) is not int or record["schema"]!=3
+     or record.get("native_readback_method")!="root-pinned-hermes-loader-v2"
+     or record.get("state")!="discovered" or record.get("functional") is not False
+     or record.get("enabled") is not False or record.get("target_verified") is not False
+     or record.get("core_source_generation")!=core_source_generation
+     or record.get("core_source_generation")!=_core_source_generation()
+     or record.get("hermes_revision")!=COMMIT or record.get("python_version")!="3.14.7"
+     or record.get("core_ownership_sha256")!=hashlib.sha256(journal_raw).hexdigest()
+     or record.get("artifact_sha256")!=old_artifact):
+  raise CoreRuntimeError("prior Resources receipt does not join the old Core generation")
+ for key in ("core_source_generation","core_ownership_sha256","hermes_revision","resources_tree",
+             "artifact_sha256","ownership_manifest_sha256","loaded_skill_inventory_sha256",
+             "active_primary_prompt_sha256","bundled_primary_prompt_sha256"):
+  value=record.get(key)
+  if not isinstance(value,str) or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}",value) is None:
+   raise CoreRuntimeError("prior Resources receipt digest is malformed")
+ try:
+  observed=datetime.fromisoformat(record["observed_at_utc"].replace("Z","+00:00"))
+ except (AttributeError,TypeError,ValueError):
+  raise CoreRuntimeError("prior Resources receipt timestamp is malformed") from None
+ if (observed.tzinfo is None or observed.utcoffset()!=timezone.utc.utcoffset(observed)
+     or observed.isoformat(timespec="seconds").replace("+00:00","Z")!=record["observed_at_utc"]):
+  raise CoreRuntimeError("prior Resources receipt timestamp is malformed")
+ try: journal=json.loads(journal_raw,object_pairs_hook=unique)
+ except (ValueError,TypeError): raise CoreRuntimeError("old Core journal is malformed") from None
+ if type(journal) is not dict or journal.get("state") not in {"installed","active"}:
+  raise CoreRuntimeError("old Core journal is not installed")
+ from .registry import manual_jarvis_skills as native
+ cas_path=RESOURCES_CAS/(old_artifact+".zip")
+ cas_now,cas_identity=_projection_file_snapshot(cas_path,owner=ROOT_UID,group=ROOT_UID,
+  mode=0o600,maximum=16*1024*1024)
+ if (cas_now!=old_archive or cas_identity!=old_archive_identity
+     or hashlib.sha256(cas_now).hexdigest()!=old_artifact):
+  raise CoreRuntimeError("prior Resources CAS differs from its protected receipt")
+ try: manifest,files,old_helper=native._read_transition_archive(cas_now,old_artifact)
+ except Exception: raise CoreRuntimeError("prior Resources A0 archive is invalid") from None
+ if (hashlib.sha256(old_helper).hexdigest()!=manifest["installer"]["sha256"]
+     or reconstruction.old_composed_artifact_sha256!=old_artifact
+     or reconstruction.overlay_journal_sha256!=(
+      hashlib.sha256(overlay_raw).hexdigest() if overlay_raw is not None else _ABSENT_DIGEST)
+     or tuple(reconstruction.overlay_contents)!=tuple(sorted(
+      (name,hashlib.sha256(data).hexdigest()) for name,data in overlay_contents.items()))):
+  raise CoreRuntimeError("prior Resources reconstruction does not join the old receipt")
+ overlay=manifest.get("effective_overlay")
+ if not isinstance(overlay,dict):
+  raise CoreRuntimeError("prior Resources overlay provenance is missing")
+ expected_overlay={key:overlay.get(key) for key in (
+  "overlay_id","approval_commit","sha256","upstream_revision","upstream_tree",
+  "source_declarations","compiled_profiles","compiled_bundle")}
+ expected_inventory=native._canonical_json([
+  {"skill_id":row["skill_id"],"sha256":hashlib.sha256(files[row["archive_path"]]).hexdigest()}
+  for row in sorted(manifest["skill_members"],key=lambda row:row["skill_id"])])
+ expected_other=len(manifest["bundled_resource_inventory"])-396-208
+ expected_counts={"native_skills":396,"internal_profiles":207,
+  "source_profiles_preserved":208,"other_declarations_preserved":expected_other}
+ prompt,soul_identity=_current_primary_prompt_snapshot()
+ try: prompt.decode("utf-8")
+ except UnicodeDecodeError: raise CoreRuntimeError("prior owner prompt encoding is invalid") from None
+ active_sha=hashlib.sha256(prompt).hexdigest()
+ bundled_sha=hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest()
+ ownership_sha=_hash_generation_tree(HERMES_HOME,manifest,files,old_artifact)
+ old_base_sha=(overlay_record["base_artifact_sha256"] if overlay_raw is not None else old_artifact)
+ if (hashlib.sha256(old_base_archive).hexdigest()!=old_base_sha
+     or reconstruction.old_base_artifact_sha256!=old_base_sha):
+  raise CoreRuntimeError("prior Resources overlay base does not join A0")
+ if (expected_other!=88
+     or manifest.get("source",{}).get("revision")!=record["resources_revision"]
+     or manifest.get("source",{}).get("git_tree")!=record["resources_tree"]
+     or ownership_sha!=record["ownership_manifest_sha256"]
+     or hashlib.sha256(expected_inventory).hexdigest()!=record["loaded_skill_inventory_sha256"]
+     or record.get("effective_overlay")!=expected_overlay
+     or record.get("resource_counts")!=expected_counts
+     or type(record.get("active_prompt_matches_bundled_primary")) is not bool
+     or record["active_primary_prompt_sha256"]!=active_sha
+     or record["bundled_primary_prompt_sha256"]!=bundled_sha
+     or record["active_prompt_matches_bundled_primary"] is not (active_sha==bundled_sha)):
+  raise CoreRuntimeError("prior Resources receipt differs from A0 owner bytes or inventory")
+ if (overlay_identity!=snapshots.get("overlay_record_identity")
+     or snapshots.get("resources_record_identity") is None):
+  raise CoreRuntimeError("prior Resources receipt or overlay identity changed before validation")
+ current_journal,current_journal_identity=_projection_file_snapshot(
+  JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ current_record,current_record_identity=_projection_file_snapshot(
+  RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+ current_cas,current_cas_identity=_projection_file_snapshot(cas_path,owner=ROOT_UID,
+  group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ base_now,base_identity=_projection_file_snapshot(RESOURCES_CAS/(old_base_sha+".zip"),
+  owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ current_prompt,current_soul_identity=_current_primary_prompt_snapshot()
+ current_overlay,current_contents,current_overlay_raw,current_overlay_identity,content_identities=(
+  _read_adapter_overlay_snapshot(with_identity=True))
+ if (current_journal!=journal_raw or current_journal_identity!=journal_identity
+     or current_record!=snapshots["resources_record"]
+     or current_record_identity!=snapshots["resources_record_identity"]
+     or current_cas!=old_archive or current_cas_identity!=cas_identity
+     or base_now!=old_base_archive or base_identity!=old_base_identity
+     or current_prompt!=prompt or current_soul_identity!=soul_identity
+     or current_overlay_raw!=overlay_raw or current_overlay!=overlay_record
+     or current_contents!=overlay_contents or current_overlay_identity!=overlay_identity
+     or content_identities!=overlay_content_identities
+     or _core_source_generation()!=core_source_generation
+     or _hash_generation_tree(HERMES_HOME,manifest,files,old_artifact)!=ownership_sha):
+  raise CoreRuntimeError("prior Resources owner snapshot changed during migration verification")
+ return manifest,files,ownership_sha
 
 def _obsidian_vault_tree_sha256(root):
  """Hash only regular, selected-owner vault bytes without following links."""
@@ -5926,7 +6098,15 @@ def _update_owned_core_adapter_locked():
  if os.geteuid()!=ROOT_UID or not Path("/proc").is_dir():
   raise CoreRuntimeError("requires installed Linux root actor")
  _validate_adapter_source_path(); _recover_interrupted_adapter_update()
+ journal_before,journal_identity_before=_projection_file_snapshot(
+  JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
  record,raw_journal,old_files=_read_active_adapter_runtime()
+ current_journal,current_journal_identity=_projection_file_snapshot(
+  JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ if (current_journal!=raw_journal or current_journal!=journal_before
+     or current_journal_identity!=journal_identity_before):
+  raise CoreRuntimeError("old Core journal changed during adapter update preparation")
+ current_journal_identity=journal_identity_before
  old_source=Path(record["adapter_source"]); old_adapter=record["adapter_generation"]
  old_core=record["core_source_generation"]
  if old_source==ADAPTER_SOURCE:
@@ -5974,22 +6154,25 @@ def _update_owned_core_adapter_locked():
  resources_raw=snapshots["resources_record"]
  try: old_discovery=json.loads(resources_raw)
  except (ValueError,TypeError): raise CoreRuntimeError("current Resources receipt is malformed") from None
- if (old_discovery.get("core_ownership_sha256")!=hashlib.sha256(raw_journal).hexdigest()
-     or old_discovery.get("artifact_sha256") is None
-     or read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered"):
-  raise CoreRuntimeError("current Resources generation is not fully discovered")
+ if (type(old_discovery) is not dict
+     or old_discovery.get("core_ownership_sha256")!=hashlib.sha256(raw_journal).hexdigest()
+     or old_discovery.get("artifact_sha256") is None):
+  raise CoreRuntimeError("current Resources receipt does not join the old Core journal")
  old_artifact=old_discovery["artifact_sha256"]
- old_archive=_projection_file(RESOURCES_CAS/(old_artifact+".zip"),owner=ROOT_UID,
-  group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ if not isinstance(old_artifact,str) or re.fullmatch(r"[0-9a-f]{64}",old_artifact) is None:
+  raise CoreRuntimeError("current Resources artifact identity is malformed")
+ old_archive,old_archive_identity=_projection_file_snapshot(RESOURCES_CAS/(old_artifact+".zip"),
+  owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
  if hashlib.sha256(old_archive).hexdigest()!=old_artifact:
   raise CoreRuntimeError("current Resources immutable CAS bytes differ")
- overlay_record,overlay_contents,overlay_raw=_read_adapter_overlay_snapshot()
+ overlay_record,overlay_contents,overlay_raw,overlay_identity,overlay_content_identities=(
+  _read_adapter_overlay_snapshot(with_identity=True))
  if overlay_raw is None:
-  old_base=old_archive
+  old_base=old_archive;old_base_identity=old_archive_identity
  else:
   old_base_sha=overlay_record["base_artifact_sha256"]
-  old_base=_projection_file(RESOURCES_CAS/(old_base_sha+".zip"),owner=ROOT_UID,
-   group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+  old_base,old_base_identity=_projection_file_snapshot(RESOURCES_CAS/(old_base_sha+".zip"),
+   owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
   if hashlib.sha256(old_base).hexdigest()!=old_base_sha:
    raise CoreRuntimeError("original owner-overlay base CAS is unavailable")
  new_base=native.build_manual_jarvis_skills_artifact()
@@ -5998,8 +6181,7 @@ def _update_owned_core_adapter_locked():
   _projection_file(HERMES_HOME/"skills"/native._GENERATION/native._OWNER_FILE,
    owner=1000,group=1000,mode=0o600,maximum=2*1024*1024),resources_raw)
  new_archive=reconstruction.new_composed_archive
- old_manifest,old_generation_files,_old_helper=native._read_transition_archive(
-  old_archive,old_artifact)
+ old_manifest,old_generation_files,_old_helper=native._read_transition_archive(old_archive,old_artifact)
  new_artifact=reconstruction.new_composed_artifact_sha256
  new_manifest,new_generation_files,_new_helper=native._read_transition_archive(
   new_archive,new_artifact)
@@ -6010,6 +6192,15 @@ def _update_owned_core_adapter_locked():
      or not native.verify_same_materialization_transition(old_manifest,old_generation_files,
        new_manifest,new_generation_files)):
   raise CoreRuntimeError("composed A0→A1 pair is not an exact helper-only transition")
+ verified_old_manifest,verified_old_files,old_custody=_verify_migration_old_resources_snapshot(
+  core_source_generation=old_core,journal_raw=raw_journal,
+  journal_identity=current_journal_identity,snapshots=snapshots,
+  overlay_record=overlay_record,overlay_contents=overlay_contents,overlay_raw=overlay_raw,
+  overlay_identity=overlay_identity,overlay_content_identities=overlay_content_identities,
+  old_artifact=old_artifact,old_archive=old_archive,old_archive_identity=old_archive_identity,
+  old_base_archive=old_base,old_base_identity=old_base_identity,reconstruction=reconstruction)
+ if verified_old_manifest!=old_manifest or verified_old_files!=old_generation_files:
+  raise CoreRuntimeError("verified prior A0 archive changed during transition preparation")
  new_unit=_unit(adapter_source=ADAPTER_SOURCE,cohort_gate=True,backup_generation=old_adapter,
   native_plugin_transition=plugin_transition is not None)
  new_launcher=_launcher(adapter_source=ADAPTER_SOURCE)
@@ -6025,7 +6216,6 @@ def _update_owned_core_adapter_locked():
   guarded_old_unit_sha,old_launcher_sha)
  old_installed_journal=_projection_file(HERMES_HOME/"skills"/native._GENERATION/native._OWNER_FILE,
   owner=1000,group=1000,mode=0o600,maximum=2*1024*1024)
- old_custody=_hash_generation_tree(HERMES_HOME,old_manifest,old_generation_files,old_artifact)
  primary_raw=snapshots["primary_record"]
  initial_primary_transition=None
  initial_primary_prior_soul=None
