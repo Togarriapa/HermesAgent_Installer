@@ -1056,3 +1056,25 @@ reached the exact-backup-retain chain `Core 6746/6744 -> restore backup 5461
 `_hash_generation_tree` line 1477. The cause remains unclassified pending
 native-owner review. Core `9e70` was unchanged; live source remains `0cb` and
 no adoption occurred.
+
+## Candidate 146 restart and Feature 147 evidence
+
+Candidate 146's sole registered restart-`True` variant passed in 169.79s
+(log SHA-256
+`51f3ff4d8ec34d1a22dbc0d9830e03be64e3de3e4dab2c226efe84373bd15ffd`). Exact
+source was `a31a1d7ad030ae56f2b4a834cd1b9d0afe60f497`; spec/plan validation
+passed. Actual adoption failed at the fixed qualification subprocess with
+exit 4. Automatic recovery did not restore public service; the current
+failure report was validated as `ValueError`/unavailable and is not attributed
+to a specific product cause. An explicit same-candidate rollback succeeded,
+restoring the exact prior Core and ingress, with all four services active.
+Live source remained `0cb`; candidate 146 was not adopted.
+
+A broad source-qualification trace covered all frames. The bounded Sol
+four-artifact refinement `6b4f` was being Pi spec-validated as Root candidate
+`0a73b984ef5d606614aa15d05bf71012cc05d88c`; this is not evidence of a runtime
+cause or fix. Feature candidate 147
+(`6dce7c06560c9bc6753edbaf0b336820fd1b772`), archive `e056…`, received Sol
+source review for 11 files. Combined Pi contracts/spec/plan passed, with the
+contract count still pending confirmation. Its Chromium rendering check was
+still running. No Feature deployment or full M1 acceptance is claimed.
