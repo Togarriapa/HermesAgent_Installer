@@ -1,5 +1,7 @@
 # Proposal
 
+M1/R0201/R0203 includes the fixed owned two-file native Resources plugin transition within the existing source/binding update cohort. Pi68 proved old installed module bytes conflict with incoming strict staging pins. Preserve old bundle/selection in immutable backup, install the new pinned bundle only after old Core stops, and restore old plugin bytes before old Core admission on recovery. No skipped pins, generic updater or new acceptance claim.
+
 Within existing M1/R0201/R0203, let a genuinely completed retained ingress snapshot hand off to an already-adapter source refresh: verify its actual current cohort, durably retain immutable exact protected history and atomically replace only the active journal with the staged successor. Preserve legacy rollback/data/auth; uncertain or drifted prior transactions still deny. This corrects the actual Pi62 pre-effect refusal without changing authority or acceptance.
 
 Complete existing M1 deployment for an already active adapter Core: a finite Root-derived refresh lane closes public ingress, runs the real candidate Core qualification, then binds new Inspector/Gateway/config union with actual fresh observer custody. Preserve the original ingress/Core/data snapshots and restore actual adapter-update backups on failure; legacy migration stays distinct. Existing owned socket presence is verified and retired precisely, never blanket-deleted. No new framework, scope or acceptance closure.
