@@ -4041,9 +4041,10 @@ def test_m1_boot_gate_checks_typed_native_plugin_transition_quickly(
     # not a shlex reconstruction of the ExecStartPre source.
     systemd_argv = _systemd_decoded_exec_start_pre(unit)
     compile(systemd_argv[4], "<systemd-decoded-native-guard>", "exec")
+    cohort, _cohort_raw = core._read_adapter_update_cohort()
     expected_program = core._core_start_guard_code(
-        adapter_source=Path("/opt/hermes-installer-core-fixture/src"),
-        cohort_gate=True, backup_generation="a" * 64,
+        adapter_source=Path(cohort["new_source"]),
+        cohort_gate=True, backup_generation=cohort["old_adapter_generation"],
         native_plugin_transition=True, failure_diagnostics=True)
     assert systemd_argv[4] == "exec(bytes.fromhex(" + repr(
         expected_program.encode("utf-8").hex()) + ").decode('utf-8'))"
