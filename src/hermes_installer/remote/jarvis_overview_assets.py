@@ -5,6 +5,7 @@ from .jarvis_feature_contract import JarvisFeatureAssets
 
 
 _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
+  <section class="command-centre-shell" aria-label="Jarvis command centre">
   <section class="overview-stage" data-activity="unknown" data-in-viewport="false" aria-label="Jarvis activity">
     <aside class="overview-rail" aria-label="Recent accepted turn outcomes">
       <div class="overview-readout"><span>Accepted · 7 days</span><strong data-metric="total">Unknown</strong><small>Owner turns</small></div>
@@ -16,9 +17,23 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
           <circle class="reactor-dial" cx="120" cy="120" r="116"/>
           <circle class="reactor-orbit reactor-orbit-outer" cx="120" cy="120" r="111"/>
           <circle class="reactor-orbit reactor-orbit-inner" cx="120" cy="120" r="93"/>
+          <path class="reactor-segment reactor-segment-north" d="M120 10A110 110 0 0 1 211 58"/>
+          <path class="reactor-segment reactor-segment-east" d="M230 120A110 110 0 0 1 174 215"/>
+          <path class="reactor-segment reactor-segment-south" d="M120 230A110 110 0 0 1 28 175"/>
+          <path class="reactor-segment reactor-segment-west" d="M10 120A110 110 0 0 1 65 29"/>
+          <circle class="reactor-instrument-track" cx="120" cy="120" r="83"/>
           <circle class="reactor-chamber" cx="120" cy="120" r="75"/>
+          <g class="reactor-iris" aria-hidden="true">
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z"/>
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z" transform="rotate(60 120 120)"/>
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z" transform="rotate(120 120 120)"/>
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z" transform="rotate(180 120 120)"/>
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z" transform="rotate(240 120 120)"/>
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z" transform="rotate(300 120 120)"/>
+          </g>
           <circle class="reactor-core" cx="120" cy="120" r="57"/>
           <circle class="reactor-lens" cx="120" cy="120" r="43"/>
+          <circle class="reactor-aperture" cx="120" cy="120" r="7"/>
           <path class="reactor-axis" d="M120 2v12m0 212v12M2 120h12m212 0h12"/>
           <path class="reactor-ticks" d="M120 24v10m0 172v10M24 120h10m172 0h10M52 52l8 8m120 120 8 8m0-136-8 8M60 180l-8 8"/>
           <circle class="reactor-node" cx="120" cy="4" r="2.5"/><circle class="reactor-node" cx="236" cy="120" r="2.5"/>
@@ -41,6 +56,7 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
     </aside>
   </section>
   <section class="command-panel" aria-labelledby="command-title">
+    <h2 id="command-title" class="visually-hidden">Send a message to Jarvis</h2>
     <div class="command-intro"><span class="command-kicker">MESSAGE JARVIS</span><span id="overview-command-target" class="command-target" role="status" aria-live="polite">A new conversation will start when you send.</span></div>
     <form data-command-form class="command-form">
       <label class="visually-hidden" for="command-input">Ask Jarvis</label>
@@ -56,6 +72,7 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
       <button type="button" data-command-prompt="Review the current status of my configured integrations and report anything unavailable. Do not change their configuration.">Check integrations</button>
     </div>
   </section>
+  </section>
   <section class="ecosystem-card" data-ecosystem-card data-ecosystem-state="unavailable" data-activity-flow="idle" data-in-viewport="false" aria-labelledby="overview-ecosystem-title">
     <header class="ecosystem-heading"><div><p class="overview-kicker">NATIVE ACTIVITY</p><h2 id="overview-ecosystem-title">Expert &amp; Team activity</h2></div>
       <button type="button" data-view="activity">Open Activity</button></header>
@@ -68,6 +85,7 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
     <ol class="handoff-graph" data-handoff-graph aria-label="Native Expert instances linked to their observed events" hidden></ol>
     <p class="ecosystem-provenance">Names and states come from root-observed native instances. Team membership appears only when independently verified; animated handoffs require a separate recorded directed relation.</p>
   </section>
+  <div id="jarvis-ecosystem-feature-host" data-feature-host="ecosystem-fleet"></div>
   <div class="overview-toolbar"><p data-observation role="status" aria-live="polite">Loading measured data…</p><button type="button" data-refresh>Refresh</button></div>
   <p class="overview-window" data-window></p>
   <details class="overview-details">
@@ -103,53 +121,24 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
 </section>"""
 
 _CSS = """
-[data-feature-root="overview"] .overview-page{max-width:1240px;margin:0 auto;padding:clamp(1rem,3vw,2.4rem);color:var(--text,#edf5f6)}
-[data-feature-root="overview"] .command-heading{max-width:820px;margin:0 0 1.2rem}
-[data-feature-root="overview"] .command-heading h1{margin:.2rem 0;font-size:clamp(1.8rem,4vw,2.8rem);font-weight:560;letter-spacing:-.04em}
-[data-feature-root="overview"] .command-heading>p:last-child{max-width:720px;margin:.5rem 0;color:var(--muted,#9bafb4);font-size:.94rem;line-height:1.6}
-[data-feature-root="overview"] .overview-page header>p:last-child,[data-feature-root="overview"] .overview-page>p,[data-feature-root="overview"] .overview-card p{color:var(--muted,#9bafb4);line-height:1.5}
-[data-feature-root="overview"] .overview-eyebrow{color:var(--accent,#83d9ca);font-size:.72rem;letter-spacing:.13em}
-[data-feature-root="overview"] .command-panel{position:relative;margin:1.4rem 0;padding:clamp(1rem,2.5vw,1.5rem);border:1px solid rgba(88,228,235,.28);border-radius:18px;background:radial-gradient(ellipse at 4% 0%,rgba(38,181,193,.15),transparent 55%),linear-gradient(140deg,rgba(13,43,52,.94),rgba(8,23,30,.96));box-shadow:inset 0 1px rgba(255,255,255,.05),0 18px 48px rgba(0,0,0,.17)}
-[data-feature-root="overview"] .command-intro{display:flex;align-items:center;justify-content:space-between;gap:1rem;color:#8eaaaf;font-size:.72rem}
-[data-feature-root="overview"] .command-kicker,.data-source-mark{color:#83d9de;font:600 .65rem/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.14em}
-[data-feature-root="overview"] .command-form{display:flex;align-items:flex-end;gap:.6rem;margin-top:.65rem;padding:.55rem;border:1px solid rgba(88,228,235,.34);border-radius:14px;background:rgba(3,17,23,.74)}
-[data-feature-root="overview"] .command-form textarea{width:100%;min-width:0;min-height:50px;max-height:144px;resize:vertical;padding:.8rem .65rem;border:0;outline:0;background:transparent;color:var(--text,#edf5f6);font:inherit;font-size:1rem;line-height:1.5}
-[data-feature-root="overview"] .command-form textarea::placeholder{color:#708b91}
-[data-feature-root="overview"] .command-form button{display:flex;align-items:center;justify-content:center;gap:.7rem;min-width:144px;min-height:48px;padding:.65rem .85rem;border:1px solid rgba(93,228,235,.55);border-radius:10px;background:linear-gradient(135deg,#168895,#12626e);color:#efffff;font-size:.82rem;font-weight:650;cursor:pointer}
-[data-feature-root="overview"] .command-form button:disabled{opacity:.55;cursor:wait}
-[data-feature-root="overview"] #command-hint{margin:.6rem .2rem 0;color:#819ca1;font-size:.72rem;line-height:1.55}
 [data-feature-root="overview"] .quick-actions{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}
-[data-feature-root="overview"] .quick-actions button{display:flex;align-items:center;gap:.5rem;min-height:44px;padding:.45rem .8rem;border-color:rgba(112,190,199,.2);border-radius:999px;background:rgba(7,29,36,.7);color:#c4dbde;font-size:.76rem;cursor:pointer;transition:background-color 140ms ease,border-color 140ms ease,color 140ms ease}
+[data-feature-root="overview"] .quick-actions button{min-height:44px;padding:.45rem .8rem;border:1px solid rgba(112,190,199,.2);border-radius:999px;background:rgba(7,29,36,.7);color:#c4dbde;cursor:pointer}
 [data-feature-root="overview"] .overview-toolbar{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin:1.5rem 0 .4rem}
-[data-feature-root="overview"] .overview-toolbar .overview-eyebrow{margin:0 0 .3rem}
-[data-feature-root="overview"] .overview-toolbar [data-observation], [data-feature-root="overview"] .overview-window{margin:0;color:#98b0b4;font-size:.76rem;line-height:1.5}
+[data-feature-root="overview"] .overview-toolbar [data-observation],[data-feature-root="overview"] .overview-window{margin:0;color:#98b0b4;font-size:.76rem;line-height:1.5}
 [data-feature-root="overview"][data-stale="true"] .overview-toolbar [data-observation]{color:#e9c783}
 [data-feature-root="overview"] .overview-toolbar button{min-height:44px;border:1px solid var(--line-strong);border-radius:9px;background:rgba(12,49,58,.4);color:#dff8f9;padding:.5rem .9rem;font:inherit;font-size:.78rem;cursor:pointer}
 [data-feature-root="overview"] .overview-window{margin-bottom:.8rem}
-[data-feature-root="overview"] .core-summary{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,auto);align-items:center;gap:.2rem 1rem;margin:.8rem 0;border-color:rgba(112,190,199,.16);background:rgba(9,27,34,.72)}
-[data-feature-root="overview"] .core-summary .overview-heading{grid-row:1 / span 3}
-[data-feature-root="overview"] .core-summary p{margin:.1rem 0;text-align:right;font-size:.74rem}
-[data-feature-root="overview"] .measure-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.8rem}
-[data-feature-root="overview"] .measure-card{min-width:0;display:grid;gap:.55rem;padding:1rem 1.1rem;border:1px solid rgba(102,188,202,.18);border-radius:14px;background:linear-gradient(145deg,rgba(15,40,48,.84),rgba(8,24,31,.88));box-shadow:inset 0 1px rgba(255,255,255,.035)}
-[data-feature-root="overview"] .measure-card span{color:#9eb7ba;font-size:.75rem}
-[data-feature-root="overview"] .measure-card strong{color:#e8fbfc;font-size:clamp(1.5rem,2.7vw,2.15rem);font-weight:560;font-variant-numeric:tabular-nums;letter-spacing:-.04em}
-[data-feature-root="overview"] .measure-card small{color:#789398;font-size:.67rem}
-[data-feature-root="overview"] .measure-primary{border-color:rgba(88,228,235,.34);background:radial-gradient(ellipse at top right,rgba(48,176,189,.14),transparent 66%),linear-gradient(145deg,rgba(15,48,57,.9),rgba(8,24,31,.88))}
-[data-feature-root="overview"] .measure-attention[data-attention="true"] strong{color:#e9c783}
 [data-feature-root="overview"] .overview-lower-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr);gap:.85rem;margin-top:.85rem}
 [data-feature-root="overview"] .overview-card{margin:1rem 0;padding:clamp(.9rem,2vw,1.2rem);border:1px solid var(--border,#294047);border-radius:15px;background:var(--panel,#0d1d23);overflow:auto}
-[data-feature-root="overview"] .overview-lower-grid .overview-card{margin:0;background:linear-gradient(145deg,rgba(15,40,48,.84),rgba(8,24,31,.88));border-color:rgba(102,188,202,.18)}
 [data-feature-root="overview"] .overview-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem}
-[data-feature-root="overview"] .overview-heading .overview-eyebrow{margin:0 0 .25rem}
 [data-feature-root="overview"] .overview-card h2{margin:.15rem 0;font-size:1.05rem;font-weight:560}
-[data-feature-root="overview"] button{min-height:42px;border:1px solid var(--border,#38515a);border-radius:9px;background:transparent;color:inherit;padding:.45rem .8rem;font:inherit}
-[data-feature-root="overview"] button:focus-visible{outline:2px solid var(--accent,#83d9ca);outline-offset:2px}
+[data-feature-root="overview"] .overview-card p{color:var(--muted,#9bafb4);line-height:1.5}
 [data-feature-root="overview"] .overview-history{margin-top:.85rem;background:rgba(10,28,35,.82);border-color:rgba(102,188,202,.16)}
-@media(max-width:900px){[data-feature-root="overview"] .measure-grid{grid-template-columns:repeat(2,minmax(0,1fr))}[data-feature-root="overview"] .overview-lower-grid{grid-template-columns:1fr}}
-@media(max-width:560px){[data-feature-root="overview"] .overview-page{padding:1rem 1rem 5.5rem}[data-feature-root="overview"] .command-form{align-items:stretch;flex-direction:column}[data-feature-root="overview"] .command-form button{width:100%}[data-feature-root="overview"] .quick-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}[data-feature-root="overview"] .quick-actions button{justify-content:flex-start;padding-inline:.65rem;font-size:.69rem}[data-feature-root="overview"] .overview-facts div{align-items:flex-start;flex-direction:column;gap:.25rem}[data-feature-root="overview"] .core-summary{grid-template-columns:1fr}[data-feature-root="overview"] .core-summary .overview-heading{grid-row:auto}[data-feature-root="overview"] .core-summary p{text-align:left}}
-@media(hover:hover) and (pointer:fine){[data-feature-root="overview"] .command-form button{transition:filter 140ms ease,border-color 140ms ease}[data-feature-root="overview"] .command-form button:hover{filter:brightness(1.13);border-color:var(--cyan)}[data-feature-root="overview"] .quick-actions button:hover{border-color:rgba(88,228,235,.48);background:rgba(18,76,85,.68);color:#f2ffff}}
-@media(prefers-reduced-motion:reduce){[data-feature-root="overview"] .quick-actions button,[data-feature-root="overview"] .command-form button{transition:none}}
+@media(max-width:900px){[data-feature-root="overview"] .overview-lower-grid{grid-template-columns:1fr}}
+@media(max-width:560px){[data-feature-root="overview"] .quick-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(hover:hover) and (pointer:fine){[data-feature-root="overview"] .quick-actions button:hover{border-color:rgba(88,228,235,.48);background:rgba(18,76,85,.68);color:#f2ffff}}
 """
+
 
 _CSS += """
 [data-feature-root="overview"] .overview-page{max-width:1400px;margin:0 auto;padding:clamp(1rem,3vw,2.5rem);color:var(--text,#edf5f6)}
@@ -169,8 +158,13 @@ _CSS += """
 [data-feature-root="overview"] .reactor-dial{stroke:rgba(146,203,208,.3);stroke-width:.8;stroke-dasharray:1 3}
 [data-feature-root="overview"] .reactor-orbit-outer{stroke:rgba(78,222,231,.8);stroke-width:1.1;stroke-dasharray:2 5}
 [data-feature-root="overview"] .reactor-orbit-inner{stroke:rgba(121,232,237,.58);stroke-width:1.1;stroke-dasharray:38 8 4 9}
+[data-feature-root="overview"] .reactor-segment{fill:none;stroke:rgba(136,231,235,.72);stroke-width:1;stroke-linecap:round;vector-effect:non-scaling-stroke}
+[data-feature-root="overview"] .reactor-segment-east,[data-feature-root="overview"] .reactor-segment-west{stroke:rgba(103,190,202,.58);stroke-dasharray:1 2}
+[data-feature-root="overview"] .reactor-instrument-track{fill:none;stroke:rgba(122,221,227,.24);stroke-width:.7;stroke-dasharray:1 4;vector-effect:non-scaling-stroke}
 [data-feature-root="overview"] .reactor-chamber{fill:rgba(5,26,33,.65);stroke:rgba(138,239,241,.84);stroke-width:1.3;stroke-dasharray:88 10 17 8}
+[data-feature-root="overview"] .reactor-iris-blade{fill:rgba(71,207,216,.12);stroke:rgba(146,236,239,.66);stroke-width:.8;vector-effect:non-scaling-stroke}
 [data-feature-root="overview"] .reactor-core{fill:rgba(39,193,204,.08);stroke:rgba(155,245,246,.83);stroke-width:1.2;filter:drop-shadow(0 0 11px rgba(67,222,231,.34))}
+[data-feature-root="overview"] .reactor-aperture{fill:rgba(185,255,255,.82);stroke:rgba(255,255,255,.9);stroke-width:.8;filter:drop-shadow(0 0 7px rgba(67,222,231,.72));vector-effect:non-scaling-stroke}
 [data-feature-root="overview"] .reactor-lens{fill:rgba(43,198,208,.06);stroke:rgba(119,235,239,.46);stroke-width:.8;vector-effect:non-scaling-stroke}
 [data-feature-root="overview"] .reactor-axis{fill:none;stroke:rgba(89,212,222,.34);stroke-width:.9;vector-effect:non-scaling-stroke}
 [data-feature-root="overview"] .reactor-ticks{fill:none;stroke:rgba(160,233,236,.5);stroke-width:1.1;vector-effect:non-scaling-stroke}
@@ -197,6 +191,10 @@ _CSS += """
 [data-feature-root="overview"] .overview-stage[data-in-viewport="true"][data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial{transform-box:view-box;transform-origin:120px 120px;animation:jarvis-reactor-reverse 36s linear infinite}
 [data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-activity="quiet"] .reactor-orbit-inner{animation-duration:44s}
 [data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-activity="quiet"] .reactor-dial{animation-duration:72s}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-assistant-state="thinking"] .reactor-orbit-outer{stroke:#8fe7eb;animation:jarvis-reactor-pulse 2.4s ease-in-out infinite}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-assistant-state="listening"] .reactor-orbit-outer{stroke:#efc57c;stroke-dasharray:12 7;animation:jarvis-reactor-pulse 3.2s ease-in-out infinite}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-assistant-state="speaking"] .reactor-orbit-inner{stroke:#a6f0f1;animation-duration:14s}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-assistant-state="error"] .reactor-core{stroke:#e8bf78;fill:rgba(211,158,67,.1)}
 [data-feature-root="overview"] .overview-toolbar{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.65rem 0;border-top:1px solid rgba(117,191,199,.15);border-bottom:1px solid rgba(117,191,199,.15)}
 [data-feature-root="overview"] .overview-toolbar [data-observation]{margin:0;color:#a8c2c5;font-size:.72rem;line-height:1.5}
 [data-feature-root="overview"] .overview-toolbar button{min-width:92px;min-height:44px;border:1px solid rgba(95,199,208,.3);border-radius:9px;background:rgba(8,36,44,.68);color:#e1f9fa;padding:.5rem .9rem;font:inherit;font-size:.75rem;cursor:pointer}
@@ -312,11 +310,39 @@ html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-st
 [data-feature-root="overview"] .overview-stage:not([data-in-viewport="true"]) .reactor-orbit{animation:none!important;transform:none!important}
 """
 
+_CSS += """
+[data-feature-root="overview"] .command-centre-shell{position:relative;isolation:isolate;overflow:hidden;margin:0 0 clamp(1.25rem,3vw,2.5rem);padding:clamp(.65rem,1.7vw,1.4rem);border:1px solid rgba(88,228,235,.25);border-radius:clamp(18px,2.2vw,30px);background:radial-gradient(ellipse at 50% 22%,rgba(31,146,159,.12),transparent 48%),linear-gradient(145deg,rgba(6,22,29,.96),rgba(8,30,37,.94) 52%,rgba(5,19,26,.98));box-shadow:inset 0 1px rgba(230,255,255,.06),0 24px 64px rgba(0,0,0,.24)}
+[data-feature-root="overview"] .command-centre-shell:before{position:absolute;z-index:0;inset:0;content:"";pointer-events:none;background:linear-gradient(90deg,transparent 0,rgba(87,224,232,.055) 50%,transparent 100%),repeating-linear-gradient(0deg,transparent 0 39px,rgba(129,208,214,.035) 40px),repeating-linear-gradient(90deg,transparent 0 39px,rgba(129,208,214,.035) 40px);mask-image:linear-gradient(to bottom,black,transparent 88%)}
+[data-feature-root="overview"] .command-centre-shell:after{position:absolute;z-index:0;top:-16rem;left:50%;width:min(72vw,900px);aspect-ratio:1;content:"";pointer-events:none;transform:translateX(-50%);border:1px solid rgba(88,228,235,.08);border-radius:50%;box-shadow:0 0 0 24px rgba(88,228,235,.025),0 0 0 58px rgba(88,228,235,.018),inset 0 0 80px rgba(88,228,235,.025)}
+[data-feature-root="overview"] .command-centre-shell>.overview-stage,[data-feature-root="overview"] .command-centre-shell>.command-panel{position:relative;z-index:1}
+[data-feature-root="overview"] .command-centre-shell>.overview-stage{min-height:clamp(500px,48vw,650px);padding:clamp(.3rem,1.3vw,1.1rem) clamp(.2rem,1vw,.9rem) 1.4rem;gap:clamp(1rem,2.6vw,3rem)}
+[data-feature-root="overview"] .command-centre-shell .reactor-figure{width:clamp(285px,31vw,410px)}
+[data-feature-root="overview"] .command-centre-shell .overview-rail{gap:.55rem;align-content:center}
+[data-feature-root="overview"] .command-centre-shell .overview-readout{position:relative;overflow:hidden;padding:.9rem 1rem;border:1px solid rgba(112,218,225,.18);border-radius:12px;background:linear-gradient(145deg,rgba(14,47,56,.76),rgba(6,23,30,.8));box-shadow:inset 0 1px rgba(235,255,255,.045),0 10px 24px rgba(0,0,0,.12)}
+[data-feature-root="overview"] .command-centre-shell .overview-readout:before{position:absolute;top:0;left:1rem;width:2.4rem;height:1px;content:"";background:rgba(111,234,238,.68)}
+[data-feature-root="overview"] .command-centre-shell .overview-readout:last-child{border-bottom:1px solid rgba(112,218,225,.18)}
+[data-feature-root="overview"] .command-centre-shell .overview-readout>span{font-size:.65rem;letter-spacing:.11em}
+[data-feature-root="overview"] .command-centre-shell .overview-readout strong{margin:.35rem 0;font-size:clamp(1.4rem,2.2vw,2rem)}
+[data-feature-root="overview"] .command-centre-shell .overview-readout small{font-size:.66rem}
+[data-feature-root="overview"] .command-centre-shell .command-panel{max-width:1050px;margin:0 auto;padding:clamp(1rem,2vw,1.5rem);border-color:rgba(100,231,237,.3);background:linear-gradient(115deg,rgba(5,20,27,.98),rgba(8,31,39,.96));box-shadow:0 18px 38px rgba(0,0,0,.22),inset 0 1px rgba(222,255,255,.05)}
+[data-feature-root="overview"] .command-centre-shell .command-form{min-height:54px}
+[data-feature-root="overview"] .command-centre-shell .command-form textarea{font-size:1.02rem}
+[data-feature-root="overview"] .command-centre-shell .command-intro{align-items:flex-start}
+[data-feature-root="overview"] .command-centre-shell .command-target{max-width:62ch;white-space:normal;overflow-wrap:anywhere}
+[data-feature-root="overview"] #jarvis-ecosystem-feature-host{min-height:0}
+@media(max-width:980px){[data-feature-root="overview"] .command-centre-shell>.overview-stage{min-height:0;padding-inline:.2rem}}
+@media(max-width:620px){[data-feature-root="overview"] .command-centre-shell{padding:.55rem;border-radius:18px}[data-feature-root="overview"] .command-centre-shell>.overview-stage{padding:.25rem .45rem 1rem}[data-feature-root="overview"] .command-centre-shell .reactor-figure{width:min(78vw,330px)}[data-feature-root="overview"] .command-centre-shell .command-panel{padding:.9rem}[data-feature-root="overview"] .command-centre-shell .command-intro{flex-direction:column;gap:.35rem}[data-feature-root="overview"] .command-centre-shell .command-target{text-align:left;max-width:100%}}
+@media(prefers-reduced-motion:reduce){[data-feature-root="overview"] .command-centre-shell:after{box-shadow:none}}
+"""
+
 _MOUNT = r"""function mount(container, api, state, mountScope) {
   function overviewScopeIsCurrent(scope, generation, currentGeneration, stopped) {
     return !stopped && generation === currentGeneration
       && !(scope && scope.signal && scope.signal.aborted)
       && (!scope || typeof scope.isCurrent !== 'function' || scope.isCurrent());
+  }
+  function projectAssistantPresence(state) {
+    return ['listening','thinking','speaking','error'].includes(state) ? state : null;
   }
   function projectNativeEcosystem(snapshot, now, coreVerified) {
     const observation = snapshot && snapshot.observation;
@@ -378,6 +404,9 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
   const handoffGraph = $('[data-handoff-graph]');
   let stopped = false;
   let stageObserver = null;
+  let assistantHudObserver = null;
+  let lastTurnCounts = null;
+  let lastCoreVerified = false;
   let ecosystemObserver = null;
   let ecosystemPollTimer = null;
   let ecosystemGeneration = 0;
@@ -532,6 +561,8 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
     }
   }
   function renderCounts(counts, coreVerified) {
+    lastTurnCounts = counts;
+    lastCoreVerified = coreVerified;
     for (const key of ['total','completed','active','failed']) {
       const target = $(`[data-metric="${key}"]`);
       if (target) target.textContent = format(number(counts && counts[key]));
@@ -541,12 +572,23 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
     $('[data-metric="failed"]').closest('.overview-readout').dataset.attention = String(failed !== null && failed > 0);
     const stage = $('.overview-stage');
     const activity = $('[data-reactor-state]');
+    const assistantState = projectAssistantPresence(document.getElementById('assistant-hud')?.dataset.state);
+    stage.dataset.assistantState = assistantState || 'none';
     if (!coreVerified) {
       stage.dataset.coreState = 'unverified';
       stage.dataset.activity = 'unknown';
       activity.textContent = active === null
         ? 'Service observation unavailable; current activity is unverified.'
         : `${format(active)} accepted turn${active === 1 ? '' : 's'} in progress; service observation is unverified.`;
+    } else if (assistantState) {
+      stage.dataset.coreState = 'verified';
+      stage.dataset.activity = assistantState === 'error' ? 'unknown' : 'active';
+      activity.textContent = ({
+        listening: 'Listening · Jarvis voice input is active.',
+        thinking: 'Thinking · Jarvis is responding to an active turn.',
+        speaking: 'Speaking · Jarvis is reading a completed reply aloud.',
+        error: 'Needs attention · Jarvis reported an interaction error.',
+      })[assistantState];
     } else if (active > 0) {
       stage.dataset.coreState = 'verified';
       stage.dataset.activity = 'active';
@@ -566,6 +608,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
   }
   function markCoreStale(reason = 'stale') {
     if (stopped) return;
+    lastCoreVerified = false;
     if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer);
     coreFreshnessTimer = null;
     coreFreshUntil = 0;
@@ -574,6 +617,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
     const stage = $('.overview-stage');
     stage.dataset.coreState = 'unverified';
     stage.dataset.activity = 'unknown';
+    stage.dataset.assistantState = 'none';
     $('[data-core-status]').textContent = reason === 'offline' ? 'Offline · service status unverified'
       : reason === 'hidden' ? 'Dashboard paused · service status unverified'
       : 'Last service observation is stale';
@@ -672,6 +716,13 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
     ecosystemObserver.observe(ecosystemCard);
   } else {
     ecosystemCard.dataset.inViewport = 'true';
+  }
+  const assistantHud = document.getElementById('assistant-hud');
+  if (assistantHud && typeof MutationObserver === 'function') {
+    assistantHudObserver = new MutationObserver(() => {
+      if (lastTurnCounts !== null && lastCoreVerified) renderCounts(lastTurnCounts, true);
+    });
+    assistantHudObserver.observe(assistantHud, {attributes:true, attributeFilter:['data-state']});
   }
   async function refresh() {
     if (stopped) return;
@@ -775,7 +826,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
   document.addEventListener('visibilitychange',onVisibilityChange);
   window.addEventListener('offline',onNetworkChange);
   window.addEventListener('online',onNetworkChange);
-  return function cleanup() { stopped=true; ecosystemGeneration += 1; ecosystemRefreshing=false; if (ecosystemPollTimer !== null) clearInterval(ecosystemPollTimer); if (ecosystemObserver) ecosystemObserver.disconnect(); ecosystemCard.dataset.inViewport='false'; ecosystemCard.dataset.activityFlow='idle'; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); if (stageObserver) stageObserver.disconnect(); stage.dataset.inViewport='false'; refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',onVisibilityChange); window.removeEventListener('offline',onNetworkChange); window.removeEventListener('online',onNetworkChange); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
+  return function cleanup() { stopped=true; ecosystemGeneration += 1; ecosystemRefreshing=false; if (ecosystemPollTimer !== null) clearInterval(ecosystemPollTimer); if (ecosystemObserver) ecosystemObserver.disconnect(); ecosystemCard.dataset.inViewport='false'; ecosystemCard.dataset.activityFlow='idle'; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); if (stageObserver) stageObserver.disconnect(); if (assistantHudObserver) assistantHudObserver.disconnect(); stage.dataset.inViewport='false'; refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',onVisibilityChange); window.removeEventListener('offline',onNetworkChange); window.removeEventListener('online',onNetworkChange); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
 }"""
 
 _UNMOUNT = "function unmount() {}"

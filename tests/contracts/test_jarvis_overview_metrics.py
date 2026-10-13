@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 import tempfile
+from html.parser import HTMLParser
 
 from hermes_installer.remote.jarvis_chat import JarvisChatStore
 from hermes_installer.remote.jarvis_dashboard import build_overview
@@ -155,6 +156,11 @@ def test_overview_reactor_uses_observed_activity_and_keeps_controls_accessible()
     js = FEATURE_ASSETS.mount_js
 
     assert 'class="overview-stage" data-activity="unknown"' in html
+    assert '<section class="command-centre-shell" aria-label="Jarvis command centre">' in html
+    assert html.index('class="overview-stage"') < html.index('class="command-panel"') < html.index('class="ecosystem-card"')
+    assert 'id="jarvis-ecosystem-feature-host" data-feature-host="ecosystem-fleet"' in html
+    assert "command-centre-shell:before" in css and "command-centre-shell:after" in css
+    assert "#jarvis-ecosystem-feature-host" in css
     assert 'data-reactor-state role="status" aria-live="polite"' in html
     assert 'data-core-status role="status" aria-live="polite"' in html
     assert 'data-command-form' in html and 'data-new-conversation' in html
@@ -169,6 +175,73 @@ def test_overview_reactor_uses_observed_activity_and_keeps_controls_accessible()
     assert "await api.command(text)" in js
     assert "await api.newConversation()" in js
     assert "commandInput.value = button.dataset.commandPrompt" in js
+
+
+def test_overview_reactor_has_authored_static_iris_and_measured_flank_cards():
+    html, css = FEATURE_ASSETS.view_html, FEATURE_ASSETS.css
+    class SelectorParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.classes = []
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            self.classes.extend(attributes.get("class", "").split())
+
+    parser = SelectorParser()
+    parser.feed(html)
+    assert parser.classes.count("reactor-iris-blade") == 6
+    for layer in ("reactor-segment-north", "reactor-segment-east", "reactor-segment-south",
+                  "reactor-segment-west", "reactor-instrument-track", "reactor-chamber",
+                  "reactor-core", "reactor-lens", "reactor-aperture"):
+        assert layer in parser.classes
+    assert ".reactor-segment{fill:none;stroke:" in css
+    iris_rule = css[css.index(".reactor-iris-blade{"):css.index(".reactor-core{")]
+    assert "stroke:" in iris_rule and "animation:" not in iris_rule
+    for metric in ("total", "completed", "active", "failed"):
+        assert f'data-metric="{metric}">Unknown' in html
+    assert 'data-conversation-count>Unknown' in html
+    assert ".command-centre-shell .overview-readout{position:relative" in css
+
+
+def test_overview_command_submission_preserves_text_on_denial_and_recovers():
+    js = FEATURE_ASSETS.mount_js
+    start = js.index("  async function submitCommand(event) {")
+    end = js.index("\n  const newConversation", start)
+    submit = js[start:end]
+    harness = r'''const assert = require('node:assert/strict');
+let stopped = false, failCommand = false;
+const sent = [], observation = {textContent:''}, button = {disabled:false};
+const commandInput = {value:'', disabled:false};
+const commandForm = {querySelector:() => button, addEventListener(){}, removeEventListener(){}, requestSubmit(){}};
+const api = {command:async text => {sent.push(text); if(failCommand) throw new Error('denied'); return true;}};
+const $ = selector => selector === '[data-observation]' ? observation : null;
+''' + submit + r'''
+const submitEvent = {prevented:false,preventDefault(){this.prevented=true;}};
+(async()=>{
+ commandInput.value='  Review my current tasks  ';
+ await submitCommand(submitEvent);
+ assert.equal(submitEvent.prevented,true);
+ assert.deepEqual(sent,['Review my current tasks'],'the existing command bridge receives the exact owner text');
+ assert.equal(commandInput.value,'','accepted send clears the composer');
+ failCommand=true; commandInput.value='Keep this draft';
+ await submitCommand({preventDefault(){}});
+ assert.equal(sent.length,2);
+ assert.equal(commandInput.value,'Keep this draft','a denied send preserves the typed text');
+ assert.match(observation.textContent,/text remains here/i);
+ const before=sent.length; button.disabled=true; commandInput.value='Do not duplicate';
+ await submitCommand({preventDefault(){}});
+ assert.equal(sent.length,before,'a pending send is not replayed');
+ console.log('OVERVIEW_COMMAND_HARNESS_COMPLETE');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "overview-command-harness.js"
+        path.write_text(harness, encoding="utf-8")
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False,
+                                timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "OVERVIEW_COMMAND_HARNESS_COMPLETE" in result.stdout
 
 
 def test_overview_presence_is_gated_by_fresh_core_witness():
@@ -213,6 +286,22 @@ def test_overview_presence_stops_when_hidden_or_offline_until_fresh_readback():
     assert js.index("const data = await api.get('/chat/api/overview')") < js.index("root.dataset.networkOnline = 'true';", js.index("const data = await api.get('/chat/api/overview')"))
     assert "markCoreStale('hidden')" in js
     assert "markCoreStale('offline')" in js
+
+
+def test_overview_projects_only_real_shared_jarvis_interaction_states():
+    css, js = FEATURE_ASSETS.css, FEATURE_ASSETS.mount_js
+    assert "function projectAssistantPresence(state)" in js
+    assert "['listening','thinking','speaking','error'].includes(state) ? state : null" in js
+    assert "document.getElementById('assistant-hud')?.dataset.state" in js
+    assert "assistantHudObserver.observe(assistantHud, {attributes:true, attributeFilter:['data-state']})" in js
+    assert "if (assistantHudObserver) assistantHudObserver.disconnect()" in js
+    assert "stage.dataset.assistantState = assistantState || 'none'" in js
+    assert '[data-assistant-state="thinking"] .reactor-orbit-outer' in css
+    assert '[data-assistant-state="listening"] .reactor-orbit-outer' in css
+    assert '[data-assistant-state="speaking"] .reactor-orbit-inner' in css
+    assert '[data-assistant-state="error"] .reactor-core' in css
+    assert "Needs attention · Jarvis reported an interaction error." in js
+    assert "stage.dataset.assistantState = 'none'" in js
 
 
 def test_overview_ecosystem_uses_named_root_observations_and_cancels_stale_views():
