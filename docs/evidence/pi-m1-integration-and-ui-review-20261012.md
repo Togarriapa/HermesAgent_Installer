@@ -1140,3 +1140,30 @@ bounds tracing to four exception objects, 12 frames and privacy constraints;
 was still running, so no apply or runtime acceptance is claimed. The public
 old-source reload showed a secure connection, Ready state and live owner
 statistics. No candidate-153 or new-feature live claim is made.
+
+### Candidate 153 activation and recovery
+
+Candidate 153's actual activation exited 4: fixed `systemctl start` failed
+before a new listener, with the recorded path `Core 6526 -> _run 893`. Recovery
+recorded `5357 -> stop 5063` while Core was activating. The validated report
+identified candidate `bc7231a1ac1b35437f7169821e59ed3d662d7693`, archive
+`c53cd798cfd5f7ec11b602c48a30a808c4c89fcf128a5208e392bd7d708142dc`, Core
+`95de`, empty stdout, 48 bytes of stderr, `CoreRuntimeError` and null cohort.
+Root stopped only the owned Core unit, confirmed it inactive, then retried the
+same candidate's `--rollback` on the tested prior-source-wait fix. Rollback
+succeeded; all four services were active with old source `0cb` restored. No
+candidate 153 or Feature was active.
+
+The startup collector `dded9bdf` passed source review. Its readback recorded
+fixed-unit stats Active, `Success`, `NRestarts=0`, MainPID `3196350`, unit SHA-256
+`b1c896b8c43d8ae1890c0d73abf2b137c4bf2707fc0da2337f4609f2e61c3892`, and
+launcher SHA-256
+`cac58bd3df87b4dc553f7a738d9d2e57b7f7c0fe867be629f1dc8f064c55284f`. The
+aggregate one-hour control showed 28 unit failures and 28 without an exception
+type; it does not prove candidate 153's exact predicate or phase.
+
+Candidate 154's Sol four-artifact failure-only/closed-booleans and legacy
+recipe compatibility plan (`f7ce982a95a98f41f143c474ac716968886657be`, archive
+SHA-256 `1ee8a500149189a359694a61ac28399aa270d459d4e608b46714605fafd9e340`)
+was staged pending Pi spec validation; no implementation was present. Live
+source remains `0cb`; no candidate 153 acceptance is claimed.
