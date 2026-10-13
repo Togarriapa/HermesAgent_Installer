@@ -349,15 +349,34 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
             except (ValueError, IndexError):
                 raise AssertionError("generated guard command has no isolated source") from None
             wrapper = (
-                "import json,sys\n"
+                "import hashlib,json,sys\n"
                 "_guard_source=" + repr(guard_source) + "\n"
-                "def _guard_trace(frame,event,arg):\n"
-                " if frame.f_code.co_filename!='<untouched-generated-guard>' or event!='return': return _guard_trace\n"
-                " values=frame.f_locals\n"
-                " names=('ok','cp_ok','rp_ok','backup_ok','initial_ok','keys_ok','transition_ok','cohort_ok','starting','reconstruction_ok')\n"
-                " result={name:values[name] for name in names if type(values.get(name)) is bool}\n"
+                "_guard_diag_state={}\n"
+                "def _guard_emit(values):\n"
+                " result={name:values[name] for name in ('ok','cp_ok','rp_ok','backup_ok','initial_ok','keys_ok','transition_ok','cohort_ok','starting','reconstruction_ok','source_ok','native_ok','starting_ok','active_update_ok','phase_ok') if type(values.get(name)) is bool}\n"
+                " result['base_ok']=_guard_diag_state.get('base_ok') if type(_guard_diag_state.get('base_ok')) is bool else None\n"
                 " if values.get('phase') in ('source-starting','bindings-verified','committed'): result['phase']=values['phase']\n"
+                " def check(name,fn):\n"
+                "  try: result[name]=bool(fn())\n"
+                "  except Exception: result[name]=False\n"
+                " c=values.get('c'); d=values.get('d'); r=values.get('r')\n"
+                " check('record_identity',lambda: values.get('canonical')(c)==values.get('cr') and values.get('keys_ok') and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home')\n"
+                " check('journal_join',lambda: values.get('expected_j')==hashlib.sha256(values.get('raw')).hexdigest())\n"
+                " check('resources_join',lambda: values.get('expected_r')==hashlib.sha256(values.get('rr')).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(values.get('raw')).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256'))\n"
+                " check('generation_recipe_join',lambda: c.get('new_source')==values.get('source') and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==values.get('recipe')(values.get('source'),d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256')))\n"
+                " check('adapter_state_join',lambda: d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and d.get('adapter_update_target_source')==values.get('source') and d.get('adapter_update_target_generation')==d.get('adapter_generation') and ((values.get('starting') and d.get('adapter_update_state')=='starting') or (values.get('phase')=='committed' and d.get('adapter_update_state')=='active')))\n"
+                " check('service_files',lambda: all(values.get('valid')(p,u,g,m,h) for p,u,g,m,h in values.get('files')))\n"
+                " return result\n"
+                "def _guard_trace(frame,event,arg):\n"
+                " if frame.f_code.co_filename!='<untouched-generated-guard>': return _guard_trace\n"
+                " if event=='call': frame.f_trace_opcodes=True; return _guard_trace\n"
+                " values=frame.f_locals\n"
+                " if event=='opcode' and 'cohort_ok' in values and 'base_ok' not in _guard_diag_state and type(values.get('ok')) is bool: _guard_diag_state['base_ok']=values['ok']; return _guard_trace\n"
+                " if event=='exception' and arg[0] is SystemExit and arg[1]==0: return _guard_trace\n"
+                " if event not in ('return','exception'): return _guard_trace\n"
+                " result=_guard_emit(values)\n"
                 " sys.stdout.write('GUARD_DIAGNOSTIC='+json.dumps(result,sort_keys=True,separators=(',',':'))+'\\n')\n"
+                " sys.settrace(None)\n"
                 " return _guard_trace\n"
                 "sys.settrace(_guard_trace)\n"
                 "exec(compile(_guard_source,'<untouched-generated-guard>','exec'),{'__name__':'__main__'})\n"
@@ -418,9 +437,13 @@ exec "$runuser_bin" -u admin -- "$@"
                                 and set(candidate) <= {
                                     "ok", "cp_ok", "rp_ok", "backup_ok", "initial_ok",
                                     "keys_ok", "transition_ok", "cohort_ok", "starting",
-                                    "reconstruction_ok", "phase"}
+                                    "reconstruction_ok", "source_ok", "native_ok", "starting_ok",
+                                    "active_update_ok", "phase_ok", "base_ok", "phase",
+                                    "record_identity", "journal_join", "resources_join",
+                                    "generation_recipe_join", "adapter_state_join", "service_files"}
                                 and all(type(value) is bool for key, value in candidate.items()
-                                        if key != "phase")
+                                        if key not in {"phase", "base_ok"})
+                                and ("base_ok" not in candidate or type(candidate["base_ok"]) is bool)
                                 and ("phase" not in candidate or candidate["phase"] in {
                                     "source-starting", "bindings-verified", "committed"})):
                             diagnostic_summary = candidate
