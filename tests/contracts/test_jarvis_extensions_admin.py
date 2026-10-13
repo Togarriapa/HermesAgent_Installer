@@ -352,13 +352,15 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
   unmountSecond(); releasePost({status: 'applied'}); await submission; await flush();
   assert.equal(status.textContent, pendingStatus, 'a late mutation result cannot update an unmounted view');
   assert.equal(gets, 2, 'inactive mutation completion does not launch another inventory read');
+  console.log('EXTENSIONS_REMOUNT_HARNESS_COMPLETE');
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 '''
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "extensions-mount-harness.js"
         path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
-        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=15)
     assert result.returncode == 0, result.stderr
+    assert "EXTENSIONS_REMOUNT_HARNESS_COMPLETE" in result.stdout, "remount lifecycle scenarios did not complete"
 
 
 def test_extensions_deferred_actions_keep_exact_source_and_require_readback_recovery():
@@ -502,13 +504,15 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
   api.posts[7].resolve({content:'late body'}); await lateRead;
   assert.equal(all(view.root).filter(node=>node.tagName==='dialog').length,0);
   assert.equal(view.status.textContent,statusAtUnmount);
+  console.log('EXTENSIONS_SOURCE_REVISION_HARNESS_COMPLETE');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''.replace('MOUNT', FEATURE_ASSETS.mount_js)
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "extensions-source-revision-harness.js"
         path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
-        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=15)
     assert result.returncode == 0, result.stderr
+    assert "EXTENSIONS_SOURCE_REVISION_HARNESS_COMPLETE" in result.stdout, "source revision scenarios did not complete"
 
 
 def test_plugin_settings_form_is_typed_exact_and_revision_bound():
