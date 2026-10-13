@@ -376,7 +376,7 @@ class Target {
   querySelector(selector) {
     if (this.selectors && this.selectors.has(selector)) return this.selectors.get(selector);
     const wanted=selector.toLowerCase();
-    const visit=node=>{ for (const child of node.children) { if (child.tagName===wanted) return child; const found=visit(child); if (found) return found; } return null; };
+    const visit=node=>{ for (const child of node.children || []) { if (child.tagName===wanted) return child; const found=visit(child); if (found) return found; } return null; };
     return visit(this);
   }
   reset() { const input=this.querySelector('input'); if (input) input.value=''; }
@@ -525,7 +525,7 @@ class Target {
   querySelector(selector) {
     if (this.selectors && this.selectors.has(selector)) return this.selectors.get(selector);
     const wanted=selector.toLowerCase();
-    const visit=node=>{ for (const child of node.children) { if (child.tagName===wanted) return child; const found=visit(child); if (found) return found; } return null; };
+    const visit=node=>{ for (const child of node.children || []) { if (child.tagName===wanted) return child; const found=visit(child); if (found) return found; } return null; };
     return visit(this);
   }
   showModal() { this.open=true; }
@@ -559,6 +559,7 @@ global.FormData=class { constructor(form) { this.form=form; } get() { return nul
 global.window={prompt:message=>{const match=message.match(/^Type (.+) to confirm/);return match?match[1]:null;},confirm:()=>true};
 global.crypto={getRandomValues:bytes=>{bytes.fill(5);return bytes;}};
 global.btoa=value=>Buffer.from(value,'binary').toString('base64');
+MOUNT
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 function editor(view) { return all(view.list).find(node=>node.tagName==='dialog'); }
 function field(dialog,key) { return all(dialog).find(node=>node.id && node.id===key); }

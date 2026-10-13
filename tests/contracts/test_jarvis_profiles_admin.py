@@ -253,7 +253,7 @@ class Target {
 }
 global.Option=class { constructor(text,value) { this.text=text; this.value=value; } };
 let deferNextDigest=false, releaseDigest;
-global.crypto={getRandomValues(bytes){bytes.fill(3);return bytes;},subtle:{digest(_alg,data){const result=cryptoNode.createHash('sha256').update(Buffer.from(data)).digest();if(deferNextDigest){deferNextDigest=false;return new Promise(resolve=>{releaseDigest=()=>resolve(result);});}return Promise.resolve(result);}}};
+Object.defineProperty(globalThis,'crypto',{configurable:true,writable:true,value:{getRandomValues(bytes){bytes.fill(3);return bytes;},subtle:{digest(_alg,data){const result=cryptoNode.createHash('sha256').update(Buffer.from(data)).digest();if(deferNextDigest){deferNextDigest=false;return new Promise(resolve=>{releaseDigest=()=>resolve(result);});}return Promise.resolve(result);}}}});
 const selectors=['[data-profile-status]','[data-profile-select]','[data-profile-search]','[data-profile-count]','[data-profile-empty]','[data-file-select]','[data-profile-editor]','[data-profile-review]','[data-profile-save]','[data-profile-diff]','[data-protected-section]','[data-protected-content]','[data-editor-title]','[data-editor-state]','[data-profile-generation]'];
 const nodes=new Map(selectors.map(key=>[key,new Target()]));
 const root={querySelector:key=>nodes.get(key)};
