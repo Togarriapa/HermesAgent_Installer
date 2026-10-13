@@ -43,6 +43,7 @@ _CSS = '''[data-feature-root="extensions"]{max-width:1100px;margin:0 auto;paddin
 [data-feature-root="extensions"] .inventory-tools{display:grid;grid-template-columns:minmax(220px,1fr) minmax(150px,.35fr);align-items:end;gap:12px;margin:18px 0}
 [data-feature-root="extensions"] .inventory-tools label{margin:0}
 [data-feature-root="extensions"] .inventory-tools input,[data-feature-root="extensions"] .inventory-tools select{width:100%}
+[data-feature-root="extensions"] [data-inventory-search],[data-feature-root="extensions"] [data-inventory-kind]{min-width:44px;min-height:44px}
 [data-feature-root="extensions"] [data-inventory-count]{grid-column:1/-1;margin:0;font-size:.82rem}
 [data-feature-root="extensions"] [data-inventory-empty],[data-feature-root="extensions"] [data-inventory-no-match]{padding:18px;border:1px dashed var(--border,#38515a);border-radius:10px}
 [data-feature-root="extensions"] .extension-card p{margin:6px 0;font-size:.86rem;overflow-wrap:anywhere}
