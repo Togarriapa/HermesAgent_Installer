@@ -1899,6 +1899,67 @@ def test_unwritten_initial_primary_rollback_is_closed_and_partial_without_backup
         core._read_adapter_update_cohort()
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="cohort journal requires the enrolled Pi root actor")
+def test_initial_primary_cohort_joins_each_recorded_manager_digest_exactly(
+        tmp_path, monkeypatch, request):
+    _unit, cohort, _journal, _resources = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request)
+    prior_soul = "a" * 64
+    transition = {
+        "schema": 1, "purpose": "initial-primary-adoption", "state": "pending",
+        "prior_record_state": "absent", "prior_soul_sha256": prior_soul,
+        "prior_soul_signature": [1, 2, stat.S_IFREG | 0o600, 1000, 1000, 1, 42, 1, 1],
+        "source_prompt_sha256": "b" * 64, "managed_block_sha256": "c" * 64,
+        "desired_soul_sha256": "d" * 64, "owner_separator_hex": "0a",
+        "owner_backup_sha256": None, "preparing_record_sha256": None,
+        "writing_record_sha256": None, "adopted_record_sha256": None,
+        "before_resources_record_sha256": cohort["old_resources_record_sha256"],
+        "after_resources_record_sha256": None,
+    }
+    raw = core._projection_file(
+        core.ADAPTER_UPDATE_COHORT, owner=core.ROOT_UID, group=core.ROOT_UID,
+        mode=0o400, maximum=128 * 1024)
+
+    def store(candidate, *, accepted):
+        nonlocal raw
+        raw = core._write_adapter_update_cohort(candidate, expected_raw=raw)
+        if accepted:
+            parsed, parsed_raw = core._read_adapter_update_cohort()
+            assert parsed_raw == raw
+            assert parsed["initial_primary_transition"] == candidate["initial_primary_transition"]
+        else:
+            with pytest.raises(core.CoreRuntimeError, match="malformed or foreign"):
+                core._read_adapter_update_cohort()
+
+    candidate = dict(cohort, initial_primary_transition=dict(transition),
+                     primary_record_sha256=core._ABSENT_DIGEST)
+    store(candidate, accepted=True)  # pending has no manager journal or backup claim
+
+    armed = dict(transition, state="preparing")
+    candidate = dict(candidate, initial_primary_transition=armed)
+    store(candidate, accepted=True)  # armed prepare still has no persisted manager digest
+
+    preparing_digest = "e" * 64
+    preparing = dict(armed, owner_backup_sha256=prior_soul,
+                     preparing_record_sha256=preparing_digest)
+    candidate = dict(candidate, initial_primary_transition=preparing,
+                     primary_record_sha256=preparing_digest)
+    store(candidate, accepted=True)
+
+    wrong_preparing = dict(candidate, primary_record_sha256="f" * 64)
+    store(wrong_preparing, accepted=False)
+    missing_backup = dict(candidate,
+        initial_primary_transition=dict(preparing, owner_backup_sha256=None))
+    store(missing_backup, accepted=False)
+
+    writing_digest = "9" * 64
+    writing = dict(preparing, state="writing", writing_record_sha256=writing_digest)
+    candidate = dict(candidate, initial_primary_transition=writing,
+                     primary_record_sha256=writing_digest)
+    store(candidate, accepted=True)
+    store(dict(candidate, primary_record_sha256=preparing_digest), accepted=False)
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="cohort rollback custody requires the enrolled Pi root actor")
 def test_unwritten_initial_primary_rollback_requires_original_soul_inode_and_signature(
         tmp_path, monkeypatch, request):

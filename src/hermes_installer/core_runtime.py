@@ -697,11 +697,26 @@ def _read_adapter_update_cohort(*,allow_absent=False):
    if (initial["state"]=="adopted"
        and initial.get("after_resources_record_sha256")!=row.get("starting_resources_record_sha256")):
     raise ValueError
-   if (initial["state"] in {"pending","preparing"}
-       and row["primary_record_sha256"]!=_ABSENT_DIGEST):
+   if initial["state"]=="pending":
+    if (row["primary_record_sha256"]!=_ABSENT_DIGEST
+        or initial.get("owner_backup_sha256") is not None):
+     raise ValueError
+   if initial["state"]=="preparing":
+    preparing_digest=initial.get("preparing_record_sha256")
+    if preparing_digest is None:
+     if (row["primary_record_sha256"]!=_ABSENT_DIGEST
+         or initial.get("owner_backup_sha256") is not None):
+      raise ValueError
+    elif (row["primary_record_sha256"]!=preparing_digest
+          or initial.get("owner_backup_sha256")!=initial["prior_soul_sha256"]):
+     raise ValueError
+   if initial["state"]=="writing" and (
+       row["primary_record_sha256"]!=initial.get("writing_record_sha256")
+       or initial.get("owner_backup_sha256")!=initial["prior_soul_sha256"]):
     raise ValueError
-   if (initial["state"]=="adopted"
-       and row["primary_record_sha256"]!=initial["adopted_record_sha256"]):
+   if initial["state"]=="adopted" and (
+       row["primary_record_sha256"]!=initial["adopted_record_sha256"]
+       or initial.get("owner_backup_sha256")!=initial["prior_soul_sha256"]):
     raise ValueError
   if hashlib.sha256((json.dumps(reconstruction,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")).hexdigest()!=row["reconstruction_sha256"]:
    raise ValueError
