@@ -864,7 +864,29 @@ production result.
 | 131 `dd13aefac6860621ca0a0b0c45c8e864550e9e01` | `02ba6e8dacbc7c798817dc5bb51f60d43fc188f3805df1dcbd1ae54b5fe75304` | Compile/spec/plan passed. Corrected partial/interrupted rollback: 1 pass in 96.24s. Positive updates: 2 passed in 611.25s. Restart-failure recovery: 2 passed in 199.54s. Core source `0dac9c...` was unchanged. |
 | 133 `0972fe1dc3f20ad432c93ac42b54db56c470465a` | `2de26e4d5db5e52d4f4343f8026c4245abfe651f6e489c18a16e1fde2a99d49f` | Compile/spec/plan passed; chat checks 23 passed in 0.58s. Sandboxed responsive fixture passed with `failed_checks=[]` at390x844,768x1024 and1440x900 using helper `f26bd16e4e1b357c0e5f794e287a27dec823171db5b7046cd275c1e6a9b11e5d`. The measured control was73.5x44px at y453.765625–497.765625; a center hit succeeded with342x44px input. Stage verification found `/opt/hermes-installer-core-0972fe1dc`; it made no live change. Screenshots included a controls-modal overlay, so the targeted clean capture remains pending. |
 
-Root dispatched actual adoption after these checks; its outcome was unknown at
-the time this entry was written and must remain pending until read back. The
-responsive fixture and stage verification do not establish a completed live
+At the time of the initial entry, Root had dispatched actual adoption and the
+outcome was unknown. Its later readback is recorded below. The responsive
+fixture and stage verification alone did not establish a completed live
 adoption, final full-MVP acceptance, or actual Android/voice qualification.
+
+## Pi 133 adoption attempt and recovery
+
+The adoption attempt for source candidate `0972fe1dc3f20ad432c93ac42b54db56c470465a`
+exited 4 during the fixed Root/Core qualification phase. Core reported
+`currentResources not fully discovered` at `root_setup` line 1050 and update
+lines 5922/5980. The pre-transition check expected incoming helper bytes while
+qualifying the old bundle; Luna/Sol's source correction is pending review.
+
+An independent read-only projection of old source `0cbf9b819a6be41b3ff34d623374355cb64c3834`
+confirmed Resources discovery, schema 3, with a receipt bound to both the Core
+journal and generation (`f496ed0a8d5e667a40341578b916ffd36077f41968decde0c4d52b2ffd8c6ca0`).
+The incoming `0972` read-current evidence was stale and referenced a different
+artifact (`850b70f2e9e4e4d5a2d61f7eda41de18ab144aa408722cc6f2956428efdcca74`).
+Automatic recovery verified the prior Core and ingress. Core generation,
+Obsidian registration and vault, token, native plugin and overlays were all
+reported preserved. Source `0972` was not deployed. The separately managed
+June primary was not adopted by this attempt and is not claimed as adopted.
+
+The deployment remains unqualified pending the source correction and a new
+verified adoption outcome. This attempt does not change the separate responsive
+fixture result and is not final M1/full-MVP, Android or voice acceptance.
