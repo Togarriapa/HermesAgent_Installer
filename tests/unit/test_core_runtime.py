@@ -1866,6 +1866,7 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update recovery needs the real root actor")
 def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pre(tmp_path, monkeypatch, request):
+    guard_runner = subprocess.run
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
@@ -1886,7 +1887,8 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     real_run = core._run
     def interrupt_after_starting_recipe(argv, check=True):
         if argv == ["systemctl", "start", core.SERVICE]:
-            assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=True) == 0
+            assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=True,
+                                   runner=guard_runner) == 0
             raise KeyboardInterrupt()
         return real_run(argv, check)
     monkeypatch.setattr(core, "_run", interrupt_after_starting_recipe)
@@ -1905,7 +1907,8 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     with pytest.raises(KeyboardInterrupt):
         core._recover_interrupted_adapter_update()
     assert core.LAUNCHER.read_bytes() == prior_launcher
-    assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=False) != 0
+    assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=False,
+                           runner=guard_runner) != 0
 
     monkeypatch.setattr(core, "_atomic_replace", atomic_replace)
     monkeypatch.setattr(core, "_run", real_run)
