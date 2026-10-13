@@ -867,6 +867,8 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
         assert isinstance(context, dict)
         assert context["cohort"].get("phase") == "source-starting"
         assert context["pidfd"] is not None and context["pid"] == 424242
+        assert context.get("new_read") is not None
+        assert core._validate_guarded_new_read(context["new_read"])
         assert core._ADAPTER_UPDATE_LOCK_HELD.get()
         readback_calls.append(("startup-provider-fixture", context["cohort"]["cohort_transaction_id"]))
         return SimpleNamespace(state="fixture-provider-proof-not-live-evidence")

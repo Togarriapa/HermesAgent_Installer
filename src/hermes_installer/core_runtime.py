@@ -6133,17 +6133,31 @@ def _update_owned_core_adapter_locked():
    state["primary_raw"]=primary_raw
    state["soul_sha256"]=primary_values["soul_sha256"]
    state["soul_signature"]=primary_values["soul_signature"]
-   starting=_journal()
-   starting_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+   # The manager advances the cohort and Resources receipt after initial
+   # adoption. Reissue custody for that exact current tuple before asking the
+   # normal journal reader to validate the starting recipe.
+   current_cohort,current_cohort_raw=_read_adapter_update_cohort()
+   starting_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+    mode=0o600,maximum=64*1024)
    starting_resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
     mode=0o600,maximum=16*1024)
-   state["resources_raw"]=starting_resources_raw
+   starting_record=json.loads(starting_raw)
    new_read=_issue_guarded_new_read(cohort=current_cohort,cohort_raw=current_cohort_raw,
-    record=starting,journal_raw=starting_raw,resources_raw=starting_resources_raw,
+    record=starting_record,journal_raw=starting_raw,resources_raw=starting_resources_raw,
     unit=new_unit,launcher=new_launcher,pidfd=new_pidfd,pid=new_pid,
     process_identity_sha256=new_process_sha,purpose="resources-readback")
    state["new_read"]=new_read
    with _guarded_new_read_scope(new_read,purpose="resources-readback"):
+    starting=_journal()
+    starting_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+     mode=0o600,maximum=64*1024)
+    starting_resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+     mode=0o600,maximum=16*1024)
+    if (hashlib.sha256(starting_raw).hexdigest()!=new_read.starting_journal_sha256
+        or hashlib.sha256(starting_resources_raw).hexdigest()!=new_read.starting_resources_record_sha256
+        or not _validate_guarded_new_read(new_read)):
+     raise CoreRuntimeError("initial adopted starting tuple changed during guarded journal read")
+    state["resources_raw"]=starting_resources_raw
     if read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered":
      raise CoreRuntimeError("initial adopted A1 Resources discovery did not verify")
     actual_archive,actual_resources=_verified_resources_payload()
@@ -6153,6 +6167,7 @@ def _update_owned_core_adapter_locked():
   startup_context={"cohort":cohort,"cohort_raw":cohort_raw,"record":starting,
    "journal_raw":starting_raw,"resources_raw":starting_resources_raw,"unit":new_unit,
    "launcher":new_launcher,"pidfd":new_pidfd,"pid":new_pid,"identity":new_process_sha,
+   "new_read":new_read,
    "evidence":new_evidence,"adapter":new_adapter,"core":old_core,"artifact":new_artifact,
    "primary":state["primary_raw"],"primary_source":primary_values["soul_sha256"],
    "soul":primary_values.get("native_effective_prompt_sha256",primary_values["soul_sha256"]),
