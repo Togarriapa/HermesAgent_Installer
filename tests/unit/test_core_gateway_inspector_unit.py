@@ -302,7 +302,8 @@ def test_profile_admin_inspector_denies_non_singleton_allowlist_before_ingress_o
     principal = SimpleNamespace(email=(next(iter(allowed_emails)) if allowed_emails else "owner@example.test"),
         subject="immutable-subject", token_fingerprint=hashlib.sha256(
             b"signed-access-token").hexdigest())
-    with patch.object(core_gateway_inspector, "_learning_jwks", return_value={}), \
+    with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="fixture-caller-start"), \
+            patch.object(core_gateway_inspector, "_learning_jwks", return_value={}), \
             patch("hermes_installer.remote.gateway.validate_access_jwt", return_value=principal), \
             patch.object(global_admin, "locked"), \
             patch.object(global_admin, "read_locked", return_value=(None, None)), \

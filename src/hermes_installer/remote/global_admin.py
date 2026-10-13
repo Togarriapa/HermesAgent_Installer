@@ -99,20 +99,27 @@ def read_locked() -> tuple[dict[str, Any] | None, str | None]:
                      | getattr(os, "O_CLOEXEC", 0))
     except FileNotFoundError:
         return None, None
+    except OSError:
+        # Only an actually absent record selects the legacy fallback. Symlinks,
+        # permission failures and other open errors deny through the typed API.
+        raise GlobalAdminError("administrator registry custody is unavailable") from None
     try:
-        info = os.fstat(fd)
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
-                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600
-                or info.st_size > MAX_RECORD_BYTES):
-            raise GlobalAdminError("administrator registry custody is unavailable")
-        raw = bytearray()
-        while len(raw) <= MAX_RECORD_BYTES:
-            part = os.read(fd, min(2048, MAX_RECORD_BYTES + 1 - len(raw)))
-            if not part:
-                break
-            raw.extend(part)
-        if not raw or len(raw) > MAX_RECORD_BYTES:
-            raise GlobalAdminError("administrator registry is invalid")
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600
+                    or info.st_size > MAX_RECORD_BYTES):
+                raise GlobalAdminError("administrator registry custody is unavailable")
+            raw = bytearray()
+            while len(raw) <= MAX_RECORD_BYTES:
+                part = os.read(fd, min(2048, MAX_RECORD_BYTES + 1 - len(raw)))
+                if not part:
+                    break
+                raw.extend(part)
+            if not raw or len(raw) > MAX_RECORD_BYTES:
+                raise GlobalAdminError("administrator registry is invalid")
+        except OSError:
+            raise GlobalAdminError("administrator registry custody is unavailable") from None
     finally:
         os.close(fd)
     try:

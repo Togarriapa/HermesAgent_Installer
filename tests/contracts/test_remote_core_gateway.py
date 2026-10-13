@@ -1573,7 +1573,9 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                                   side_effect=AssertionError("caller mismatch must deny before Core overview")):
                     response = await client.get("/chat/api/profiles", headers=headers)
                 self.assertEqual(response.status, 403)
-                self.assertIn("Administrator access setup is pending", await response.text())
+                self.assertIn(
+                    "Global profile administration is pending original administrator setup; household chat remains available.",
+                    await response.text())
                 self.assertEqual(mismatch_provider.calls, [])
             finally:
                 await client.close()
@@ -1581,7 +1583,7 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
     async def test_profile_read_rechecks_root_revocation_before_returning_bytes(self):
         from hermes_installer.remote.core_gateway_inspector import CoreGatewayInspector
         from hermes_installer.remote.jarvis_profiles_admin import (
-            JarvisProfileAdmin, ProfileAdminFile, RootProfileAdminContext,
+            JarvisProfileAdmin, ProfileAdminDescriptor, ProfileAdminFile, RootProfileAdminContext,
             install_jarvis_profiles_admin_routes,
         )
 
@@ -1613,12 +1615,19 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                     accepted_ingress._config_sha256, accepted_ingress.core_generation,
                     proof.nonce, proof.proof_sha256, proof.expires_monotonic)
 
+            def list_profiles(self, **_kwargs):
+                return (ProfileAdminDescriptor(
+                    "hermes", "Jarvis", "jarvis", "f" * 64, ("soul",)),)
+
             def read_file(self, **_kwargs):
                 self.reads += 1
                 self.authorized = False
                 text = "secret source bytes must not reach the browser"
                 return ProfileAdminFile("hermes", "soul", "SOUL.md", "f" * 64,
                     text, hashlib.sha256(text.encode()).hexdigest(), True)
+
+            def write_generation(self, **_kwargs):
+                raise AssertionError("read-only revocation test must not write profile sources")
 
         provider = RevokingProvider()
         launch = core_gateway.CoreGatewayLaunch(config, RemotePolicy(
@@ -1640,9 +1649,14 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                                   "verify_current", return_value=True), \
                      patch.object(core_gateway_inspector, "verify_current_core_overview",
                                   return_value=overview):
-                    response = await client.get("/chat/api/profiles/hermes/files/soul",
-                        headers={"Host": config.hostname,
-                                 "Cf-Access-Jwt-Assertion": token})
+                    headers = {"Host": config.hostname,
+                               "Cf-Access-Jwt-Assertion": token}
+                    listing = await client.get("/chat/api/profiles", headers=headers)
+                    self.assertEqual(listing.status, 200)
+                    listing_body = await listing.json()
+                    opaque_profile_id = listing_body["profiles"][0]["id"]
+                    response = await client.get(
+                        f"/chat/api/profiles/{opaque_profile_id}/files/soul", headers=headers)
                     body = await response.text()
                 self.assertEqual(response.status, 403)
                 self.assertNotIn("secret source bytes", body)

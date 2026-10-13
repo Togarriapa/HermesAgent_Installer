@@ -103,7 +103,7 @@ CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/remote/owner_calendar_native.py": "b6e310892c292200fa279919bed436009633d461c98bba672d2a331ee156e5b8",
     "hermes_installer/remote/jarvis_calendar.py": "51379eb687c2b77a3b7c653916da0b708fc57f6545dab6dde9ca85cea7fd354b",
     "hermes_installer/remote/jarvis_settings_admin.py": "d496e4c05d5a54e65f13f26e5f5d4ece3c0710d28cfb201308ebaad197faf1f2",
-    "hermes_installer/remote/global_admin.py": "753d9eb89698dc168a93721ddf868f3d1c1a9a5558f6ae4936094d2c30a4b834",
+    "hermes_installer/remote/global_admin.py": "df36725920d87b3fdf8f3742a7a479aa86f453086c70506dfc5c30c174f4546f",
 }
 CORE_NATIVE_PLUGIN_STAGED_FILES = {
     "plugin.yaml": "a3310f4d5645680ef10b62a99894a251cecde21ba04bdab113335463a3fad852",
