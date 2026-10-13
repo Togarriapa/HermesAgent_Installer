@@ -26,6 +26,29 @@ import pytest
 from hermes_installer import core_runtime as core
 
 
+_KNOWN_HELPER_IMPORTER_ERRORS = {
+    ("manual Jarvis skill stage refused: " + message + "\n").encode("utf-8"):
+    message for message in (
+        "helper-only transition input is outside its bound",
+        "helper-only transition framing differs",
+        "archives are not the exact reviewed helper-only transition",
+        "helper-only transition requires the fixed root runuser and inherited root pipe",
+        "helper-only importer process identity is unavailable",
+        "Hermes home must be an explicit absolute path",
+        "Hermes home path contains a symbolic-link component",
+        "Hermes home must be a real directory owned by the current user",
+        "existing skill generation root permissions differ",
+        "existing skill generation is unowned or its ownership journal changed",
+        "owned Resources generation contains missing or untracked files",
+        "owned Resources generation member changed",
+        "the revision-owned Jarvis skill generation path already exists",
+        "atomic owned-generation exchange is unavailable on this OS",
+        "helper transition backup identity is invalid",
+        "helper transition backup identity already exists",
+    )
+}
+
+
 @contextlib.contextmanager
 def _bounded_cohort_exception_sites():
     """Expose only code locations/types for a hidden cohort failure on Pi."""
@@ -72,6 +95,40 @@ def _bounded_cohort_exception_sites():
         print("bounded exception context chain: " + repr(contexts))
         print("first substantive non-CoreRuntimeError site: " + repr(first_substantive[:1]))
         print("bounded cohort exception sites: " + repr(sites[:30] + sites[-30:]))
+        # Read only outcome metadata from the genuine fixed importer frame.
+        # Never print child stdout or stderr; the sole textual diagnostic is
+        # an exact constant message reviewed in manual_jarvis_skills.py.
+        importer_outcome = None
+        current = failure
+        seen = set()
+        for _ in range(4):
+            if current is None or id(current) in seen:
+                break
+            seen.add(id(current))
+            tb = current.__traceback__
+            while tb is not None:
+                frame = tb.tb_frame
+                if (Path(frame.f_code.co_filename).name == "core_runtime.py"
+                        and frame.f_code.co_name == "_run_same_materialization_import"):
+                    values = frame.f_locals
+                    process = values.get("process")
+                    stdout = values.get("stdout")
+                    stderr = values.get("stderr")
+                    if process is not None:
+                        importer_outcome = {
+                            "returncode": process.returncode,
+                            "stdout_bytes": len(stdout) if isinstance(stdout, bytes) else None,
+                            "stderr_bytes": len(stderr) if isinstance(stderr, bytes) else None,
+                            "known_error": (_KNOWN_HELPER_IMPORTER_ERRORS.get(stderr)
+                                            if isinstance(stderr, bytes) else None),
+                        }
+                    break
+                tb = tb.tb_next
+            if importer_outcome is not None:
+                break
+            current = current.__context__
+        if importer_outcome is not None:
+            print("bounded helper importer outcome: " + repr(importer_outcome))
         raise
     finally:
         sys.settrace(previous)
