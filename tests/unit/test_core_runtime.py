@@ -1776,6 +1776,10 @@ def test_incoming_adapter_verifies_old_a0_without_relaxing_public_discovery(
     core.migrate_owned_core_to_adapter_path()
     _prepare_cohort_resource_materialization(
         tmp_path, monkeypatch, request, owner_overlay=owner_overlay)
+    # The production A0 verifier reads a complete active runtime, including a
+    # current MainPID/PIDFD listener proof. Reuse the same controlled listener
+    # fixture as the full update tests; do not bypass _read_active_adapter_runtime.
+    _fake_update_pidfd(monkeypatch, enabled, request)
     _rebind_migrated_fixture_to_prior_generation()
     calls_before = list(calls)
 
@@ -1804,6 +1808,9 @@ def test_incoming_adapter_old_a0_proof_denies_tamper_before_effects(
     _prepare_cohort_resource_materialization(
         tmp_path, monkeypatch, request,
         owner_overlay=tamper in {"overlay", "overlay-content"})
+    # Keep the real active-runtime/PIDFD verifier exercised on every tamper
+    # case, as in the effectful cohort tests.
+    _fake_update_pidfd(monkeypatch, enabled, request)
     _rebind_migrated_fixture_to_prior_generation()
     calls_before = list(calls)
     receipt_path = core.RESOURCES_RECORD
