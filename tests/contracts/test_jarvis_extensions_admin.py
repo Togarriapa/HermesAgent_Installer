@@ -576,7 +576,7 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 function editor(view) { return all(view.root).find(node=>node.tagName==='dialog'); }
 function field(dialog,key) { return all(dialog).find(node=>node.id && node.id===key); }
 function settingInput(dialog,index) { return all(dialog).find(node=>node.id===`extension-setting-${index}`); }
-function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form'); form.dispatch('submit',{preventDefault(){this.prevented=true;}}); }
+function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form'); return form.dispatch('submit',{preventDefault(){this.prevented=true;}}); }
 (async()=>{
   const view=makeRoot(),api=makeApi(),unmount=mount(view.root,api);
   api.gets[0].resolve(makeSnapshot('source-1')); await flush();
@@ -589,10 +589,10 @@ function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form
   assert.equal(bool.tagName,'select'); assert.equal(enumeration.tagName,'select'); assert.equal(number.type,'number'); assert.equal(number.step,'any');
 
   // Each native type rejects implicit, empty, or invalid values before any POST.
-  bool.value=''; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Choose true or false explicitly/); assert.equal(api.posts.length,0);
-  bool.value='boolean:false'; enumeration.value=''; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Choose one exact native option/); assert.equal(api.posts.length,0);
-  enumeration.value='choice:0'; number.value='Infinity'; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Enter a finite number/); assert.equal(api.posts.length,0);
-  number.value='2.5'; string.value='   '; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/This setting is required/); assert.equal(api.posts.length,0);
+  bool.value=''; await submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Choose true or false explicitly/); assert.equal(api.posts.length,0);
+  bool.value='boolean:false'; enumeration.value=''; await submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Choose one exact native option/); assert.equal(api.posts.length,0);
+  enumeration.value='choice:0'; number.value='Infinity'; await submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Enter a finite number/); assert.equal(api.posts.length,0);
+  number.value='2.5'; string.value=''; await submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/This setting is required/); assert.equal(api.posts.length,0);
   assert.equal(document.activeElement,string,'invalid submission focuses the first invalid control');
 
   string.value='Office'; settingInput(dialog,4).value=''; submit(dialog); await flush();
