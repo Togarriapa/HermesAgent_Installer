@@ -790,14 +790,19 @@ _CSS = '''.profile-admin{max-width:1180px;margin:0 auto;color:var(--text,#edf5f6
 
 _MOUNT_JS = r'''function mount(root, api) {
   let active = true, profiles = [], selected = null, file = null, baseSha = null, previewToken = null;
+  let contextEpoch = 0, previewEpoch = 0, reviewed = null;
   const q = (s) => root.querySelector(s), status = q("[data-profile-status]"), profileSelect = q("[data-profile-select]"), fileSelect = q("[data-file-select]"), editor = q("[data-profile-editor]"), review = q("[data-profile-review]"), save = q("[data-profile-save]"), diff = q("[data-profile-diff]"), protectedSection=q("[data-protected-section]"), protectedContent=q("[data-protected-content]");
   const text = (s, v) => { const n=q(s); if(n)n.textContent=v; };
   const token = () => { const b=new Uint8Array(24);crypto.getRandomValues(b);return Array.from(b,x=>x.toString(16).padStart(2,"0")).join(""); };
   const safeId = (v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
   const safeHash = (v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
-  const changed = () => { previewToken=null;save.disabled=true;review.disabled=!(file&&file.editable===true&&baseSha&&editor.value!==file.content); };
+  const invalidateReview = () => { previewEpoch++;previewToken=null;reviewed=null;save.disabled=true; };
+  const current = (snapshot) => active&&snapshot&&snapshot.epoch===contextEpoch&&
+    selected&&selected.id===snapshot.profileId&&file===snapshot.file&&baseSha===snapshot.baseSha&&
+    editor.value===snapshot.content;
+  const changed = () => { invalidateReview();review.disabled=!(file&&file.editable===true&&baseSha&&editor.value!==file.content); };
   async function loadFile() {
-    file=null;baseSha=null;previewToken=null;editor.value="";editor.disabled=true;review.disabled=true;save.disabled=true;protectedSection.hidden=true;protectedContent.textContent="";
+    const epoch=++contextEpoch;invalidateReview();file=null;baseSha=null;editor.value="";editor.disabled=true;review.disabled=true;save.disabled=true;protectedSection.hidden=true;protectedContent.textContent="";
     const row=profiles.find((item)=>item.id===profileSelect.value), kind=fileSelect.value;
     selected=row||null;if(!row||!kind)return;
     status.textContent="Reading the selected native profile file…";
@@ -806,12 +811,13 @@ _MOUNT_JS = r'''function mount(root, api) {
       if(!value||value.profileId!==row.id||value.fileKind!==kind||typeof value.content!=="string"||typeof value.protectedSuffix!=="string"||typeof value.managedPrimary!=="boolean"||value.editable!==true||!safeHash(value.sha256)||typeof value.sourceGeneration!=="string")throw Error();
       const documentHash=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value.content+value.protectedSuffix));
       const documentSha=Array.from(new Uint8Array(documentHash),b=>b.toString(16).padStart(2,"0")).join("");
+      if(!active||epoch!==contextEpoch||profileSelect.value!==row.id||fileSelect.value!==kind)return;
       if(documentSha!==value.sha256)throw Error();
       file=value;baseSha=value.sha256;editor.value=value.content;editor.disabled=value.editable!==true;protectedSection.hidden=!value.managedPrimary;protectedContent.textContent=value.protectedSuffix;
       text("[data-editor-title]",value.fileName);text("[data-editor-state]",value.managedPrimary?"Jarvis owner prefix · managed overlay stays protected":(value.effective?"Current effective source · read only until you review a change":"Existing source is not confirmed effective"));
 
       text("[data-profile-generation]",value.sourceGeneration);diff.textContent="No changes reviewed.";status.textContent="Actual file contents loaded from the current profile source.";
-    } catch (_) { if(active){status.textContent="Profile source unavailable; no file was changed.";diff.textContent="Current content could not be verified.";} }
+    } catch (_) { if(active&&epoch===contextEpoch){status.textContent="Profile source unavailable; no file was changed.";diff.textContent="Current content could not be verified.";} }
   }
   async function loadProfiles() {
     try { const data=await api.get("/chat/api/profiles");
@@ -829,27 +835,32 @@ _MOUNT_JS = r'''function mount(root, api) {
   fileSelect.addEventListener("change",loadFile);editor.addEventListener("input",changed);
   review.addEventListener("click",async()=>{
     if(!file||file.editable!==true||!selected||!baseSha||editor.value===file.content)return;
+    invalidateReview();const operation=previewEpoch;
+    const snapshot={epoch:contextEpoch,profileId:selected.id,file,baseSha,content:editor.value};
     review.disabled=true;save.disabled=true;status.textContent="Building a current source diff…";
     try { const value=await api.post(`/chat/api/profiles/${encodeURIComponent(selected.id)}/preview`,{file_kind:file.fileKind,base_sha256:baseSha,content:editor.value});
-      if(!active||!value||typeof value.diff!=="string"||typeof value.previewToken!=="string"||!safeHash(value.contentSha256)||value.baseSha256!==baseSha)throw Error();
-      previewToken=value.previewToken;diff.textContent=value.diff||"No textual difference.";save.disabled=false;status.textContent="Review the full diff. Saving creates a recoverable profile generation.";
-    } catch(_){previewToken=null;diff.textContent="Source changed or preview expired. Reload the file and review again.";status.textContent="A current diff could not be confirmed.";}
-    changed();if(previewToken)save.disabled=false;
+      if(!active||operation!==previewEpoch||!current(snapshot))return;
+      const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(snapshot.content));
+      const contentSha=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,"0")).join("");
+      if(!current(snapshot)||operation!==previewEpoch||!value||typeof value.diff!=="string"||typeof value.previewToken!=="string"||!safeHash(value.contentSha256)||value.contentSha256!==contentSha||value.baseSha256!==snapshot.baseSha)throw Error();
+      previewToken=value.previewToken;reviewed=snapshot;diff.textContent=value.diff||"No textual difference.";save.disabled=false;status.textContent="Review the full diff. Saving creates a recoverable profile generation.";
+    } catch(_){if(active&&operation===previewEpoch&&current(snapshot)){invalidateReview();diff.textContent="Source changed or preview expired. Reload the file and review again.";status.textContent="A current diff could not be confirmed.";}}
   });
   save.addEventListener("click",async()=>{
-    if(!file||file.editable!==true||!selected||!baseSha||!previewToken||save.disabled)return;
+    if(!file||file.editable!==true||!selected||!baseSha||!previewToken||!reviewed||!current(reviewed)||save.disabled)return;
+    const snapshot=reviewed, reviewedToken=previewToken;
     save.disabled=true;review.disabled=true;status.textContent="Saving the reviewed profile generation and verifying effective readback…";
-    try { const result=await api.post(`/chat/api/profiles/${encodeURIComponent(selected.id)}/save`,{file_kind:file.fileKind,base_sha256:baseSha,content:editor.value,preview_token:previewToken,idempotency_key:token()});
-      previewToken=null;
-      if(!active)return;
+    try { const result=await api.post(`/chat/api/profiles/${encodeURIComponent(snapshot.profileId)}/save`,{file_kind:snapshot.file.fileKind,base_sha256:snapshot.baseSha,content:snapshot.content,preview_token:reviewedToken,idempotency_key:token()});
+      if(!current(snapshot)||previewToken!==reviewedToken)return;
+      invalidateReview();
       if(result&&result.state==="active"&&result.effectiveReadback===true&&safeHash(result.sha256)){
         status.textContent="Profile generation saved and effective source read back. Previous source authority claims were invalidated.";
-        await loadFile();
+        if(current({...snapshot,content:editor.value}))await loadFile();
       } else { status.textContent=result&&result.state==="conflict"?"Profile source changed. Reload before reviewing again.":"Save is pending or unknown. Inspect current source status before trying again."; }
-    } catch(_){previewToken=null;status.textContent="Save was not confirmed. Inspect current source status before retrying.";}
+    } catch(_){if(current(snapshot)&&previewToken===reviewedToken){invalidateReview();status.textContent="Save was not confirmed. Inspect current source status before retrying.";}}
   });
   loadProfiles();
-  return () => { active=false;profileSelect.replaceChildren();fileSelect.replaceChildren();editor.value="";diff.textContent=""; };
+  return () => { active=false;contextEpoch++;invalidateReview();profileSelect.replaceChildren();fileSelect.replaceChildren();editor.value="";diff.textContent=""; };
 }'''
 
 PROFILE_ADMIN_FEATURE = JarvisFeatureAssets(
