@@ -408,6 +408,66 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="act
     return calls, enabled, launcher_bytes, selection
 
 
+@pytest.mark.skipif(os.geteuid() != 0 or not hasattr(os, "pidfd_open"),
+                    reason="native plugin transition scope requires the real Root actor and PIDFD")
+def test_core_native_plugin_prepare_scope_drives_real_bootstrap_receipt(tmp_path, monkeypatch):
+    from hermes_installer.remote import native_plugin_bootstrap as bootstrap
+
+    plugin_directory = tmp_path / "fixed-native-plugin"
+    plugin_directory.mkdir(mode=0o700)
+    old_members = {"plugin.yaml": b"fixed manifest\n", "__init__.py": b"old native module\n"}
+    new_members = {"plugin.yaml": b"fixed manifest\n", "__init__.py": b"new native module\n"}
+    assert old_members["plugin.yaml"] == new_members["plugin.yaml"]
+    assert old_members["__init__.py"] != new_members["__init__.py"]
+    for name, content in old_members.items():
+        member = plugin_directory / name
+        member.write_bytes(content)
+        member.chmod(0o444)
+    plugin_directory.chmod(0o555)
+    monkeypatch.setattr(bootstrap, "_transition_plugin_directory_fd",
+                        lambda: os.open(plugin_directory, os.O_RDONLY | os.O_DIRECTORY))
+    selection_sha = "d" * 64
+    monkeypatch.setattr(bootstrap, "verify_native_resources_plugin_selection",
+                        lambda: SimpleNamespace(selection_sha256=selection_sha))
+    inspector = ModuleType("hermes_installer.remote.core_gateway_inspector")
+    inspector._current_native_adapter_generation = lambda *, deadline: "b" * 64
+    monkeypatch.setitem(sys.modules, "hermes_installer.remote.core_gateway_inspector", inspector)
+    monkeypatch.setattr(core, "_core_source_generation", lambda: "c" * 64)
+    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: True)
+    snapshot = bootstrap.read_installed_native_resources_plugin_members()
+    pidfd = os.pidfd_open(os.getpid(), 0)
+    lock_token = core._ADAPTER_UPDATE_LOCK_HELD.set(True)
+    state_token = core._NATIVE_PLUGIN_TRANSITION_STATE.set({
+        "old_source": str(core.SOURCE), "new_source": str(core.ADAPTER_SOURCE),
+        "old_adapter_generation": "a" * 64, "new_adapter_generation": "b" * 64,
+        "old_core_source_generation": "c" * 64, "plugin_selection_sha256": selection_sha,
+        "old_members": old_members, "new_members": new_members,
+        "old_signatures": dict(snapshot.signatures), "old_pidfd": pidfd,
+        "cohort_raw": None,
+    })
+    try:
+        receipt = core._run_native_plugin_transition("prepare")
+        assert receipt.operation == "prepare"
+        assert dict(receipt.old_member_sha256) == core._native_plugin_member_hashes(old_members)
+        assert dict(receipt.new_member_sha256) == core._native_plugin_member_hashes(new_members)
+        assert dict(receipt.installed_member_sha256) == core._native_plugin_member_hashes(old_members)
+        assert dict(bootstrap.read_installed_native_resources_plugin_members().members) == old_members
+    finally:
+        core._NATIVE_PLUGIN_TRANSITION_STATE.reset(state_token)
+        core._ADAPTER_UPDATE_LOCK_HELD.reset(lock_token)
+        os.close(pidfd)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="source custody fixture requires Root-owned files")
+def test_native_plugin_source_accepts_root_0644_but_rejects_group_write(tmp_path):
+    member = tmp_path / "plugin-module.py"
+    member.write_bytes(b"bounded module\n")
+    member.chmod(0o644)
+    assert core._native_plugin_source_member_metadata_matches(member.stat())
+    member.chmod(0o664)
+    assert not core._native_plugin_source_member_metadata_matches(member.stat())
+
+
 _REAL_CORE_LAUNCHER = core._launcher
 
 

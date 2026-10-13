@@ -1106,6 +1106,11 @@ def _projection_at(parent_fd,name,*,owner,group=None,mode=None,maximum):
  finally:
   os.close(fd)
 
+def _native_plugin_source_member_metadata_matches(info):
+ return (stat.S_ISREG(info.st_mode) and info.st_uid==ROOT_UID and info.st_gid==ROOT_UID
+  and not stat.S_IMODE(info.st_mode)&0o022 and info.st_nlink==1
+  and 1<=info.st_size<=64*1024)
+
 def _native_plugin_source_members(source):
  """Read the two fixed package members through immutable root-owned directories."""
  source=Path(source)
@@ -1129,9 +1134,7 @@ def _native_plugin_source_members(source):
                    |getattr(os,"O_CLOEXEC",0),dir_fd=fd)
    try:
     before=os.fstat(file_fd)
-    if (not stat.S_ISREG(before.st_mode) or before.st_uid!=ROOT_UID
-        or before.st_gid!=ROOT_UID or stat.S_IMODE(before.st_mode)&0o222
-        or before.st_nlink!=1 or not 1<=before.st_size<=64*1024):
+    if not _native_plugin_source_member_metadata_matches(before):
      raise CoreRuntimeError("native plugin source member custody differs")
     chunks=bytearray()
     while len(chunks)<before.st_size:
@@ -1184,6 +1187,7 @@ def _native_plugin_member_hashes(members):
   raise CoreRuntimeError("native plugin member map is not the fixed pair")
  return {name:hashlib.sha256(members[name]).hexdigest() for name in _NATIVE_PLUGIN_FILES}
 
+@contextmanager
 def _native_plugin_transition_scope(operation):
  """Install one Core-derived context for bootstrap's fixed zero-argument API."""
  if (operation not in {"prepare","install","restore"} or os.geteuid()!=ROOT_UID
