@@ -352,3 +352,152 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
         path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
         result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_extensions_deferred_actions_keep_exact_source_and_require_readback_recovery():
+    harness = r'''
+class Target {
+  constructor(tagName='div') { this.tagName=tagName; this.listeners=new Map(); this.children=[]; this.disabled=false; this.textContent=''; this.value=''; this.attributes={}; }
+  append(...nodes) { for (const node of nodes) { node.parent=this; this.children.push(node); } }
+  replaceChildren(...nodes) { this.children=[]; this.append(...nodes); }
+  remove() { if (this.parent) this.parent.children=this.parent.children.filter(node=>node!==this); this.removed=true; }
+  setAttribute(key,value) { this.attributes[key]=value; }
+  addEventListener(type,listener,options={}) {
+    if (options.signal && options.signal.aborted) return;
+    const entry={listener,once:options.once===true}; const rows=this.listeners.get(type)||[]; rows.push(entry); this.listeners.set(type,rows);
+    if (options.signal) options.signal.addEventListener('abort',()=>this.listeners.set(type,(this.listeners.get(type)||[]).filter(row=>row!==entry)),{once:true});
+  }
+  dispatch(type,event={}) {
+    for (const entry of [...(this.listeners.get(type)||[])]) {
+      if (entry.once) this.listeners.set(type,(this.listeners.get(type)||[]).filter(row=>row!==entry));
+      const result=entry.listener(event); if (result && typeof result.then==='function') return result;
+    }
+  }
+  querySelector(selector) {
+    if (this.selectors && this.selectors.has(selector)) return this.selectors.get(selector);
+    const wanted=selector.toLowerCase();
+    const visit=node=>{ for (const child of node.children) { if (child.tagName===wanted) return child; const found=visit(child); if (found) return found; } return null; };
+    return visit(this);
+  }
+  reset() { const input=this.querySelector('input'); if (input) input.value=''; }
+  showModal() { this.open=true; }
+  close() { this.open=false; this.dispatch('close'); }
+  focus() {}
+}
+function deferred() { let resolve,reject; const promise=new Promise((yes,no)=>{resolve=yes;reject=no;}); return {promise,resolve,reject}; }
+function all(node) { return [node,...node.children.flatMap(all)]; }
+function button(root,label) { return all(root).find(node=>node.tagName==='button'&&node.textContent===label); }
+function makeSnapshot(revision) { return {schema:1,revision,readiness:'observed',items:[{
+  kind:'skills',id:'owner-skill-id',name:'owner-helper',label:'Owner helper',source:'useradded',
+  originLabel:'Hermes home (owner-added)',editable:true,removable:true,loaded:true,category:'native',
+  actionState:'loaded',archivedVersions:[]}]}; }
+function makeRoot() {
+  const root=new Target(); root.selectors=new Map();
+  const list=new Target(),status=new Target(),refresh=new Target('button'); refresh.textContent='Refresh';
+  root.append(list,status,refresh);
+  root.selectors.set('[data-extension-list]',list); root.selectors.set('[data-extension-status]',status);
+  root.selectors.set('[data-extension-refresh]',refresh);
+  for (const key of ['skill','plugin','mcp']) {
+    const form=new Target('form'),input=new Target('input'),submit=new Target('button'); submit.textContent='Add';
+    form.append(input,submit); root.selectors.set(`[data-add-${key}]`,form); root.append(form);
+  }
+  root.selectors.set('[data-feature-root="extensions"]',root);
+  return {root,list,status,refresh};
+}
+function makeApi() {
+  const gets=[],posts=[];
+  return {gets,posts,get(path) { const d=deferred(); gets.push({path,...d}); return d.promise; },
+    post(path,body) { const d=deferred(); posts.push({path,body,...d}); return d.promise; }};
+}
+global.document={createElement:tag=>new Target(tag)};
+global.FormData=class { constructor(form) { this.form=form; } get(key) { return key==='identifier' ? this.form.querySelector('input').value : null; } };
+global.window={prompt:message=>{const match=message.match(/^Type (.+) to confirm/);return match?match[1]:null;},confirm:()=>true};
+global.crypto={getRandomValues:bytes=>{bytes.fill(5);return bytes;}};
+global.btoa=value=>Buffer.from(value,'binary').toString('base64');
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+(async()=>{
+  const view=makeRoot(),api=makeApi(),unmount=mount(view.root,api);
+  assert.equal(api.gets[0].path,'/chat/api/extensions');
+  api.gets[0].resolve(makeSnapshot('source-1')); await flush();
+
+  // A delayed file read is bound to the old source revision across inventory refresh.
+  const oldRead=button(view.root,'Edit skill').dispatch('click');
+  assert.equal(api.posts.length,1);
+  assert.equal(api.posts[0].path,'/chat/api/extensions/skills/read');
+  assert.deepEqual(api.posts[0].body,{item_id:'owner-skill-id',revision:'source-1'});
+  view.refresh.dispatch('click');
+  assert.equal(view.refresh.disabled,true);
+  api.gets[1].resolve(makeSnapshot('source-2')); await flush();
+  api.posts[0].resolve({content:'old reviewed source'}); await oldRead;
+  assert.equal(all(view.root).filter(node=>node.tagName==='dialog').length,0);
+  assert.match(view.status.textContent,/inventory changed while the skill was loading/);
+  assert.equal(api.posts.length,1,'a stale file read never becomes an edit request');
+
+  // Refreshing while the editor is open must reject its old source, never substitute source-3.
+  const openedRead=button(view.root,'Edit skill').dispatch('click');
+  api.posts[1].resolve({content:'source-2 body'}); await openedRead;
+  const dialog=all(view.root).find(node=>node.tagName==='dialog');
+  assert.ok(dialog && dialog.open);
+  view.refresh.dispatch('click'); api.gets[2].resolve(makeSnapshot('source-3')); await flush();
+  const staleSave=button(dialog,'Save skill').dispatch('click'); await staleSave;
+  assert.equal(api.posts.length,2,'an editor opened at source-2 cannot write after source-3 refresh');
+  assert.match(view.status.textContent,/inventory changed while this editor was open/);
+
+  // One confirmed edit serializes the whole UI; an uncertain outcome waits for explicit readback.
+  const currentRead=button(view.root,'Edit skill').dispatch('click');
+  api.posts[2].resolve({content:'source-3 body'}); await currentRead;
+  const currentDialog=all(view.root).find(node=>node.tagName==='dialog');
+  const area=all(currentDialog).find(node=>node.tagName==='textarea'); area.value='reviewed source-3 edit';
+  const save=button(currentDialog,'Save skill').dispatch('click'); await flush();
+  assert.equal(api.posts.length,4);
+  assert.equal(api.posts[3].path,'/chat/api/extensions/skills/edit');
+  assert.deepEqual(Object.keys(api.posts[3].body).sort(),['confirmation','content','idempotency_key','item_id','revision']);
+  assert.equal(api.posts[3].body.item_id,'owner-skill-id');
+  assert.equal(api.posts[3].body.revision,'source-3');
+  assert.equal(api.posts[3].body.content,'reviewed source-3 edit');
+  assert.match(api.posts[3].body.idempotency_key,/^[A-Za-z0-9_-]{32}$/);
+  assert.equal(view.refresh.disabled,true);
+  assert.ok(all(view.root).filter(node=>node.tagName==='button'&&node!==view.refresh).every(node=>node.disabled),
+    'every owner action is disabled while a confirmed mutation is pending');
+  button(view.root,'Archive skill').dispatch('click'); await flush();
+  assert.equal(api.posts.length,4,'another card cannot mint a second request or idempotency key while busy');
+  api.posts[3].resolve({status:'applied'}); await flush();
+  assert.equal(api.gets.length,4,'applied response triggers exactly one current inventory readback');
+  api.gets[3].resolve(makeSnapshot('source-4')); await save;
+  assert.match(view.status.textContent,/Owner action reported applied; current inventory readback completed/);
+  assert.equal(button(view.root,'Edit skill').disabled,false);
+
+  // A rejected mutation remains unknown and cannot auto-retry; explicit refresh recovers actions.
+  const nextRead=button(view.root,'Edit skill').dispatch('click');
+  api.posts[4].resolve({content:'source-4 body'}); await nextRead;
+  const nextDialog=all(view.root).find(node=>node.tagName==='dialog');
+  const failingSave=button(nextDialog,'Save skill').dispatch('click'); await flush();
+  assert.equal(api.posts[5].body.revision,'source-4');
+  api.posts[5].reject(new Error('write response lost')); await failingSave;
+  assert.match(view.status.textContent,/outcome is unknown/);
+  assert.equal(api.gets.length,4,'uncertain write does not launch an automatic read or repeat effect');
+  assert.equal(view.refresh.disabled,false);
+  assert.equal(button(view.root,'Edit skill').disabled,true);
+  view.refresh.dispatch('click'); api.gets[4].resolve(makeSnapshot('source-5')); await flush();
+  assert.match(view.status.textContent,/Inventory refreshed; review the observed source/);
+  assert.equal(button(view.root,'Edit skill').disabled,false);
+
+  // Rejected file reads stay read-only, and an unmounted late read cannot open an editor.
+  const rejectedRead=button(view.root,'Edit skill').dispatch('click');
+  api.posts[6].reject(new Error('read unavailable')); await rejectedRead;
+  assert.match(view.status.textContent,/Current skill source is unavailable/);
+  assert.equal(api.posts.length,7);
+  view.refresh.dispatch('click'); api.gets[5].resolve(makeSnapshot('source-6')); await flush();
+  const lateRead=button(view.root,'Edit skill').dispatch('click');
+  assert.deepEqual(api.posts[7].body,{item_id:'owner-skill-id',revision:'source-6'});
+  const statusAtUnmount=view.status.textContent; unmount();
+  api.posts[7].resolve({content:'late body'}); await lateRead;
+  assert.equal(all(view.root).filter(node=>node.tagName==='dialog').length,0);
+  assert.equal(view.status.textContent,statusAtUnmount);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''.replace('MOUNT', FEATURE_ASSETS.mount_js)
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "extensions-source-revision-harness.js"
+        path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
