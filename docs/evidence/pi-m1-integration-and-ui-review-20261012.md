@@ -35,11 +35,26 @@ units active. Process health does not prove usable chat.
 | `9429c2b2ec152dc6edae1be35c30ab703feb3b18`, v59 | Compilation, strict specs/plan and all 99 adoption/gateway/JWT/Mission-route checks passed in 1.77s. Source review concurs on exact pre-backup/pre-stop CAS and no service effects for pre-stop byte, ownership or protected-read conflicts; post-effect rollback remains unchanged. Archive SHA-256 `683eb63424338d62f198a1dc3780ed07454769bda8780f19647e06bc160b501c`. Staging only. |
 | `5bf3eda11fb66ea12f2b7567f0723465a88b000e`, v61 | Compilation and strict specs/plan passed. First effect group: 12 failed, 93 passed. Independent recovery retry: 1 failed, 11 passed. An earlier recovery selection matched no tests (exit5); it proves no recovery behavior. Failures identified obsolete reader/argv/partial-phase fixtures; source review separately found an absent prior-cohort and historical-vault-digest rollback edge. No live deployment. |
 | `6e6e035d81e5b67525c4bc0fdc88ae2f36ebc7ea`, v62 | Compilation and strict specs/plan passed. Actual Pi effect group: 107 passed in12.44s; independent committed/interrupted recovery group: 12 passed in0.07s. The narrow fixes preserve actual argv/reader boundaries, all-null joins before Core return, no qualification replay during rollback, exact optional prior-cohort bytes and latest captured vault state. Archive SHA-256 `4ecaf5214ba3693328cc320f1e16dded71eb80bf993589ceec64ee70bac93833`. Production acceptance remains separate. |
+| `d1322d74fdfc0f65e057c0488ce7f607228ea7f5`, v63 | Compilation and strict specs/plan passed for the Sol completed-snapshot handoff refinement. Runtime tests were not repeated for this specification-only candidate. Archive SHA-256 `c4522c82ccde75d8819c88ba986383d4037ba789a82198282e46b2ad1ef610af`. |
+| `4737aa51904083fd2ed014febace8b5959e11bfe`, v64 | Compilation and strict specs/plan passed; first effect group2 failed/109 passed in13.05s, independent recovery12 passed. The closed-key reader rejected normalized records; review also found missing history-directory custody checks. No target deployment. Archive SHA-256 `b8d5718f8263daf453363d278b5bfffaea989e96b672c82eae218a2242da25ba`. |
+| `1e45ba2eb4ab1c9d5c1e650fd3635562de3d9144`, v65 | Compilation and strict specs/plan passed; first effect group1 failed/112 passed in12.70s, independent recovery12 passed. Positive atomic succession exposed an incomplete prepared writer schema before its later runtime-hash setter. The correction initializes the nullable field before durable replacement; strict readers remain unchanged. No target deployment. Archive SHA-256 `b2c12632d25a599e3eb98196706a5b9855a0e49613ae30c06a9928885a03e493`. |
+| `98c695b2360c818c758e2f6100b9167ca3ed251b`, v66 | Compilation and strict specs/plan passed. First effect group113 passed in12.56s; independent recovery12 passed in0.07s. Includes complete prepared-record round-trip, archived predecessor verification, filesystem succession/CAS/conflict checks and replaced history-directory refusal. Sol review concurs on the narrow schema/custody/writer fixes. Archive SHA-256 `e686add0f9fbf025a5bec3fdf0a65c4e88c7af160fd6fdcfb97dac60893e8fcd`. Live qualification remains separate. |
 
 Logs and status JSON are under
 `/var/tmp/hermes-jarvis-core-checks-20261011/` on the identified Pi. OpenSpec
 reported `spec-driven`, `ready`, eight total/zero complete/eight remaining;
 no archive or canonical runtime acceptance was performed.
+
+The staged v62 target `--apply` returned4 before effects because the fixed ingress
+slot already contains the completed current0cb legacy-migration backup. Its
+strict parser, current Gateway digest, effective runtime Inspector digest and
+post-Core configuration digest all verified. Fresh actual old Core binding and
+Inspector/socket custody also verified; the held PIDFD was closed after this
+read-only check. The original snapshot remained in place. Sol's v63 handoff
+contract and subsequent implementation retain exact completed raw bytes in
+protected history and atomically replace the slot with a complete successor;
+uncertain or changed prior records still refuse before effects. This source
+work is separate from a successful live successor update.
 
 On2026-10-13, fresh Cloudflare connector GETs verified the exact Jarvis hostname,
 both application and allow-policy durations720h, three approved email entries,
