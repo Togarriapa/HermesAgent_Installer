@@ -903,3 +903,25 @@ Core candidate `136` remains a bounded runner with unknown outcome; no current
 reviewed Core code activation or union application is claimed. Broad M1/runtime
 acceptance remains open, as do actual provider, enrollment, Android and voice
 qualification.
+
+## Follow-on Core 136/137 qualification evidence
+
+The candidate-136 proper private `/opt` namespace reached the verifier and
+failed only its “calls unchanged” assertion: two exact
+`systemctl FragmentPath` reads were observed. Correction `02a308` passed Sol
+review. Root candidate `137` (`267953b7cb9c117fbb42ac9a2d292e41ab4126bb`),
+archive SHA-256
+`e0d82283f0a0c31c382f6e78b506e7d83a75748cd687793780c30d5dc532e9cf`, was staged
+without effects. Its bounded runner, identified by SHA-256
+`706a9eb55f0b8c91d3123ef2abc6daad9faeea890c2ecbd2dd021a0839e2caed`, was still
+underway with no result at this evidence point.
+
+A read-only A0 probe of candidate 136 passed in the qualified test venv using
+existing Root locks; the observed unchanged digest began `2a3e5702` and ended
+`f5f8ca0c`. This establishes only the narrowly tested read-only A0 readiness,
+not adoption. Raw PM and PM-venv states had no YAML; the protected Gateway venv
+reported Python3.13.5, PyYAML6.0.3 and aiohttp3.11.16, while the system Python
+reported Python3.13.5 and PyYAML6.0.2. The existing hardcoded qualification
+subprocess behavior was unchanged. None of these checks establishes a live
+Core code activation, configuration union, or completion of the pending
+runner/adoption. Overall M1 acceptance remains open.
