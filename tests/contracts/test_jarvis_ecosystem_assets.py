@@ -61,6 +61,7 @@ function makeRoot(){
  root.querySelector=selector=>selector==='[data-feature-root="ecosystem"]'?root:Target.prototype.querySelector.call(root,selector);
  return root;
 }
+__ECOSYSTEM_MOUNT__
 const nativeDateNow=Date.now.bind(Date);let clockNow=nativeDateNow();Date.now=()=>clockNow;const now=clockNow;
 const data={schema:2,observation:{state:'observed',observed_at:new Date(now).toISOString(),partial:false,coverage:'complete',window:{from:new Date(now-60000).toISOString(),to:new Date(now).toISOString(),seconds:60}},summary:{observed_instances:2,observed_completed_executions:2,response_duration_ms:0,response_duration_coverage:1},pending:{team_membership:'verified',communication_edges:'verified'},
  instances:[
@@ -144,7 +145,7 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  lateApi.gets[0].resolve(data);await flush();assert.equal(nodes(lateRoot,'[data-ecosystem-status]')[0].textContent,statusBefore);
  console.log('ECOSYSTEM_HARNESS_COMPLETE');
 })().catch(error=>{console.error(error);process.exitCode=1;});
-'''.replace('MOUNT', FEATURE_ASSETS.mount_js)
+'''.replace('__ECOSYSTEM_MOUNT__', FEATURE_ASSETS.mount_js)
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "ecosystem-assets-harness.js"
         path.write_text("const assert=require('node:assert/strict');\n" + harness, encoding="utf-8")
