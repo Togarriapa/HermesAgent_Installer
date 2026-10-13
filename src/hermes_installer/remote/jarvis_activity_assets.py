@@ -61,6 +61,11 @@ _MOUNT = r"""function mount(container, api, state) {
   let stopped = false;
   let refreshing = false;
   let newestTurn = null;
+  let pendingDecision = null;
+  let finalEffectItems = [];
+  let finalEffectTurn = null;
+  let effectsRenderRevision = 0;
+  let decisionButtons = [];
   const labels = {
     'tool.start': 'Tool started', 'tool.complete': 'Tool returned', 'tool.generating': 'Tool preparing',
     'status.update': 'Status update', 'subagent.spawn_requested': 'Delegation queued',
@@ -108,14 +113,42 @@ _MOUNT = r"""function mount(container, api, state) {
     emptyNode.hidden = list.length > 0;
   }
   function renderFinalEffects(items, turnId) {
+    const revision = ++effectsRenderRevision;
+    finalEffectItems = Array.isArray(items) ? items : [];
+    finalEffectTurn = turnId;
     effectsNode.replaceChildren();
-    const list = Array.isArray(items) ? items : [];
+    decisionButtons = [];
+    const list = finalEffectItems;
+    if (pendingDecision && pendingDecision.turnId === turnId) {
+      const observed = list.find(item => item && item.pendingId === pendingDecision.pendingId
+        && item.reviewSha256 === pendingDecision.reviewSha256 && item.turnId === turnId);
+      if (observed && ['approved', 'denied', 'expired', 'spent'].includes(observed.status)) {
+        const status = observed.status;
+        pendingDecision = null;
+        effectsNoteNode.textContent = status === 'approved' || status === 'denied'
+          ? `Owner decision observed: ${status}. This does not confirm that the tool action completed.`
+          : `Review status observed: ${status}. This does not confirm that the tool action completed.`;
+      } else {
+        effectsNoteNode.textContent = pendingDecision.state === 'submitting'
+          ? 'Decision pending; this exact review remains unresolved.'
+          : pendingDecision.state === 'awaiting-observation'
+            ? 'Decision response received; current status still shows this review pending. Tool action completion is separate.'
+            : 'Decision outcome unknown. Inspect current status before taking further action.';
+      }
+    } else if (pendingDecision) {
+      effectsNoteNode.textContent = 'Decision outcome unknown. Inspect current status before taking further action.';
+    }
     for (const item of list) {
-      if (!item || item.status !== 'pending' || typeof item.pendingId !== 'string'
-          || typeof item.reviewSha256 !== 'string' || !item.preview) continue;
+      if (!item || typeof item.pendingId !== 'string' || typeof item.reviewSha256 !== 'string'
+          || item.turnId !== turnId || !item.preview) continue;
       const row = document.createElement('li');
       row.style.gridTemplateColumns = '1fr';
       row.append(cell('strong', `Review ${String(item.preview.tool_name || 'tool action')}`));
+      if (item.status !== 'pending') {
+        row.append(cell('span', `Observed status: ${String(item.status)}. This is separate from tool action completion.`, 'activity-meta'));
+        effectsNode.append(row);
+        continue;
+      }
       const detail = cell('pre', JSON.stringify(item.preview, null, 2), 'activity-meta');
       detail.style.whiteSpace = 'pre-wrap';
       detail.style.overflowWrap = 'anywhere';
@@ -124,20 +157,42 @@ _MOUNT = r"""function mount(container, api, state) {
       for (const [decision, label] of [['approve','Approve once'], ['deny','Deny']]) {
         const button = cell('button', label);
         button.type = 'button';
+        button.disabled = pendingDecision !== null;
+        decisionButtons.push(button);
         button.addEventListener('click', async () => {
-          button.disabled = true;
+          const currentRow = () => !stopped && revision === effectsRenderRevision
+            && finalEffectTurn === turnId && effectsNode.contains(row)
+            && finalEffectItems.some(candidate => candidate && candidate.pendingId === item.pendingId
+              && candidate.reviewSha256 === item.reviewSha256 && candidate.turnId === turnId
+              && candidate.status === 'pending');
+          if (!currentRow() || pendingDecision) return;
+          const attempt = {turnId, pendingId: item.pendingId, reviewSha256: item.reviewSha256,
+            decision, idempotencyKey: crypto.randomUUID().replaceAll('-', ''), state: 'submitting'};
+          pendingDecision = attempt;
+          for (const control of decisionButtons) control.disabled = true;
           effectsNoteNode.textContent = 'Submitting your decision…';
           try {
-            await api.post(`/chat/api/turns/${encodeURIComponent(turnId)}/final-effects/decision`, {
-              pending_id: item.pendingId, review_sha256: item.reviewSha256,
-              decision, idempotency_key: crypto.randomUUID().replaceAll('-', '')
+            const result = await api.post(`/chat/api/turns/${encodeURIComponent(turnId)}/final-effects/decision`, {
+              pending_id: attempt.pendingId, review_sha256: attempt.reviewSha256,
+              decision: attempt.decision, idempotency_key: attempt.idempotencyKey
             });
-            effectsNoteNode.textContent = decision === 'approve'
-              ? 'Approved once for this exact tool call.' : 'This tool call was denied.';
+            if (pendingDecision !== attempt) return;
+            if (!currentRow()) { attempt.state = 'unknown'; return; }
+            const expectedStatus = attempt.decision === 'approve' ? 'approved' : 'denied';
+            if (!result || result.pendingId !== attempt.pendingId || result.status !== expectedStatus) {
+              attempt.state = 'unknown';
+              effectsNoteNode.textContent = 'Decision outcome unknown. Inspect current status before taking further action.';
+              await refresh();
+              return;
+            }
+            attempt.state = 'awaiting-observation';
+            effectsNoteNode.textContent = 'Decision response received; waiting for current status. This does not confirm tool action completion.';
             await refresh();
-          } catch (error) {
-            effectsNoteNode.textContent = 'The request expired or could not be verified. No action was authorized.';
-            button.disabled = false;
+          } catch (_) {
+            if (!stopped && pendingDecision === attempt) {
+              attempt.state = 'unknown';
+              effectsNoteNode.textContent = 'Decision outcome unknown. Inspect current status before taking further action.';
+            }
           }
         });
         controls.append(button);
@@ -175,6 +230,9 @@ _MOUNT = r"""function mount(container, api, state) {
         if (stopped) return;
         renderFinalEffects(approvals.requests, latest.turnId);
       }
+      if (pendingDecision && finalEffectTurn !== pendingDecision.turnId) {
+        effectsNoteNode.textContent = 'Decision outcome unknown. Inspect current status before taking further action.';
+      }
       noteNode.textContent = pageData.nextPage ? 'Showing the latest recorded events. Hermes reports cumulative session counters; a per-turn usage delta is unavailable.' : 'Activity is recorded from this owner’s current Jarvis turns. Hermes reports cumulative session counters; a per-turn usage delta is unavailable.';
     } catch (error) {
       if (!stopped) noteNode.textContent = 'Activity is temporarily unavailable.';
@@ -188,6 +246,7 @@ _MOUNT = r"""function mount(container, api, state) {
   refresh();
   return function cleanup() {
     stopped = true;
+    effectsRenderRevision++;
     window.clearInterval(pollTimer);
     refreshButton.removeEventListener('click', refresh);
   };
