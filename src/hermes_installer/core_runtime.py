@@ -768,6 +768,11 @@ def _validate_adapter_update_cohort_journal(record,raw_journal):
      or record.get("launcher_sha256")!=cohort["new_launcher_sha256"]):
   raise CoreRuntimeError("committed adapter cohort tuple differs from final source custody")
  transition=cohort.get("native_plugin_transition")
+ expected_unit=_unit(adapter_source=Path(cohort["new_source"]),cohort_gate=True,
+  backup_generation=cohort["old_adapter_generation"],
+  native_plugin_transition=transition is not None)
+ if unit!=expected_unit:
+  raise CoreRuntimeError("committed adapter unit does not match the closed cohort recipe")
  if transition is not None:
   _validate_native_plugin_transition_row(transition,cohort)
   if _native_plugin_member_hashes(_read_installed_native_resources_plugin_members().members)!=transition["new_members"]:
@@ -2663,8 +2668,11 @@ def _journal_adapter_backup_generation(record):
   raise CoreRuntimeError("journaled adapter update backup generation is unavailable")
  return generation
 
-def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generation=None):
+def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generation=None,
+                           native_plugin_transition=False):
  """Validate systemd's journal snapshot and the exact fixed service recipe."""
+ if type(native_plugin_transition) is not bool:
+  raise CoreRuntimeError("native plugin guard mode must be fixed")
  expected_source=str(adapter_source or ADAPTER_SOURCE)
  base_code=("import hashlib,json,os,stat; "
          f"service={SERVICE!r}; source={expected_source!r}; "
@@ -2691,38 +2699,103 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
    raise CoreRuntimeError("cohort service recipe requires its fixed retained-backup generation")
   # Keep systemd's credential names fixed and pass only root-owned files from
   # the immutable generation directory. The service still runs as admin.
+  backup_members=list(_ADAPTER_UPDATE_BACKUP_MEMBERS)
+  if native_plugin_transition:
+   backup_members.extend(_NATIVE_PLUGIN_BACKUP_NAMES.values())
+  transition_script=""
+  if native_plugin_transition:
+   plugin_key=repr("hermes-installer-resources-delegation")
+   plugin_script=(
+    "import os,stat,hashlib\n"
+    "flags=os.O_RDONLY|getattr(os,'O_DIRECTORY',0)|getattr(os,'O_NOFOLLOW',0)\n"
+    "fds=[]\n"
+    "def plugin_dir(parent,name,uid,gid,mode=None):\n"
+    " fd=os.open(name,flags,dir_fd=parent)\n"
+    " s=os.fstat(fd)\n"
+    " if (not stat.S_ISDIR(s.st_mode) or (s.st_uid,s.st_gid)!=(uid,gid) or stat.S_IMODE(s.st_mode)&0o022 or (mode is not None and stat.S_IMODE(s.st_mode)!=mode)):\n"
+    "  os.close(fd); raise ValueError()\n"
+    " fds.append(fd); return fd\n"
+    "def plugin_digest(directory,name):\n"
+    " fd=os.open(name,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0),dir_fd=directory)\n"
+    " try:\n"
+    "  before=os.fstat(fd); named=os.stat(name,dir_fd=directory,follow_symlinks=False)\n"
+    "  if (not stat.S_ISREG(before.st_mode) or (before.st_uid,before.st_gid)!=(0,0) or stat.S_IMODE(before.st_mode)!=0o444 or before.st_nlink!=1 or not 1<=before.st_size<=65536 or (before.st_dev,before.st_ino)!=(named.st_dev,named.st_ino) or stat.S_ISLNK(named.st_mode)):\n"
+    "   raise ValueError()\n"
+    "  data=bytearray()\n"
+    "  while len(data)<before.st_size:\n"
+    "   block=os.read(fd,min(8192,before.st_size-len(data)))\n"
+    "   if not block: raise ValueError()\n"
+    "   data.extend(block)\n"
+    "  after=os.fstat(fd); named_after=os.stat(name,dir_fd=directory,follow_symlinks=False)\n"
+    "  sig=lambda x:(x.st_dev,x.st_ino,x.st_mode,x.st_uid,x.st_gid,x.st_nlink,x.st_size,x.st_mtime_ns,x.st_ctime_ns)\n"
+    "  if os.read(fd,1) or sig(before)!=sig(after) or (named_after.st_dev,named_after.st_ino)!=(before.st_dev,before.st_ino) or stat.S_ISLNK(named_after.st_mode): raise ValueError()\n"
+    "  return hashlib.sha256(data).hexdigest()\n"
+    " finally: os.close(fd)\n"
+    "plugin_members_ok=False\n"
+    "try:\n"
+    " root=os.open('/',flags); fds.append(root)\n"
+    " home=plugin_dir(root,'home',0,0)\n"
+    " admin=plugin_dir(home,'admin',1000,1000)\n"
+    " hermes=plugin_dir(admin,'.hermes',1000,1000,0o700)\n"
+    " plugins=plugin_dir(hermes,'plugins',1000,1000)\n"
+    " plugin=plugin_dir(plugins,"+plugin_key+",0,0,0o555)\n"
+    " if set(os.listdir(plugin))!={'plugin.yaml','__init__.py'}: raise ValueError()\n"
+    " plugin_hashes={name:plugin_digest(plugin,name) for name in ('plugin.yaml','__init__.py')}\n"
+    " plugin_members_ok=plugin_hashes==transition.get('new_members')\n"
+    "except Exception:\n"
+    " plugin_members_ok=False\n"
+    "finally:\n"
+    " for fd in reversed(fds):\n"
+    "  try: os.close(fd)\n"
+    "  except OSError: pass\n"
+   )
+   transition_script=("transition=c.get('native_plugin_transition'); "
+    +"exec(bytes.fromhex("+repr(plugin_script.encode("ascii").hex())+").decode('ascii')); ")
+   transition_code=(
+    "transition=c.get('native_plugin_transition'); transition_fields={'schema','purpose','old_adapter_generation','new_adapter_generation','plugin_selection_sha256','old_members','new_members'}; "
+    "member_map_ok=lambda m:(type(m) is dict and set(m)=={'plugin.yaml','__init__.py'} and all(type(x) is str and len(x)==64 and all(ch in '0123456789abcdef' for ch in x) for x in m.values())); "
+    "prior_backup_journal=json.loads(open(os.path.join(base,'adapter-backup-journal'),'rb').read()); "
+    "transition_ok=(type(transition) is dict and set(transition)==transition_fields and type(transition.get('schema')) is int and transition.get('schema')==1 and transition.get('purpose')=='fixed-native-resources-plugin' and transition.get('old_adapter_generation')==c.get('old_adapter_generation') and transition.get('new_adapter_generation')==c.get('new_adapter_generation') and transition.get('plugin_selection_sha256')==d.get('plugin_selection_sha256')==prior_backup_journal.get('plugin_selection_sha256') and member_map_ok(transition.get('old_members')) and member_map_ok(transition.get('new_members')) and transition['old_members']['plugin.yaml']==transition['new_members']['plugin.yaml'] and transition['old_members']['__init__.py']!=transition['new_members']['__init__.py'] and type(backup_files) is dict and backup_files.get('native-plugin-plugin.yaml')==transition['old_members']['plugin.yaml'] and backup_files.get('native-plugin-__init__.py')==transition['old_members']['__init__.py'] and plugin_members_ok); "
+   )
+  else:
+   transition_code="transition_ok=(c.get('native_plugin_transition') is None); "
   gate_code=("import hashlib,json,os,stat; "
     "cp=os.path.join(base,'adapter-update-cohort'); rp=os.path.join(base,'resources-discovery'); "
     "cs=os.stat(cp,follow_symlinks=False); rs=os.stat(rp,follow_symlinks=False); "
     "cr=open(cp,'rb').read(131073); rr=open(rp,'rb').read(16385); "
     "c=json.loads(cr); r=json.loads(rr); "
-    "keys={'schema','purpose','cohort_transaction_id','owner_uid','home_role','phase','old_source','new_source','old_adapter_generation','new_adapter_generation','old_core_source_generation','new_core_source_generation','old_source_recipe_sha256','new_source_recipe_sha256','old_unit_sha256','old_launcher_sha256','new_unit_sha256','new_launcher_sha256','guarded_old_unit_sha256','guarded_old_recipe_sha256','old_process_identity_sha256','old_journal_sha256','new_journal_sha256','old_resources_record_sha256','pre_switch_resources_record_sha256','starting_journal_sha256','starting_resources_record_sha256','new_resources_record_sha256','old_artifact_sha256','new_artifact_sha256','owner_generation_backup_name','primary_record_sha256','obsidian_registration_state','obsidian_registration_sha256','obsidian_vault_tree_sha256','reconstruction','reconstruction_sha256','initial_primary_transition'}; "
+    "keys="+repr(_ADAPTER_COHORT_FIELDS)+"; legacy_keys="+repr(_ADAPTER_COHORT_LEGACY_FIELDS)+"; "
     "canonical=lambda v:(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False)+'\\n').encode('ascii'); "
     "recipe=lambda s,g,u,l:hashlib.sha256(canonical({'schema':1,'source':s,'generation':g,'unit_sha256':u,'launcher_sha256':l})).hexdigest(); "
     "cp_ok=(stat.S_ISREG(cs.st_mode) and stat.S_IMODE(cs.st_mode)==0o400 and cs.st_nlink==1 and 0<len(cr)==cs.st_size<=131072); "
     "rp_ok=(stat.S_ISREG(rs.st_mode) and stat.S_IMODE(rs.st_mode)==0o400 and rs.st_nlink==1 and 0<len(rr)==rs.st_size<=16384); "
     "phase=c.get('phase'); starting=phase in ('source-starting','bindings-verified'); expected_j=c.get('starting_journal_sha256') if starting else c.get('new_journal_sha256'); expected_r=c.get('starting_resources_record_sha256') if starting else c.get('new_resources_record_sha256'); "
     "reconstruction=c.get('reconstruction'); reconstruction_ok=(isinstance(reconstruction,dict) and hashlib.sha256(canonical(reconstruction)).hexdigest()==c.get('reconstruction_sha256') and reconstruction.get('cohort_transaction_id')==c.get('cohort_transaction_id') and reconstruction.get('phase')==phase and reconstruction.get('old_core_source_generation')==c.get('old_core_source_generation') and reconstruction.get('new_core_source_generation')==c.get('new_core_source_generation') and reconstruction.get('old_source_recipe_sha256')==c.get('old_source_recipe_sha256') and reconstruction.get('new_source_recipe_sha256')==c.get('new_source_recipe_sha256')); "
-    "backup=d.get('adapter_update_backup'); backup_members="+repr(list(_ADAPTER_UPDATE_BACKUP_MEMBERS))+"; "
+    "backup=d.get('adapter_update_backup'); backup_members="+repr(backup_members)+"; "
     "backup_generation="+repr(backup_generation)+"; "
     "backup_manifest_name='adapter-backup-manifest'; "
     "backup_manifest_path=os.path.join(base,backup_manifest_name); backup_manifest_stat=os.stat(backup_manifest_path,follow_symlinks=False); backup_raw=open(backup_manifest_path,'rb').read(4097); "
     "backup_files=(backup.get('files') if isinstance(backup,dict) else None); "
-    "backup_ok=(isinstance(backup,dict) and backup.get('source_generation')==backup_generation and backup.get('path')=="+repr(str(ADAPTER_UPDATE_BACKUPS))+"+'/'+backup_generation and set(backup_files or {})==set(backup_members) and backup_raw==canonical(backup_files) and stat.S_ISREG(backup_manifest_stat.st_mode) and (backup_manifest_stat.st_uid,backup_manifest_stat.st_gid)==(1000,1000) and stat.S_IMODE(backup_manifest_stat.st_mode)==0o400 and backup_manifest_stat.st_nlink==1 and len(backup_raw)==backup_manifest_stat.st_size); "
+    "backup_ok=(isinstance(backup,dict) and type(backup_files) is dict and set(backup_files)==set(backup_members) and backup.get('source_generation')==backup_generation and backup.get('path')=="+repr(str(ADAPTER_UPDATE_BACKUPS))+"+'/'+backup_generation and backup_raw==canonical(backup_files) and stat.S_ISREG(backup_manifest_stat.st_mode) and (backup_manifest_stat.st_uid,backup_manifest_stat.st_gid)==(1000,1000) and stat.S_IMODE(backup_manifest_stat.st_mode)==0o400 and backup_manifest_stat.st_nlink==1 and len(backup_raw)==backup_manifest_stat.st_size); "
     "backup_valid=lambda n,h:(lambda p,s,b:stat.S_ISREG(s.st_mode) and (s.st_uid,s.st_gid)==(1000,1000) and stat.S_IMODE(s.st_mode)==0o400 and s.st_nlink==1 and 0<s.st_size<=262144 and len(b)==s.st_size and hashlib.sha256(b).hexdigest()==h)(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),os.stat(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),follow_symlinks=False),open(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),'rb').read(262145)); "
     "backup_ok=backup_ok and all(backup_valid(name,backup_files.get(name)) for name in backup_members) and hashlib.sha256(backup_raw).hexdigest()==hashlib.sha256(canonical(backup_files)).hexdigest(); "
     "initial=c.get('initial_primary_transition'); initial_ok=(initial is None or (isinstance(initial,dict) and initial.get('purpose')=='initial-primary-adoption' and initial.get('prior_record_state')=='absent' and initial.get('state') in ('pending','adopted') and ((initial.get('state')=='pending' and c.get('primary_record_sha256')=='absent' and initial.get('owner_backup_sha256') is None) or (initial.get('state')=='adopted' and initial.get('adopted_record_sha256')==c.get('primary_record_sha256') and initial.get('after_resources_record_sha256')==hashlib.sha256(rr).hexdigest())))); "
-    "cohort_ok=(backup_ok and cp_ok and rp_ok and initial_ok and canonical(c)==cr and set(c)==keys and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home' and c.get('owner_generation_backup_name')=='.jarvis-resources-skills-helper-transition-'+c.get('cohort_transaction_id') and phase in ('source-starting','bindings-verified','committed') and reconstruction_ok and c.get('new_source')==source and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==recipe(source,d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256')) and expected_j==hashlib.sha256(raw).hexdigest() and expected_r==hashlib.sha256(rr).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(raw).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256') and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and d.get('adapter_update_target_source')==source and d.get('adapter_update_target_generation')==d.get('adapter_generation') and ((starting and d.get('adapter_update_state')=='starting') or (phase=='committed' and d.get('adapter_update_state')=='active')) and hashlib.sha256(open('/etc/systemd/system/hermes-jarvis-core.service','rb').read()).hexdigest()==c.get('new_unit_sha256') and hashlib.sha256(open('/usr/local/libexec/hermes-jarvis-core-launcher','rb').read()).hexdigest()==c.get('new_launcher_sha256')); "
+    "keys_ok=(set(c)==keys or (set(c)==legacy_keys and c.get('native_plugin_transition') is None)); "
+    ""+transition_script+transition_code+
+    "cohort_ok=(backup_ok and cp_ok and rp_ok and initial_ok and transition_ok and canonical(c)==cr and keys_ok and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home' and c.get('owner_generation_backup_name')=='.jarvis-resources-skills-helper-transition-'+c.get('cohort_transaction_id') and phase in ('source-starting','bindings-verified','committed') and reconstruction_ok and c.get('new_source')==source and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==recipe(source,d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256')) and expected_j==hashlib.sha256(raw).hexdigest() and expected_r==hashlib.sha256(rr).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(raw).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256') and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and d.get('adapter_update_target_source')==source and d.get('adapter_update_target_generation')==d.get('adapter_generation') and ((starting and d.get('adapter_update_state')=='starting') or (phase=='committed' and d.get('adapter_update_state')=='active')) and hashlib.sha256(open('/etc/systemd/system/hermes-jarvis-core.service','rb').read()).hexdigest()==c.get('new_unit_sha256') and hashlib.sha256(open('/usr/local/libexec/hermes-jarvis-core-launcher','rb').read()).hexdigest()==c.get('new_launcher_sha256')); "
     "ok=ok and cohort_ok; ")
  else:
   gate_code=""
  return base_code+gate_code+"raise SystemExit(0 if ok else 1)"
-def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False,backup_generation=None):
+def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False,backup_generation=None,
+          native_plugin_transition=False):
+ if type(native_plugin_transition) is not bool or (native_plugin_transition and not cohort_gate):
+  raise CoreRuntimeError("native plugin unit mode must be cohort-bound")
  a=pwd.getpwnam("admin")
  if a.pw_uid!=1000 or a.pw_gid!=1000 or a.pw_dir!="/home/admin": raise CoreRuntimeError("admin identity mismatch")
  guard=""
  if startup_guard:
-  guard=(f'ExecStartPre={PYTHON} -I -S -c "{_core_start_guard_code(adapter_source,cohort_gate,backup_generation)}"\n'
+  guard=(f'ExecStartPre={PYTHON} -I -S -c "{_core_start_guard_code(adapter_source,cohort_gate,backup_generation,native_plugin_transition)}"\n'
          f'LoadCredential=core-ownership-journal:{JOURNAL}\n')
   if cohort_gate:
    guard+=(f'LoadCredential=adapter-update-cohort:{ADAPTER_UPDATE_COHORT}\n'
@@ -2730,6 +2803,10 @@ def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False,backup_gene
    for name in _ADAPTER_UPDATE_BACKUP_MEMBERS:
     credential="adapter-backup-"+name.removesuffix(".json").replace(".","-")
     guard+=(f'LoadCredential={credential}:{ADAPTER_UPDATE_BACKUPS/backup_generation/name}\n')
+   if native_plugin_transition:
+    for name in _NATIVE_PLUGIN_BACKUP_NAMES.values():
+     credential="adapter-backup-"+name.replace(".","-")
+     guard+=(f'LoadCredential={credential}:{ADAPTER_UPDATE_BACKUPS/backup_generation/name}\n')
    guard+=(f'LoadCredential=adapter-backup-manifest:{ADAPTER_UPDATE_BACKUPS/backup_generation/"manifest.json"}\n')
  return f"""[Unit]
 Description=Jarvis isolated Hermes core
@@ -2779,7 +2856,8 @@ def _journal():
    if p==UNIT and guarded_old:
     if _projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)!=_unit(
         adapter_source=old_scope.old_source,cohort_gate=True,
-        backup_generation=old_scope.old_adapter_generation):
+        backup_generation=old_scope.old_adapter_generation,
+        native_plugin_transition=(_read_adapter_update_cohort()[0] or {}).get("native_plugin_transition") is not None):
      raise CoreRuntimeError("physical guarded old unit differs")
    elif not (d["state"]=="retiring" and d.get("cleanup_allow_partial")) and _digest(p)!=d.get(k):
     raise CoreRuntimeError("owned service file changed")
@@ -2810,8 +2888,13 @@ def _journal():
   expected_units={hashlib.sha256(_unit(adapter_source=adapter_source)).hexdigest(),
       hashlib.sha256(_unit(startup_guard=False,adapter_source=adapter_source)).hexdigest()}
   if d.get("adapter_migration_state")=="active" and d.get("adapter_update_cohort_transaction_id") and not guarded_old:
+   cohort_for_unit,_cohort_raw=_read_adapter_update_cohort()
+   transition_for_unit=(cohort_for_unit is not None
+       and cohort_for_unit.get("cohort_transaction_id")==d.get("adapter_update_cohort_transaction_id")
+       and cohort_for_unit.get("native_plugin_transition") is not None)
    expected_units.add(hashlib.sha256(_unit(adapter_source=adapter_source,cohort_gate=True,
-    backup_generation=_journal_adapter_backup_generation(d))).hexdigest())
+    backup_generation=_journal_adapter_backup_generation(d),
+    native_plugin_transition=transition_for_unit)).hexdigest())
   if d["state"]!="retiring" and not guarded_old and (d["unit_sha256"] not in expected_units or
       hashlib.sha256(_launcher(adapter_source=adapter_source)).hexdigest()!=d["launcher_sha256"]):
    raise CoreRuntimeError("owned service recipe differs from the reviewed source")
@@ -2918,7 +3001,8 @@ def _issue_guarded_old_read(*,cohort,cohort_raw,record,journal_raw,old_unit,
      or hashlib.sha256(old_unit).hexdigest()!=cohort.get("old_unit_sha256")
      or hashlib.sha256(old_launcher).hexdigest()!=cohort.get("old_launcher_sha256")
      or hashlib.sha256(_unit(adapter_source=cohort["old_source"],cohort_gate=True,
-       backup_generation=cohort["old_adapter_generation"])).hexdigest()
+       backup_generation=cohort["old_adapter_generation"],
+       native_plugin_transition=cohort.get("native_plugin_transition") is not None)).hexdigest()
         !=cohort.get("guarded_old_unit_sha256")
      or hashlib.sha256(old_launcher).hexdigest()!=record.get("launcher_sha256")
      or record.get("adapter_source")!=cohort.get("old_source")
@@ -2973,7 +3057,8 @@ def _validate_guarded_old_read(value):
    and row.get("adapter_generation")==value.old_adapter_generation
    and row.get("core_source_generation")==value.old_core_source_generation
    and unit==_unit(adapter_source=value.old_source,cohort_gate=True,
-      backup_generation=value.old_adapter_generation)
+      backup_generation=value.old_adapter_generation,
+      native_plugin_transition=(cohort.get("native_plugin_transition") is not None))
    and hashlib.sha256(unit).hexdigest()==value.guarded_old_unit_sha256
    and hashlib.sha256(launcher).hexdigest()==value.old_launcher_sha256
    and _adapter_recipe_sha256(value.old_source,value.old_adapter_generation,
@@ -3285,7 +3370,8 @@ def _initial_primary_rollback_current(custody):
    return False
   old_source=Path(prior["adapter_source"])
   expected_guarded=_unit(adapter_source=old_source,cohort_gate=True,
-   backup_generation=cohort["old_adapter_generation"])
+   backup_generation=cohort["old_adapter_generation"],
+   native_plugin_transition=cohort.get("native_plugin_transition") is not None)
   if (unit!=expected_guarded or launcher not in {
       contents["launcher"],_launcher(adapter_source=Path(cohort["new_source"]))}):
    return False
@@ -3400,7 +3486,8 @@ def _issue_initial_primary_rollback_custody(*,reference,prior,contents,cohort,co
  unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
  launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
  expected_guarded=_unit(adapter_source=Path(prior["adapter_source"]),cohort_gate=True,
-  backup_generation=cohort["old_adapter_generation"])
+  backup_generation=cohort["old_adapter_generation"],
+  native_plugin_transition=cohort.get("native_plugin_transition") is not None)
  if (unit!=expected_guarded or launcher not in {
      contents["launcher"],_launcher(adapter_source=Path(cohort["new_source"]))}):
   raise CoreRuntimeError("initial primary offline rollback recipes are not the exact guarded cohort files")
@@ -4163,8 +4250,13 @@ def _read_active_adapter_runtime():
  allowed_units={_unit(adapter_source=old_source),
                 _unit(startup_guard=False,adapter_source=old_source)}
  if record.get("adapter_update_cohort_transaction_id"):
+  prior_cohort,_prior_cohort_raw=_read_adapter_update_cohort()
+  transition_for_prior=(prior_cohort is not None and prior_cohort.get("cohort_transaction_id")
+    ==record.get("adapter_update_cohort_transaction_id")
+    and prior_cohort.get("native_plugin_transition") is not None)
   allowed_units.add(_unit(adapter_source=old_source,cohort_gate=True,
-   backup_generation=_journal_adapter_backup_generation(record)))
+   backup_generation=_journal_adapter_backup_generation(record),
+   native_plugin_transition=transition_for_prior))
  if files[UNIT] not in allowed_units or files[LAUNCHER]!=_launcher(adapter_source=old_source):
   raise CoreRuntimeError("journal-owned native core recipe differs")
  if b"LoadCredential=adapter-update-cohort:" in files[UNIT]:
@@ -4276,8 +4368,19 @@ def _read_adapter_update_backup(reference):
  allowed_prior_units={_unit(adapter_source=old_source),
                       _unit(startup_guard=False,adapter_source=old_source)}
  if prior.get("adapter_update_cohort_transaction_id"):
+  try: prior_cohort=json.loads(contents["cohort.json"])
+  except (KeyError,ValueError,TypeError):
+   raise CoreRuntimeError("prior adapter backup cohort is not readable") from None
+  if (type(prior_cohort) is not dict
+      or prior_cohort.get("cohort_transaction_id")!=prior.get("adapter_update_cohort_transaction_id")
+      or prior_cohort.get("new_source")!=prior.get("adapter_source")
+      or prior_cohort.get("new_adapter_generation")!=prior.get("adapter_generation")
+      or prior_cohort.get("phase")!="committed"):
+   raise CoreRuntimeError("prior adapter backup cohort does not match its journal")
+  transition_for_prior=prior_cohort.get("native_plugin_transition") is not None
   allowed_prior_units.add(_unit(adapter_source=old_source,cohort_gate=True,
-   backup_generation=_journal_adapter_backup_generation(prior)))
+   backup_generation=_journal_adapter_backup_generation(prior),
+   native_plugin_transition=transition_for_prior))
  if contents["unit"] not in allowed_prior_units or contents["launcher"]!=_launcher(adapter_source=old_source):
   raise CoreRuntimeError("prior adapter update backup is not the fixed service recipe")
  return prior,contents
@@ -4929,10 +5032,11 @@ def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
   raise CoreRuntimeError("Obsidian registration or vault changed during source cohort recovery")
  unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
  old_source=Path(prior["adapter_source"])
+ plugin_transition=cohort.get("native_plugin_transition") is not None
  allowed_units={contents["unit"],_unit(adapter_source=old_source,cohort_gate=True,
-   backup_generation=cohort["old_adapter_generation"]),
+   backup_generation=cohort["old_adapter_generation"],native_plugin_transition=plugin_transition),
                 _unit(adapter_source=Path(cohort["new_source"]),cohort_gate=True,
-   backup_generation=cohort["old_adapter_generation"])}
+   backup_generation=cohort["old_adapter_generation"],native_plugin_transition=plugin_transition)}
  if unit not in allowed_units:
   raise CoreRuntimeError("current unit is outside the exact guarded source recipes")
  launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
@@ -5095,7 +5199,8 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
  # never combine a guardless launcher with the new/preparing journal.
  guarded=_unit(adapter_source=Path(prior["adapter_source"]),cohort_gate=True,
   backup_generation=cohort["old_adapter_generation"] if cohort is not None else
-   _journal_adapter_backup_generation(prior))
+   _journal_adapter_backup_generation(prior),
+  native_plugin_transition=(cohort is not None and cohort.get("native_plugin_transition") is not None))
  _atomic_replace(UNIT,guarded,0o644,ROOT_UID,ROOT_UID)
  _run(["systemctl","daemon-reload"])
  if (_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)!=guarded
@@ -5891,14 +5996,16 @@ def _update_owned_core_adapter_locked():
      or not native.verify_same_materialization_transition(old_manifest,old_generation_files,
        new_manifest,new_generation_files)):
   raise CoreRuntimeError("composed A0→A1 pair is not an exact helper-only transition")
- new_unit=_unit(adapter_source=ADAPTER_SOURCE,cohort_gate=True,backup_generation=old_adapter)
+ new_unit=_unit(adapter_source=ADAPTER_SOURCE,cohort_gate=True,backup_generation=old_adapter,
+  native_plugin_transition=plugin_transition is not None)
  new_launcher=_launcher(adapter_source=ADAPTER_SOURCE)
  old_unit=old_files[UNIT]; old_launcher=old_files[LAUNCHER]
  new_unit_sha=hashlib.sha256(new_unit).hexdigest(); new_launcher_sha=hashlib.sha256(new_launcher).hexdigest()
  old_unit_sha=hashlib.sha256(old_unit).hexdigest(); old_launcher_sha=hashlib.sha256(old_launcher).hexdigest()
  old_recipe=_adapter_recipe_sha256(str(old_source),old_adapter,old_unit_sha,old_launcher_sha)
  new_recipe=_adapter_recipe_sha256(str(ADAPTER_SOURCE),new_adapter,new_unit_sha,new_launcher_sha)
- guarded_old_unit=_unit(adapter_source=old_source,cohort_gate=True,backup_generation=old_adapter)
+ guarded_old_unit=_unit(adapter_source=old_source,cohort_gate=True,backup_generation=old_adapter,
+  native_plugin_transition=plugin_transition is not None)
  guarded_old_unit_sha=hashlib.sha256(guarded_old_unit).hexdigest()
  guarded_old_recipe=_adapter_recipe_sha256(str(old_source),old_adapter,
   guarded_old_unit_sha,old_launcher_sha)

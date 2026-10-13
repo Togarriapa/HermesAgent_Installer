@@ -1417,13 +1417,35 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     assert core.LAUNCHER.read_bytes() != prior_launcher
     expected_new_unit = core._unit(
         adapter_source=Path(updated["adapter_source"]), cohort_gate=True,
-        backup_generation=prior["adapter_generation"])
+        backup_generation=prior["adapter_generation"], native_plugin_transition=True)
+    backup_credentials = [row for row in expected_new_unit.decode().splitlines()
+        if row.startswith("LoadCredential=adapter-backup-")]
+    assert len(backup_credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 3
+    assert {row.partition(":")[0] for row in backup_credentials} >= {
+        "LoadCredential=adapter-backup-native-plugin-plugin-yaml",
+        "LoadCredential=adapter-backup-native-plugin-__init__-py",
+    }
     assert core.UNIT.read_bytes() == expected_new_unit
     assert hashlib.sha256(expected_new_unit).hexdigest() == updated["unit_sha256"]
     assert _exec_start_pre(expected_new_unit, expect_success=True,
                            runner=guard_runner) == 0
+    assert _exec_start_pre(expected_new_unit,
+        credential_mutations={"adapter-backup-native-plugin-__init__-py": ("remove",)},
+        expect_success=False, runner=guard_runner) != 0
     assert _exec_start_pre(prior_unit, expect_success=False,
                            runner=guard_runner) != 0
+    installed_plugin_module = (core.HERMES_HOME / "plugins" /
+        "hermes-installer-resources-delegation" / "__init__.py")
+    installed_plugin_module.write_bytes(b"foreign plugin bytes\n")
+    os.chown(installed_plugin_module, core.ROOT_UID, core.ROOT_UID)
+    os.chmod(installed_plugin_module, 0o444)
+    assert _exec_start_pre(expected_new_unit, expect_success=False,
+                           runner=guard_runner) != 0
+    installed_plugin_module.write_bytes(b"new native tools\n")
+    os.chown(installed_plugin_module, core.ROOT_UID, core.ROOT_UID)
+    os.chmod(installed_plugin_module, 0o444)
+    assert _exec_start_pre(expected_new_unit, expect_success=True,
+                           runner=guard_runner) == 0
     assert core.TOKEN.read_bytes() == token
     assert memory.read_text() == "existing owner memory"
     backup = core.ADAPTER_UPDATE_BACKUPS / prior["adapter_generation"]
@@ -2385,6 +2407,10 @@ def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resource
         tmp_path, monkeypatch, request):
     unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(
         tmp_path, monkeypatch, request)
+    backup_credentials = [row for row in unit.decode().splitlines()
+        if row.startswith("LoadCredential=adapter-backup-")]
+    assert len(backup_credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 1
+    assert not any("native-plugin" in row for row in backup_credentials)
     assert _exec_start_pre(unit, expect_success=True) == 0
     # A reboot during any incomplete phase must fail closed even when the
     # systemd unit and launcher already contain the new source recipe.
