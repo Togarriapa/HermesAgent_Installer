@@ -1739,8 +1739,9 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
     monkeypatch.setattr(core, "_wait_for_listener", fail_first_restart)
     update_call_start = len(_calls)
 
-    with pytest.raises(core.CoreRuntimeError, match="injected adapter update restart failure"):
-        core.update_owned_core_adapter()
+    with _bounded_cohort_exception_sites():
+        with pytest.raises(core.CoreRuntimeError, match="injected adapter update restart failure"):
+            core.update_owned_core_adapter()
 
     assert core.JOURNAL.read_bytes() == prior
     assert core.LAUNCHER.read_bytes() == launcher
