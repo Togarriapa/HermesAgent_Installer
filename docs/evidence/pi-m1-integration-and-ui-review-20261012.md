@@ -873,7 +873,7 @@ adoption, final full-MVP acceptance, or actual Android/voice qualification.
 
 The adoption attempt for source candidate `0972fe1dc3f20ad432c93ac42b54db56c470465a`
 exited 4 during the fixed Root/Core qualification phase. Core reported
-`currentResources not fully discovered` at `root_setup` line 1050 and update
+`current Resources generation is not fully discovered` at `root_setup` line 1050 and update
 lines 5922/5980. The pre-transition check expected incoming helper bytes while
 qualifying the old bundle; Luna/Sol's source correction is pending review.
 
@@ -885,7 +885,7 @@ artifact (`850b70f2e9e4e4d5a2d61f7eda41de18ab144aa408722cc6f2956428efdcca74`).
 Automatic recovery verified the prior Core and ingress. Core generation,
 Obsidian registration and vault, token, native plugin and overlays were all
 reported preserved. Source `0972` was not deployed. The separately managed
-June primary was not adopted by this attempt and is not claimed as adopted.
+Jarvis primary prompt was not adopted by this attempt and is not claimed as adopted.
 
 The deployment remains unqualified pending the source correction and a new
 verified adoption outcome. This attempt does not change the separate responsive
