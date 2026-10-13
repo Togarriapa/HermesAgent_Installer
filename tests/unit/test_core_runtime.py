@@ -789,6 +789,19 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
 def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
     """Install a real old-helper generation and bind its receipt to the current journal."""
     from hermes_installer.registry import manual_jarvis_skills as native
+    from hermes_installer.remote import obsidian_owner_lifecycle as obsidian
+
+    # This controlled cohort is explicitly unregistered. read_registration()
+    # opens the fixed root-owned directory through directory FDs, so redirect
+    # its path constant as well as the lookup; never inspect the Pi's live
+    # registration or vault while the fixture HOME is privately bind-mounted.
+    monkeypatch.setattr(obsidian, "OWNER_REGISTRATION",
+                        core.JOURNAL.parent / "obsidian-registration.json")
+
+    def fixture_registration_absent():
+        raise FileNotFoundError
+
+    monkeypatch.setattr(obsidian, "read_registration", fixture_registration_absent)
 
     archive = native.build_manual_jarvis_skills_artifact()
     artifact_sha = hashlib.sha256(archive).hexdigest()
