@@ -55,10 +55,24 @@ def _bounded_cohort_exception_sites():
     previous = sys.gettrace()
     sites = []
     first_substantive = []
+    importer_outcomes = []
     routine = {"GeneratorExit", "StopIteration", "StopAsyncIteration"}
     allowed = {"core_runtime.py", "manual_jarvis_skills.py", "resources_skill_overlay.py"}
 
     def trace(frame, event, arg):
+        if (event == "return" and Path(frame.f_code.co_filename).name == "core_runtime.py"
+                and frame.f_code.co_name == "_run_same_materialization_import"):
+            values = frame.f_locals
+            process = values.get("process")
+            stdout = values.get("stdout")
+            stderr = values.get("stderr")
+            if (process is not None and isinstance(stdout, bytes)
+                    and isinstance(stderr, bytes)):
+                # Retain bytes only in this in-process test collector; never
+                # print or attach raw child output to diagnostics.
+                importer_outcomes.append({"returncode": process.returncode,
+                                          "stdout": stdout,
+                                          "stderr_bytes": len(stderr)})
         if event == "exception" and Path(frame.f_code.co_filename).name in allowed:
             exception_type = type(arg[1]).__name__
             if exception_type not in routine:
@@ -72,7 +86,7 @@ def _bounded_cohort_exception_sites():
 
     sys.settrace(trace)
     try:
-        yield
+        yield importer_outcomes
     except BaseException as failure:
         sys.settrace(previous)
         contexts = []
@@ -1157,7 +1171,7 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
         return result
     monkeypatch.setattr(core, "_run", model_restart_on_failure)
 
-    with _bounded_cohort_exception_sites():
+    with _bounded_cohort_exception_sites() as importer_outcomes:
         result = core.update_owned_core_adapter()
 
     updated = json.loads(core.JOURNAL.read_text())
@@ -1181,6 +1195,21 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     assert reload_service_states == [False]
     assert automatic_restarts == []
     assert guard_denials == []
+    assert len(importer_outcomes) == 1
+    importer = importer_outcomes[0]
+    assert importer["returncode"] == 0
+    assert importer["stderr_bytes"] <= core._HELPER_IMPORT_STDERR_LIMIT
+    receipt = importer["stdout"]
+    assert 16 * 1024 < len(receipt) <= core._HELPER_IMPORT_STDOUT_LIMIT
+    before_oversize_check = (core.JOURNAL.read_bytes(),
+                             (backup / "manifest.json").read_bytes(),
+                             core.TOKEN.read_bytes())
+    oversized_receipt = receipt + b" " * (core._HELPER_IMPORT_STDOUT_LIMIT + 1 - len(receipt))
+    with pytest.raises(core.CoreRuntimeError, match="importer refused"):
+        core._require_bounded_helper_import_output(0, oversized_receipt, b"")
+    assert before_oversize_check == (core.JOURNAL.read_bytes(),
+                                     (backup / "manifest.json").read_bytes(),
+                                     core.TOKEN.read_bytes())
     ordered = [call[0] for call in calls]
     assert ordered.index(("systemctl", "stop", core.SERVICE)) < ordered.index(
         ("systemctl", "start", core.SERVICE))

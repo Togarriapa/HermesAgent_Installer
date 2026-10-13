@@ -29,6 +29,8 @@ ADAPTER_UPDATE_BACKUPS=Path("/var/lib/hermes-installer/core-runtime/adapter-upda
 ADAPTER_UPDATE_COHORT=Path("/var/lib/hermes-installer/core-runtime/adapter-update-cohort.json")
 NATIVE_ADOPTION_INGRESS_BACKUP=Path(
  "/var/lib/hermes-installer/core-runtime/native-adoption-ingress-backup.json")
+_HELPER_IMPORT_STDOUT_LIMIT=32*1024
+_HELPER_IMPORT_STDERR_LIMIT=16*1024
 # This exact older package was materialized before the importer helper was
 # hardened. Its only difference from the current package is that helper member;
 # the helper itself is not installed into the owner's Hermes tree.
@@ -4463,6 +4465,13 @@ def _terminate_root_runuser_group(process,identity):
   try: process.communicate(timeout=2)
   except Exception: pass
 
+def _require_bounded_helper_import_output(returncode,stdout,stderr):
+ """Accept only a complete bounded fixed-importer response and diagnostics."""
+ if (type(returncode) is not int or returncode!=0
+     or type(stdout) is not bytes or len(stdout)>_HELPER_IMPORT_STDOUT_LIMIT
+     or type(stderr) is not bytes or len(stderr)>_HELPER_IMPORT_STDERR_LIMIT):
+  raise CoreRuntimeError("helper-only importer refused the root-selected transition")
+
 def _run_same_materialization_import(prepared,next_archive,old_archive,backup_name):
  """Consume the root seal at the fixed root→runuser importer boundary."""
  if (os.geteuid()!=ROOT_UID or not verify_prepared_same_materialization_transition(prepared)
@@ -4534,8 +4543,7 @@ def _run_same_materialization_import(prepared,next_archive,old_archive,backup_na
   _assert_root_runuser_dispatch_complete(process,dispatch)
   if writer.is_alive() or write_error:
    raise CoreRuntimeError("helper-only importer input pipe did not complete exactly")
-  if process.returncode!=0 or len(stdout)>16*1024 or len(stderr)>16*1024:
-   raise CoreRuntimeError("helper-only importer refused the root-selected transition")
+  _require_bounded_helper_import_output(process.returncode,stdout,stderr)
   try:
    def unique_result(pairs):
     value={}
@@ -4549,12 +4557,17 @@ def _run_same_materialization_import(prepared,next_archive,old_archive,backup_na
    backup=Path(backup_value) if isinstance(backup_value,str) else Path("/")
    expected_skills=sorted(row["skill_id"] for row in new_manifest["skill_members"])
    expected_profiles=sorted(row["source_id"] for row in new_manifest["profile_members"])
+   expected_next_step=("Run the pinned Hermes skill list/view probe; qualify model-selected use "
+                       "and non-skill integrations separately.")
    if (type(result) is not dict or result.get("state")!="staged"
        or result.get("materialized") is not True or result.get("discovered") is not False
        or result.get("artifact_sha256")!=prepared.new_artifact_sha256
        or result.get("generation_path")!=str(generation)
        or result.get("skills")!=expected_skills
        or result.get("profiles_preserved_internal")!=expected_profiles
+       or type(result.get("next_step")) is not str
+       or len(result["next_step"].encode("utf-8"))>256
+       or result["next_step"]!=expected_next_step
        or result.get("previous_artifact_sha256")!=prepared.old_artifact_sha256
        or set(result)!={"state","materialized","discovered","artifact_sha256",
         "generation_path","skills","profiles_preserved_internal","next_step",
