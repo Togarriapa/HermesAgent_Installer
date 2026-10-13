@@ -1023,3 +1023,19 @@ available. Core `9e70` remained unchanged since candidate 139. No production
 deployment or deadline fix is established. Feature 58e's 71 contracts and
 renderer checks remain the previously recorded source-level evidence; its CSS
 is published in PRs 38/36, still drafts. Full M1 acceptance remains open.
+
+### Candidate 144 effect result
+
+Candidate 144 passed read-only actual readiness using existing Root locks and
+passed spec/plan validation; runtime acceptance was not established. In the
+first effects group, both update-positive variants returned `False` after
+307.17s. The attempted path had completed the update, strict A1 discovery and
+canonical receipt assertions before a generated `ExecStartPre` permission
+check failed. The bounded log directory was
+`/var/tmp/hermes-native-a0-4e27bc95f41e-20261013T191932Z-3168818`; log SHA-256
+was `96ac669fd39f76152fd61b93297cf732be8de31322a05a976eb80aa9f8f06e6c`.
+Fixed diagnostics show `PermissionError` at line 49 while calling `os.stat`
+on `hermes-jarvis-core.service` twice. The cause remains under native-owner
+review and is not classified as a product or fixture failure. Neither the
+`True` update variants nor restart variants ran. Live source remains `0cb`; no
+adoption occurred.
