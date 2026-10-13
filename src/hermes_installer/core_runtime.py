@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 SOURCE=Path("/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532")
 ADAPTER_SOURCE=Path(__file__).resolve(strict=True).parents[1]
 PYTHON=Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python")
@@ -98,6 +99,8 @@ _GUARDED_OLD_READ_CONTEXT=contextvars.ContextVar("core_guarded_old_read",default
 _GUARDED_NEW_READ_CONTEXT=contextvars.ContextVar("core_guarded_new_read",default=None)
 _ADAPTER_UPDATE_LOCK_HELD=contextvars.ContextVar("adapter_update_lock_held",default=False)
 _ADAPTER_STARTUP_COHORT_CONTEXT=contextvars.ContextVar("adapter_startup_cohort_context",default=None)
+_NATIVE_PLUGIN_TRANSITION_CONTEXT=contextvars.ContextVar("native_plugin_transition_context",default=None)
+_NATIVE_PLUGIN_TRANSITION_STATE=contextvars.ContextVar("native_plugin_transition_state",default=None)
 _INITIAL_PRIMARY_ADOPTION_CONTEXT=contextvars.ContextVar("initial_primary_adoption_context",default=None)
 _ABSENT_DIGEST = "absent"
 _ADAPTER_COHORT_PURPOSE="adapter-source-binding-cohort"
@@ -116,8 +119,46 @@ _ADAPTER_COHORT_FIELDS={
  "old_artifact_sha256","new_artifact_sha256","owner_generation_backup_name",
  "primary_record_sha256","obsidian_registration_state","obsidian_registration_sha256",
  "obsidian_vault_tree_sha256","reconstruction","reconstruction_sha256",
- "initial_primary_transition",
+ "initial_primary_transition","native_plugin_transition",
 }
+_ADAPTER_COHORT_LEGACY_FIELDS=_ADAPTER_COHORT_FIELDS-{"native_plugin_transition"}
+_NATIVE_PLUGIN_FILES=("plugin.yaml","__init__.py")
+_NATIVE_PLUGIN_BACKUP_NAMES={"plugin.yaml":"native-plugin-plugin.yaml",
+                             "__init__.py":"native-plugin-__init__.py"}
+
+@dataclass(frozen=True,slots=True)
+class _NativeResourcesPluginTransitionContext:
+ operation:str
+ cohort_transaction_id:str|None
+ old_adapter_generation:str
+ new_adapter_generation:str
+ plugin_selection_sha256:str
+ old_members:object
+ new_members:object
+ installed_member_signatures:object
+ transition_row:object
+ backup_reference:object
+ phase:str|None
+
+def _validate_native_plugin_transition_row(value,cohort):
+ """Validate the closed fixed-member transition DATA carried by one cohort."""
+ if value is None: return
+ fields={"schema","purpose","old_adapter_generation","new_adapter_generation",
+         "plugin_selection_sha256","old_members","new_members"}
+ if (type(value) is not dict or set(value)!=fields
+     or type(value.get("schema")) is not int or value["schema"]!=1
+     or value.get("purpose")!="fixed-native-resources-plugin"
+     or value.get("old_adapter_generation")!=cohort.get("old_adapter_generation")
+     or value.get("new_adapter_generation")!=cohort.get("new_adapter_generation")
+     or value.get("plugin_selection_sha256") is None
+     or re.fullmatch(r"[0-9a-f]{64}",str(value.get("plugin_selection_sha256",""))) is None):
+  raise CoreRuntimeError("fixed native plugin transition row is malformed")
+ for key in ("old_members","new_members"):
+  members=value.get(key)
+  if (type(members) is not dict or set(members)!=set(_NATIVE_PLUGIN_FILES)
+      or any(type(digest) is not str or re.fullmatch(r"[0-9a-f]{64}",digest) is None
+             for digest in members.values())):
+   raise CoreRuntimeError("fixed native plugin transition member map is malformed")
 _INITIAL_PRIMARY_TRANSITION_FIELDS={
  "schema","purpose","state","prior_record_state","prior_soul_sha256",
  "prior_soul_signature","source_prompt_sha256","managed_block_sha256",
@@ -500,7 +541,8 @@ def _read_adapter_update_cohort(*,allow_absent=False):
     value[key]=item
    return value
   row=json.loads(raw,object_pairs_hook=unique)
-  if (type(row) is not dict or set(row)!=_ADAPTER_COHORT_FIELDS
+  if (type(row) is not dict or frozenset(row) not in {
+       frozenset(_ADAPTER_COHORT_FIELDS),frozenset(_ADAPTER_COHORT_LEGACY_FIELDS)}
       or type(row.get("schema")) is not int or row["schema"]!=1
       or row.get("purpose")!=_ADAPTER_COHORT_PURPOSE
       or type(row.get("owner_uid")) is not int or row["owner_uid"]!=1000
@@ -654,6 +696,9 @@ def _read_adapter_update_cohort(*,allow_absent=False):
    raise ValueError
   canonical=(json.dumps(row,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
   if raw!=canonical: raise ValueError
+  if "native_plugin_transition" not in row:
+   row={**row,"native_plugin_transition":None}
+  _validate_native_plugin_transition_row(row.get("native_plugin_transition"),row)
   return row,raw
  except Exception:
   raise CoreRuntimeError("adapter update cohort journal is malformed or foreign") from None
@@ -696,6 +741,11 @@ def _validate_adapter_update_cohort_journal(record,raw_journal):
      or record.get("unit_sha256")!=cohort["new_unit_sha256"]
      or record.get("launcher_sha256")!=cohort["new_launcher_sha256"]):
   raise CoreRuntimeError("committed adapter cohort tuple differs from final source custody")
+ transition=cohort.get("native_plugin_transition")
+ if transition is not None:
+  _validate_native_plugin_transition_row(transition,cohort)
+  if _native_plugin_member_hashes(_read_installed_native_resources_plugin_members().members)!=transition["new_members"]:
+   raise CoreRuntimeError("committed native plugin bytes differ from the selected cohort")
  if (cohort["new_source"]!=str(ADAPTER_SOURCE)
      or _core_source_generation()!=cohort["new_core_source_generation"]
      or cohort["new_source_recipe_sha256"]!=_adapter_recipe_sha256(
@@ -1055,6 +1105,239 @@ def _projection_at(parent_fd,name,*,owner,group=None,mode=None,maximum):
   return bytes(data)
  finally:
   os.close(fd)
+
+def _native_plugin_source_members(source):
+ """Read the two fixed package members through immutable root-owned directories."""
+ source=Path(source)
+ _validate_adapter_generation_path(source)
+ names={"plugin.yaml":"hermes_installer/components/resources_native_plugin_bundle/plugin.yaml",
+        "__init__.py":"hermes_installer/components/resources_native_plugin_bundle/__init__.py"}
+ result={}
+ for member,relative in names.items():
+  fd=os.open("/",os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0))
+  try:
+   parts=(source/relative).parts[1:]
+   for component in parts[:-1]:
+    child=os.open(component,os.O_RDONLY|getattr(os,"O_DIRECTORY",0)
+                   |getattr(os,"O_NOFOLLOW",0),dir_fd=fd)
+    info=os.fstat(child)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=ROOT_UID
+        or info.st_gid!=ROOT_UID or stat.S_IMODE(info.st_mode)&0o022):
+     os.close(child); raise CoreRuntimeError("native plugin source directory custody differs")
+    os.close(fd); fd=child
+   file_fd=os.open(parts[-1],os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)
+                   |getattr(os,"O_CLOEXEC",0),dir_fd=fd)
+   try:
+    before=os.fstat(file_fd)
+    if (not stat.S_ISREG(before.st_mode) or before.st_uid!=ROOT_UID
+        or before.st_gid!=ROOT_UID or stat.S_IMODE(before.st_mode)&0o222
+        or before.st_nlink!=1 or not 1<=before.st_size<=64*1024):
+     raise CoreRuntimeError("native plugin source member custody differs")
+    chunks=bytearray()
+    while len(chunks)<before.st_size:
+     block=os.read(file_fd,min(8192,before.st_size-len(chunks)))
+     if not block: raise CoreRuntimeError("native plugin source member changed while read")
+     chunks.extend(block)
+    if os.read(file_fd,1): raise CoreRuntimeError("native plugin source member changed while read")
+    after=os.fstat(file_fd); named=os.stat(parts[-1],dir_fd=fd,follow_symlinks=False)
+    signature=lambda item:(item.st_dev,item.st_ino,item.st_mode,item.st_uid,item.st_gid,
+                           item.st_nlink,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
+    if (signature(before)!=signature(after) or signature(before)!=signature(named)
+        or stat.S_ISLNK(named.st_mode)):
+     raise CoreRuntimeError("native plugin source member changed while read")
+    result[member]=bytes(chunks)
+   finally: os.close(file_fd)
+  finally: os.close(fd)
+ if set(result)!=set(_NATIVE_PLUGIN_FILES):
+  raise CoreRuntimeError("native plugin source bundle is incomplete")
+ return result
+
+def _read_installed_native_resources_plugin_members():
+ """Fixed root-only observation used by Core qualification and cohort CAS."""
+ if os.geteuid()!=ROOT_UID:
+  raise CoreRuntimeError("installed native plugin read requires Root")
+ try:
+  from .remote.native_plugin_bootstrap import (
+   NativeResourcesPluginMemberSnapshot,read_installed_native_resources_plugin_members)
+  snapshot=read_installed_native_resources_plugin_members()
+  if (type(snapshot) is not NativeResourcesPluginMemberSnapshot
+      or type(snapshot.members) is not MappingProxyType
+      or type(snapshot.signatures) is not MappingProxyType
+      or set(snapshot.members)!=set(_NATIVE_PLUGIN_FILES)
+      or set(snapshot.signatures)!=set(_NATIVE_PLUGIN_FILES)):
+   raise ValueError
+  members=dict(snapshot.members); signatures=dict(snapshot.signatures)
+  for name in _NATIVE_PLUGIN_FILES:
+   value=members[name]; signature=signatures[name]
+   if (type(value) is not bytes or not 1<=len(value)<=64*1024
+       or type(signature) is not tuple or len(signature)!=9
+       or any(type(part) is not int or part<0 for part in signature)
+       or signature[2]!=0o444 or signature[3]!=ROOT_UID or signature[4]!=ROOT_UID
+       or signature[5]!=1 or signature[6]!=len(value)):
+    raise ValueError
+  return snapshot
+ except Exception:
+  raise CoreRuntimeError("fixed installed native plugin pair is not safely readable") from None
+
+def _native_plugin_member_hashes(members):
+ if type(members) not in (dict,MappingProxyType) or set(members)!=set(_NATIVE_PLUGIN_FILES):
+  raise CoreRuntimeError("native plugin member map is not the fixed pair")
+ return {name:hashlib.sha256(members[name]).hexdigest() for name in _NATIVE_PLUGIN_FILES}
+
+def _native_plugin_transition_scope(operation):
+ """Install one Core-derived context for bootstrap's fixed zero-argument API."""
+ if (operation not in {"prepare","install","restore"} or os.geteuid()!=ROOT_UID
+     or not _ADAPTER_UPDATE_LOCK_HELD.get()):
+  raise CoreRuntimeError("native plugin transition requires the locked Root actor")
+ state=_NATIVE_PLUGIN_TRANSITION_STATE.get()
+ if type(state) is not dict: raise CoreRuntimeError("native plugin transition state is unavailable")
+ if operation=="prepare":
+  row=None; reference=None; phase=None; txid=None
+  signatures=state["old_signatures"]
+ else:
+  cohort,raw=_read_adapter_update_cohort()
+  row=cohort.get("native_plugin_transition")
+  if row is None: raise CoreRuntimeError("cohort has no native plugin transition")
+  reference=_adapter_update_backup_reference(cohort)
+  phase=cohort["phase"]; txid=cohort["cohort_transaction_id"]
+  if operation=="install" and phase!="resources-rebound":
+   raise CoreRuntimeError("native plugin install is outside the resources-rebound phase")
+  if operation=="restore" and phase!="rolling-back":
+   raise CoreRuntimeError("native plugin restore is outside the rollback phase")
+  if (_native_plugin_member_hashes(state["old_members"])!=row["old_members"]
+      or _native_plugin_member_hashes(state["new_members"])!=row["new_members"]
+      or state["plugin_selection_sha256"]!=row["plugin_selection_sha256"]):
+   raise CoreRuntimeError("native plugin context differs from its journaled member pair")
+  if reference!=_adapter_update_backup_reference(cohort):
+   raise CoreRuntimeError("native plugin recovery backup reference changed")
+  signatures=_read_installed_native_resources_plugin_members().signatures
+ context=_NativeResourcesPluginTransitionContext(operation,txid,
+  state["old_adapter_generation"],state["new_adapter_generation"],
+  state["plugin_selection_sha256"],MappingProxyType(dict(state["old_members"])),
+  MappingProxyType(dict(state["new_members"])),MappingProxyType(dict(signatures)),
+  row,reference,phase)
+ token=_NATIVE_PLUGIN_TRANSITION_CONTEXT.set(context)
+ try:
+  if _current_native_resources_plugin_transition() is not context:
+   raise CoreRuntimeError("native plugin transition currentness could not be proven")
+  yield context
+ finally:
+  _NATIVE_PLUGIN_TRANSITION_CONTEXT.reset(token)
+
+def _current_native_resources_plugin_transition():
+ """Return only the live Root-locked context after rechecking its exact joins."""
+ context=_NATIVE_PLUGIN_TRANSITION_CONTEXT.get(); state=_NATIVE_PLUGIN_TRANSITION_STATE.get()
+ if (type(context) is not _NativeResourcesPluginTransitionContext or type(state) is not dict
+     or os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()):
+  raise CoreRuntimeError("native plugin transition context is not current")
+ if (context.old_adapter_generation!=state["old_adapter_generation"]
+     or context.new_adapter_generation!=state["new_adapter_generation"]
+     or context.plugin_selection_sha256!=state["plugin_selection_sha256"]
+     or dict(context.old_members)!=state["old_members"]
+     or dict(context.new_members)!=state["new_members"]
+     or _core_source_generation()!=state["old_core_source_generation"]):
+  raise CoreRuntimeError("native plugin transition source or owner selection changed")
+ from .remote.core_gateway_inspector import _current_native_adapter_generation
+ if _current_native_adapter_generation(deadline=time.monotonic()+20.0)!=context.new_adapter_generation:
+  raise CoreRuntimeError("native plugin candidate generation changed")
+ from .remote.native_plugin_bootstrap import verify_native_resources_plugin_selection
+ selection=verify_native_resources_plugin_selection()
+ if getattr(selection,"selection_sha256",None)!=context.plugin_selection_sha256:
+  raise CoreRuntimeError("native plugin selection changed during transition")
+ snapshot=_read_installed_native_resources_plugin_members()
+ actual=dict(snapshot.members)
+ if context.operation in {"prepare","install"}:
+  if actual!=state["old_members"] or dict(snapshot.signatures)!=dict(context.installed_member_signatures):
+   raise CoreRuntimeError("old native plugin pair changed before transition")
+  if context.operation=="prepare":
+   pidfd=state.get("old_pidfd")
+   if pidfd is None:
+    raise CoreRuntimeError("old native Core PIDFD is unavailable for plugin preparation")
+   poller=select.poll(); poller.register(pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+   if (poller.poll(0)
+       or not _owned_listener_pidfd(adapter_source=Path(state["old_source"]))):
+    raise CoreRuntimeError("old native Core peer changed before plugin preparation")
+  else:
+   if (_run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active"
+       or _run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip() not in {"","0"}
+       or any(_owned_listener(adapter_source=Path(source))
+              for source in (state["old_source"],state["new_source"]))):
+    raise CoreRuntimeError("Core service was not stopped before native plugin installation")
+   cohort,raw=_read_adapter_update_cohort()
+   if (context.cohort_transaction_id!=cohort["cohort_transaction_id"]
+       or context.phase!="resources-rebound" or context.transition_row!=cohort.get("native_plugin_transition")
+       or context.backup_reference!=_adapter_update_backup_reference(cohort)
+       or hashlib.sha256(raw).hexdigest()!=hashlib.sha256(state["cohort_raw"]).hexdigest()):
+    raise CoreRuntimeError("native plugin install cohort changed before effect")
+ else:
+  if (set(actual)!=set(_NATIVE_PLUGIN_FILES)
+      or any(actual[name] not in (state["old_members"][name],state["new_members"][name])
+             for name in _NATIVE_PLUGIN_FILES)
+      or _run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active"
+      or _run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip() not in {"","0"}):
+   raise CoreRuntimeError("current plugin pair or Core service is outside rollback closure")
+  cohort,raw=_read_adapter_update_cohort()
+  if (context.cohort_transaction_id!=cohort["cohort_transaction_id"]
+      or context.phase!=cohort["phase"]
+      or context.transition_row!=cohort.get("native_plugin_transition")
+      or context.backup_reference!=_adapter_update_backup_reference(cohort)):
+   raise CoreRuntimeError("native plugin restore cohort changed before effect")
+  prior,contents=_read_adapter_update_backup(context.backup_reference)
+  _check_adapter_cohort_rollback_currentness(cohort,prior,contents)
+ return context
+
+def _validate_native_plugin_transition_receipt(receipt,operation,context,installed_members):
+ from .remote.native_plugin_bootstrap import NativeResourcesPluginTransitionReceipt
+ try:
+  if (type(receipt) is not NativeResourcesPluginTransitionReceipt or receipt.schema!=1
+      or receipt.operation!=operation or receipt.cohort_transaction_id!=context.cohort_transaction_id
+      or receipt.old_adapter_generation!=context.old_adapter_generation
+      or receipt.new_adapter_generation!=context.new_adapter_generation
+      or receipt.plugin_selection_sha256!=context.plugin_selection_sha256
+      or dict(receipt.old_member_sha256)!=_native_plugin_member_hashes(context.old_members)
+      or dict(receipt.new_member_sha256)!=_native_plugin_member_hashes(context.new_members)
+      or dict(receipt.installed_member_sha256)!=_native_plugin_member_hashes(installed_members)
+      or type(receipt.installed_member_signatures) is not MappingProxyType
+      or set(receipt.installed_member_signatures)!=set(_NATIVE_PLUGIN_FILES)
+      or any(type(receipt.installed_member_signatures[name]) is not tuple
+             or len(receipt.installed_member_signatures[name])!=9
+             or any(type(part) is not int or part<0
+                    for part in receipt.installed_member_signatures[name])
+             for name in _NATIVE_PLUGIN_FILES)):
+   raise ValueError
+  metadata={"schema":receipt.schema,"operation":receipt.operation,
+   "cohort_transaction_id":receipt.cohort_transaction_id,
+   "old_adapter_generation":receipt.old_adapter_generation,
+   "new_adapter_generation":receipt.new_adapter_generation,
+   "plugin_selection_sha256":receipt.plugin_selection_sha256,
+   "old_member_sha256":dict(receipt.old_member_sha256),
+   "new_member_sha256":dict(receipt.new_member_sha256),
+   "installed_member_sha256":dict(receipt.installed_member_sha256),
+   "installed_member_signatures":{name:list(receipt.installed_member_signatures[name])
+    for name in _NATIVE_PLUGIN_FILES}}
+  expected=hashlib.sha256(json.dumps(metadata,sort_keys=True,separators=(",",":"),
+                                     ensure_ascii=True).encode("ascii")).hexdigest()
+  if receipt.receipt_sha256!=expected: raise ValueError
+  return dict(receipt.installed_member_signatures)
+ except Exception:
+  raise CoreRuntimeError("native plugin transition receipt is not an exact readback") from None
+
+def _run_native_plugin_transition(operation):
+ from .remote import native_plugin_bootstrap as bootstrap
+ methods={"prepare":bootstrap.prepare_native_resources_plugin_transition,
+          "install":bootstrap.install_native_resources_plugin_transition,
+          "restore":bootstrap.restore_native_resources_plugin_transition}
+ if operation not in methods: raise CoreRuntimeError("native plugin transition operation is not fixed")
+ with _native_plugin_transition_scope(operation) as context:
+  receipt=methods[operation]()
+ snapshot=_read_installed_native_resources_plugin_members()
+ expected=context.new_members if operation=="install" else context.old_members
+ if dict(snapshot.members)!=dict(expected):
+  raise CoreRuntimeError("native plugin fixed pair differs after transition readback")
+ signatures=_validate_native_plugin_transition_receipt(receipt,operation,context,expected)
+ if dict(snapshot.signatures)!=signatures:
+  raise CoreRuntimeError("native plugin custody signature differs from transition receipt")
+ return receipt
 
 def _hash_generation_tree(home,manifest,files,artifact_sha,*,repair_umask_dirs=False,target_path=None):
  """Independently verify the exact admin-owned materialization and journal."""
@@ -3819,12 +4102,27 @@ def _read_active_adapter_runtime():
 
 def _save_adapter_update_backup(record,raw_journal,files,selection_digest,
                                 *,resources_record,overlay_record,primary_record,
-                                obsidian_registration,prior_cohort):
+                                obsidian_registration,prior_cohort,native_plugin_members=None):
  """Persist a root-only, immutable per-source recovery cohort before switching."""
  old_generation=record["adapter_generation"]
  _ensure_dir(ADAPTER_UPDATE_BACKUPS,ROOT_UID,ROOT_UID,0o700)
  backup=ADAPTER_UPDATE_BACKUPS/old_generation
  _ensure_dir(backup,ROOT_UID,ROOT_UID,0o700)
+ prior_manifest_path=backup/"manifest.json"
+ if native_plugin_members is not None and (prior_manifest_path.exists() or prior_manifest_path.is_symlink()):
+  prior_manifest_raw=_projection_file(prior_manifest_path,owner=ROOT_UID,group=ROOT_UID,
+   mode=0o600,maximum=4096)
+  try: prior_manifest=json.loads(prior_manifest_raw)
+  except (ValueError,TypeError): raise CoreRuntimeError("prior adapter backup manifest is malformed") from None
+  if type(prior_manifest) is not dict or "native-plugin-plugin.yaml" not in prior_manifest:
+   raise CoreRuntimeError("immutable prior adapter backup cannot be extended for native plugin transition")
+ if native_plugin_members is None and (prior_manifest_path.exists() or prior_manifest_path.is_symlink()):
+  prior_manifest_raw=_projection_file(prior_manifest_path,owner=ROOT_UID,group=ROOT_UID,
+   mode=0o600,maximum=4096)
+  try: prior_manifest=json.loads(prior_manifest_raw)
+  except (ValueError,TypeError): raise CoreRuntimeError("prior adapter backup manifest is malformed") from None
+  if type(prior_manifest) is not dict or any(name in prior_manifest for name in _NATIVE_PLUGIN_BACKUP_NAMES.values()):
+   raise CoreRuntimeError("native plugin backup cannot be reinterpreted as a no-transition backup")
  if not re.fullmatch(r"[0-9a-f]{64}",str(selection_digest or "")):
   raise CoreRuntimeError("current native plugin selection receipt is unavailable")
  selection_json=(json.dumps({"schema":1,"selection_sha256":selection_digest},
@@ -3833,6 +4131,14 @@ def _save_adapter_update_backup(record,raw_journal,files,selection_digest,
         "plugin-selection.json":selection_json,"resources-record.json":resources_record,
         "overlay-record.json":overlay_record,"primary-record.json":primary_record,
         "obsidian-registration.json":obsidian_registration,"cohort.json":prior_cohort}
+ if native_plugin_members is not None:
+  if type(native_plugin_members) not in (dict,MappingProxyType) or set(native_plugin_members)!=set(_NATIVE_PLUGIN_FILES):
+   raise CoreRuntimeError("native plugin backup is not the fixed pair")
+  for name,backup_name in _NATIVE_PLUGIN_BACKUP_NAMES.items():
+   content=native_plugin_members[name]
+   if type(content) is not bytes or not 1<=len(content)<=64*1024:
+    raise CoreRuntimeError("native plugin backup member is not bounded bytes")
+   names[backup_name]=content
  manifest={name:hashlib.sha256(content).hexdigest() for name,content in names.items()}
  manifest_bytes=(json.dumps(manifest,sort_keys=True,separators=(",",":"))+"\n").encode("ascii")
  allowed=set(names)|{"manifest.json"}
@@ -3859,16 +4165,23 @@ def _read_adapter_update_backup(reference):
  backup=Path(reference["path"]); info=backup.lstat()
  if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=ROOT_UID or info.st_gid!=ROOT_UID
      or stat.S_IMODE(info.st_mode)!=0o700
-     or set(os.listdir(backup))!={"journal.json","unit","launcher","plugin-selection.json",
+     or set(os.listdir(backup)) not in ({"journal.json","unit","launcher","plugin-selection.json",
        "resources-record.json","overlay-record.json","primary-record.json",
-       "obsidian-registration.json","cohort.json","manifest.json"}):
+       "obsidian-registration.json","cohort.json","manifest.json"},
+       {"journal.json","unit","launcher","plugin-selection.json","resources-record.json",
+        "overlay-record.json","primary-record.json","obsidian-registration.json","cohort.json",
+        "native-plugin-plugin.yaml","native-plugin-__init__.py","manifest.json"})):
   raise CoreRuntimeError("journaled adapter update backup custody differs")
  manifest_raw=_projection_file(backup/"manifest.json",owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=4096)
  try: manifest=json.loads(manifest_raw)
  except (ValueError,TypeError): raise CoreRuntimeError("adapter update backup manifest is invalid") from None
- if type(manifest) is not dict or manifest!=reference["files"] or set(manifest)!={
+ if (type(manifest) is not dict or manifest!=reference["files"] or set(manifest) not in {
+     frozenset({
      "journal.json","unit","launcher","plugin-selection.json","resources-record.json",
-     "overlay-record.json","primary-record.json","obsidian-registration.json","cohort.json"}:
+     "overlay-record.json","primary-record.json","obsidian-registration.json","cohort.json"}),
+     frozenset({"journal.json","unit","launcher","plugin-selection.json","resources-record.json",
+     "overlay-record.json","primary-record.json","obsidian-registration.json","cohort.json",
+     "native-plugin-plugin.yaml","native-plugin-__init__.py"})}):
   raise CoreRuntimeError("adapter update backup manifest is not journal-bound")
  contents={}
  for name,digest in manifest.items():
@@ -4540,6 +4853,21 @@ def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
  launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
  if launcher not in {contents["launcher"],_launcher(adapter_source=Path(cohort["new_source"]))}:
   raise CoreRuntimeError("current launcher is outside the exact source recipes")
+ transition=cohort.get("native_plugin_transition")
+ if transition is None:
+  if any(name in contents for name in _NATIVE_PLUGIN_BACKUP_NAMES.values()):
+   raise CoreRuntimeError("native plugin backup exists without a journaled transition")
+ else:
+  _validate_native_plugin_transition_row(transition,cohort)
+  old_members={name:contents[_NATIVE_PLUGIN_BACKUP_NAMES[name]] for name in _NATIVE_PLUGIN_FILES}
+  new_members=_native_plugin_source_members(Path(cohort["new_source"]))
+  if (_native_plugin_member_hashes(old_members)!=transition["old_members"]
+      or _native_plugin_member_hashes(new_members)!=transition["new_members"]):
+   raise CoreRuntimeError("native plugin source or immutable backup differs from the cohort")
+  current_members=dict(_read_installed_native_resources_plugin_members().members)
+  if any(current_members[name] not in (old_members[name],new_members[name])
+         for name in _NATIVE_PLUGIN_FILES):
+   raise CoreRuntimeError("installed native plugin pair is outside the exact rollback closure")
  old_primary=contents["primary-record.json"]
  try: current_primary=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
   group=ROOT_UID,mode=0o600,maximum=64*1024)
@@ -4640,8 +4968,27 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
   reconstruction=dict(rolling["reconstruction"]); reconstruction["phase"]="rolling-back"
   rolling["reconstruction"]=reconstruction
   rolling["reconstruction_sha256"]=hashlib.sha256(_canonical_json(reconstruction)).hexdigest()
-  _write_adapter_update_cohort(rolling,expected_raw=cohort_raw)
+  cohort_raw=_write_adapter_update_cohort(rolling,expected_raw=cohort_raw)
+  cohort=rolling
  _stop_owned_core_for_adapter_update(allowed_sources)
+ transition=cohort.get("native_plugin_transition") if cohort is not None else None
+ if transition is not None:
+  old_members={name:contents[_NATIVE_PLUGIN_BACKUP_NAMES[name]] for name in _NATIVE_PLUGIN_FILES}
+  new_members=_native_plugin_source_members(Path(cohort["new_source"]))
+  snapshot=_read_installed_native_resources_plugin_members()
+  plugin_state={"old_source":cohort["old_source"],"new_source":cohort["new_source"],
+   "old_adapter_generation":cohort["old_adapter_generation"],
+   "new_adapter_generation":cohort["new_adapter_generation"],
+   "old_core_source_generation":cohort["old_core_source_generation"],
+   "plugin_selection_sha256":transition["plugin_selection_sha256"],
+   "old_members":old_members,"new_members":new_members,
+   "old_signatures":dict(snapshot.signatures),"old_pidfd":None,
+   "cohort_raw":cohort_raw}
+  plugin_token=_NATIVE_PLUGIN_TRANSITION_STATE.set(plugin_state)
+  try:
+   _run_native_plugin_transition("restore")
+  finally:
+   _NATIVE_PLUGIN_TRANSITION_STATE.reset(plugin_token)
  # Keep the deny-by-default cohort guard in place while restoring the old
  # launcher and journal. Restore the exact former unit last, so reboot can
  # never combine a guardless launcher with the new/preparing journal.
@@ -5105,7 +5452,23 @@ def _adapter_update_backup_reference(cohort):
  expected={"journal.json":cohort["old_journal_sha256"],
   "unit":cohort["old_unit_sha256"],"launcher":cohort["old_launcher_sha256"],
   "resources-record.json":cohort["old_resources_record_sha256"]}
- if type(manifest) is not dict or any(manifest.get(name)!=digest for name,digest in expected.items()):
+ transition=cohort.get("native_plugin_transition")
+ if transition is not None:
+  _validate_native_plugin_transition_row(transition,cohort)
+  if transition.get("plugin_selection_sha256")!=json.loads(
+      _projection_file(backup/"journal.json",owner=ROOT_UID,group=ROOT_UID,
+       mode=0o600,maximum=64*1024)).get("plugin_selection_sha256"):
+   raise CoreRuntimeError("native plugin transition selection differs from prior journal")
+  for member,backup_name in _NATIVE_PLUGIN_BACKUP_NAMES.items():
+   expected[backup_name]=transition["old_members"][member]
+ elif set(manifest)!={"journal.json","unit","launcher","plugin-selection.json",
+   "resources-record.json","overlay-record.json","primary-record.json",
+   "obsidian-registration.json","cohort.json"}:
+  raise CoreRuntimeError("native plugin backup exists without a cohort transition")
+ if (type(manifest) is not dict
+     or set(manifest)!=set(expected) | {"plugin-selection.json","overlay-record.json",
+       "primary-record.json","obsidian-registration.json","cohort.json"}
+     or any(manifest.get(name)!=digest for name,digest in expected.items())):
   raise CoreRuntimeError("adapter update recovery backup differs from its cohort")
  return {"path":str(backup),"source_generation":generation,"files":manifest}
 
@@ -5297,18 +5660,41 @@ def _update_owned_core_adapter_locked():
   raise CoreRuntimeError("current native adapter source is already installed")
  from .registry import manual_jarvis_skills as native
  from .remote.core_gateway_inspector import (
-  _current_native_adapter_generation,verify_staged_native_resources_plugin,
+  CORE_NATIVE_ADAPTER_SOURCE_FILES,_current_native_adapter_generation,
+  verify_staged_native_resources_plugin,
  )
  from .remote.native_plugin_bootstrap import verify_native_resources_plugin_selection
  deadline=time.monotonic()+35.0
  new_adapter=_current_native_adapter_generation(deadline=deadline)
- staged_digest=verify_staged_native_resources_plugin(deadline=deadline)
  selection=verify_native_resources_plugin_selection()
  selection_digest=getattr(selection,"selection_sha256",None)
- if (not re.fullmatch(r"[0-9a-f]{64}",str(new_adapter or ""))
-     or not re.fullmatch(r"[0-9a-f]{64}",str(staged_digest or ""))
+ old_plugin_members=_native_plugin_source_members(old_source)
+ new_plugin_members=_native_plugin_source_members(ADAPTER_SOURCE)
+ installed_plugin=_read_installed_native_resources_plugin_members()
+ if dict(installed_plugin.members)!=old_plugin_members:
+  raise CoreRuntimeError("installed native plugin pair differs from the active old source")
+ expected_bundle_hashes={
+  name:CORE_NATIVE_ADAPTER_SOURCE_FILES[
+   "hermes_installer/components/resources_native_plugin_bundle/"+name]
+  for name in _NATIVE_PLUGIN_FILES}
+ if (_native_plugin_member_hashes(new_plugin_members)!=expected_bundle_hashes
      or getattr(selection,"plugin_key",None)!="hermes-installer-resources-delegation"
      or selection_digest!=record["plugin_selection_sha256"]
+     or _core_source_generation()!=old_core):
+  raise CoreRuntimeError("incoming adapter bundle, pinned Core source, or native selection is not verified")
+ plugin_transition=None
+ if old_plugin_members!=new_plugin_members:
+  if (old_plugin_members["plugin.yaml"]!=new_plugin_members["plugin.yaml"]
+      or old_plugin_members["__init__.py"]==new_plugin_members["__init__.py"]):
+   raise CoreRuntimeError("candidate is outside the fixed manifest-stable native plugin transition")
+  plugin_transition={"schema":1,"purpose":"fixed-native-resources-plugin",
+   "old_adapter_generation":old_adapter,"new_adapter_generation":new_adapter,
+   "plugin_selection_sha256":selection_digest,
+   "old_members":_native_plugin_member_hashes(old_plugin_members),
+   "new_members":_native_plugin_member_hashes(new_plugin_members)}
+ staged_digest=None
+ if (not re.fullmatch(r"[0-9a-f]{64}",str(new_adapter or ""))
+     or not re.fullmatch(r"[0-9a-f]{64}",str(selection_digest or ""))
      or _core_source_generation()!=old_core):
   raise CoreRuntimeError("incoming adapter, pinned Core source, or native selection is not verified")
  snapshots=_snapshot_adapter_update_bindings(core_source_generation=old_core)
@@ -5422,6 +5808,12 @@ def _update_owned_core_adapter_locked():
  else: obsidian_state="absent"; obsidian_sha=_ABSENT_DIGEST
  old_pidfd,old_pid,old_process,old_process_sha=_capture_adapter_service_process(
   old_source,old_adapter,old_core)
+ native_plugin_state={"old_source":str(old_source),"new_source":str(ADAPTER_SOURCE),
+  "old_adapter_generation":old_adapter,"new_adapter_generation":new_adapter,
+  "old_core_source_generation":old_core,"plugin_selection_sha256":selection_digest,
+  "old_members":dict(old_plugin_members),"new_members":dict(new_plugin_members),
+  "old_signatures":dict(installed_plugin.signatures),"old_pidfd":old_pidfd,
+  "cohort_raw":None}
  cohort_id=secrets.token_hex(16)
  backup_reference=None; prepared=None; new_pidfd=None
  state={"phase":"prepared","journal_raw":raw_journal,"resources_raw":resources_raw,
@@ -5433,12 +5825,16 @@ def _update_owned_core_adapter_locked():
   "soul_signature":primary_values["soul_signature"] if primary_values["primary_record_sha256"]!=_ABSENT_DIGEST
     else tuple(initial_primary_transition["prior_soul_signature"]) if initial_primary_transition is not None
     else (),
-  "overlay_raw":overlay_raw,"registration_raw":snapshots["obsidian_registration"] or None}
+ "overlay_raw":overlay_raw,"registration_raw":snapshots["obsidian_registration"] or None}
+ native_plugin_state_token=_NATIVE_PLUGIN_TRANSITION_STATE.set(native_plugin_state)
  try:
+  if plugin_transition is not None:
+   _run_native_plugin_transition("prepare")
   backup_reference=_save_adapter_update_backup(record,raw_journal,old_files,selection_digest,
    resources_record=resources_raw,overlay_record=overlay_raw or b"",
    primary_record=primary_raw or b"",obsidian_registration=snapshots["obsidian_registration"],
-   prior_cohort=snapshots["prior_cohort"])
+   prior_cohort=snapshots["prior_cohort"],
+   native_plugin_members=old_plugin_members if plugin_transition is not None else None)
   cohort={"schema":1,"purpose":_ADAPTER_COHORT_PURPOSE,"cohort_transaction_id":cohort_id,
    "owner_uid":1000,"home_role":"jarvis-primary-home","phase":"prepared",
    "old_source":str(old_source),"new_source":str(ADAPTER_SOURCE),
@@ -5458,6 +5854,7 @@ def _update_owned_core_adapter_locked():
    "obsidian_registration_sha256":obsidian_sha,
    "obsidian_vault_tree_sha256":snapshots["obsidian_vault_tree_sha256"],
    "initial_primary_transition":initial_primary_transition,
+   "native_plugin_transition":plugin_transition,
    "reconstruction":None,"reconstruction_sha256":None}
   reconstruction_row=_adapter_update_reconstruction_row(reconstruction,
    cohort_id=cohort_id,phase="prepared",old_core=old_core,new_core=old_core,
@@ -5473,6 +5870,7 @@ def _update_owned_core_adapter_locked():
       or _projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)!=raw_journal):
    raise CoreRuntimeError("deny-by-default old-source gate did not preserve J0")
   state["cohort"]=cohort; state["cohort_raw"]=cohort_raw
+  native_plugin_state["cohort_raw"]=cohort_raw
   def current_check(value,purpose):
    try:
     if (not _ADAPTER_UPDATE_LOCK_HELD.get() or time.monotonic()>=value.expires_monotonic
@@ -5495,10 +5893,12 @@ def _update_owned_core_adapter_locked():
     if (hashlib.sha256(soul_now).hexdigest()!=state["soul_sha256"]
         or (state["soul_signature"] and tuple(soul_signature_now)!=state["soul_signature"])):
      return False
-    from .remote.core_gateway_inspector import _current_native_adapter_generation,verify_staged_native_resources_plugin
+    from .remote.core_gateway_inspector import _current_native_adapter_generation
     if (_current_native_adapter_generation(deadline=time.monotonic()+35.0)!=new_adapter
-        or verify_staged_native_resources_plugin(deadline=time.monotonic()+35.0)!=staged_digest
-        or _core_source_generation()!=old_core): return False
+        or _core_source_generation()!=old_core
+        or _native_plugin_source_members(old_source)!=old_plugin_members
+        or _native_plugin_source_members(ADAPTER_SOURCE)!=new_plugin_members): return False
+    if dict(_read_installed_native_resources_plugin_members().members)!=old_plugin_members: return False
     if current["phase"]=="resources-rebound" and state["phase"]!="resources-rebound": return False
     return True
    except Exception: return False
@@ -5576,6 +5976,7 @@ def _update_owned_core_adapter_locked():
    raise CoreRuntimeError("rebound Resources receipt did not persist exactly")
   state.update({"phase":"resources-rebound","cohort":cohort,"cohort_raw":cohort_raw,
    "resources_raw":rpre_raw})
+  native_plugin_state["cohort_raw"]=cohort_raw
   old_read=_issue_guarded_old_read(cohort=cohort,cohort_raw=cohort_raw,record=record,
    journal_raw=raw_journal,old_unit=old_unit,old_launcher=old_launcher,pidfd=old_pidfd,
    pid=old_pid,process_identity_sha256=old_process_sha,purpose="primary-rebase-readback")
@@ -5603,6 +6004,11 @@ def _update_owned_core_adapter_locked():
   if (_run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active"
       or _run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip() not in {"","0"}):
    raise CoreRuntimeError("old Core service returned during its guarded stop")
+  if plugin_transition is not None:
+   _run_native_plugin_transition("install")
+  staged_digest=verify_staged_native_resources_plugin(deadline=time.monotonic()+35.0)
+  if not re.fullmatch(r"[0-9a-f]{64}",str(staged_digest or "")):
+   raise CoreRuntimeError("new native plugin staged pair did not verify after the guarded swap")
   _atomic_replace(UNIT,new_unit,0o644,ROOT_UID,ROOT_UID)
   _atomic_replace(LAUNCHER,new_launcher,0o755,ROOT_UID,ROOT_UID)
   _run(["systemctl","daemon-reload"])
@@ -5845,6 +6251,7 @@ def _update_owned_core_adapter_locked():
     _PREPARED_SAME_MATERIALIZATION.pop(id(prepared),None)
   _GUARDED_OLD_READ_ACTIVE.clear()
   os.close(old_pidfd)
+  _NATIVE_PLUGIN_TRANSITION_STATE.reset(native_plugin_state_token)
 
 def install_or_resume():
  if os.geteuid()!=0 or not Path("/proc").is_dir(): raise CoreRuntimeError("requires installed Linux root actor")

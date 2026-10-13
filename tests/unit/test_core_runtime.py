@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import MappingProxyType, ModuleType, SimpleNamespace
 
 import pytest
 
@@ -319,6 +319,64 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="act
         "python_uid": 1000, "python_gid": 1000, "python_mode": 0o755,
     })
     bootstrap = ModuleType("hermes_installer.remote.native_plugin_bootstrap")
+    native_plugin_files = ("plugin.yaml", "__init__.py")
+    plugin_bundles = {
+        "old": {"plugin.yaml": b"manifest-v1\n", "__init__.py": b"old native tools\n"},
+        "new": {"plugin.yaml": b"manifest-v1\n", "__init__.py": b"new native tools\n"},
+    }
+    installed_plugin = {name: value for name, value in plugin_bundles["old"].items()}
+    member_inodes = {name: 200 + index for index, name in enumerate(native_plugin_files)}
+    def plugin_snapshot():
+        signatures = {name: (1, member_inodes[name], 0o444, 0, 0, 1,
+                             len(installed_plugin[name]), 1, member_inodes[name])
+                     for name in native_plugin_files}
+        return NativeResourcesPluginMemberSnapshot(MappingProxyType(dict(installed_plugin)),
+                                                   MappingProxyType(signatures))
+    class NativeResourcesPluginMemberSnapshot:
+        def __init__(self, members, signatures):
+            self.members = members
+            self.signatures = signatures
+    bootstrap.NativeResourcesPluginMemberSnapshot = NativeResourcesPluginMemberSnapshot
+    bootstrap.NativeResourcesPluginTransitionReceipt = type("NativeResourcesPluginTransitionReceipt", (), {})
+    bootstrap.read_installed_native_resources_plugin_members = plugin_snapshot
+    def transition_receipt(operation):
+        context = core._current_native_resources_plugin_transition()
+        calls.append((("native-plugin", operation), core._run(
+            ["systemctl", "is-active", core.SERVICE], False).stdout.strip()))
+        if operation == "install":
+            installed_plugin.update(context.new_members)
+            member_inodes["__init__.py"] += 1
+        elif operation == "restore":
+            installed_plugin.update(context.old_members)
+            member_inodes["__init__.py"] += 1
+        installed = dict(installed_plugin)
+        signatures = dict(plugin_snapshot().signatures)
+        hashes = lambda members: {name: hashlib.sha256(members[name]).hexdigest()
+                                  for name in native_plugin_files}
+        metadata = {"schema": 1, "operation": operation,
+            "cohort_transaction_id": context.cohort_transaction_id,
+            "old_adapter_generation": context.old_adapter_generation,
+            "new_adapter_generation": context.new_adapter_generation,
+            "plugin_selection_sha256": context.plugin_selection_sha256,
+            "old_member_sha256": hashes(dict(context.old_members)),
+            "new_member_sha256": hashes(dict(context.new_members)),
+            "installed_member_sha256": hashes(installed),
+            "installed_member_signatures": {name: list(signatures[name])
+                for name in native_plugin_files}}
+        receipt = bootstrap.NativeResourcesPluginTransitionReceipt()
+        for key, value in metadata.items():
+            if key == "installed_member_signatures":
+                value = MappingProxyType({name: tuple(signature) for name, signature in value.items()})
+            elif key in {"old_member_sha256", "new_member_sha256", "installed_member_sha256"}:
+                value = MappingProxyType(value)
+            setattr(receipt, key, value)
+        receipt.receipt_sha256 = hashlib.sha256(
+            json.dumps(metadata, sort_keys=True, separators=(",", ":"),
+                       ensure_ascii=True).encode("ascii")).hexdigest()
+        return receipt
+    bootstrap.prepare_native_resources_plugin_transition = lambda: transition_receipt("prepare")
+    bootstrap.install_native_resources_plugin_transition = lambda: transition_receipt("install")
+    bootstrap.restore_native_resources_plugin_transition = lambda: transition_receipt("restore")
     def enable_plugin():
         calls.append((("bridge", "enable"), core.UNIT.exists()))
         return SimpleNamespace(plugin_key="hermes-installer-resources-delegation")
@@ -337,10 +395,16 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="act
     inspector = ModuleType("hermes_installer.remote.core_gateway_inspector")
     inspector._current_native_adapter_generation = lambda *, deadline: "a" * 64
     inspector.verify_staged_native_resources_plugin = lambda *, deadline: "b" * 64
+    inspector.CORE_NATIVE_ADAPTER_SOURCE_FILES = {
+        "hermes_installer/components/resources_native_plugin_bundle/" + name:
+            hashlib.sha256(plugin_bundles["new"][name]).hexdigest()
+        for name in native_plugin_files}
     monkeypatch.setitem(sys.modules,
                         "hermes_installer.remote.native_plugin_bootstrap", bootstrap)
     monkeypatch.setitem(sys.modules,
                         "hermes_installer.remote.core_gateway_inspector", inspector)
+    monkeypatch.setattr(core, "_native_plugin_source_members",
+        lambda source: dict(plugin_bundles["new" if Path(source) == core.ADAPTER_SOURCE else "old"]))
     return calls, enabled, launcher_bytes, selection
 
 
@@ -464,6 +528,8 @@ def test_post_migration_recovery_restores_exact_legacy_files_and_selection(tmp_p
     ordered = [call[0] for call in calls]
     assert ordered.index(("systemctl", "stop", core.SERVICE)) < ordered.index(
         ("systemctl", "start", core.SERVICE))
+    assert ordered.index(("systemctl", "stop", core.SERVICE)) < ordered.index(
+        ("native-plugin", "install")) < ordered.index(("systemctl", "start", core.SERVICE))
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
@@ -542,6 +608,10 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     backup = core.ADAPTER_UPDATE_BACKUPS / prior["adapter_generation"]
     assert (backup / "launcher").read_bytes() == prior_launcher
     assert json.loads((backup / "journal.json").read_bytes()) == prior
+    backup_manifest = json.loads((backup / "manifest.json").read_bytes())
+    assert {"native-plugin-plugin.yaml", "native-plugin-__init__.py"} <= set(backup_manifest)
+    assert (backup / "native-plugin-plugin.yaml").read_bytes() == b"manifest-v1\n"
+    assert (backup / "native-plugin-__init__.py").read_bytes() == b"old native tools\n"
     assert selection["value"] == prior["plugin_selection_sha256"]
     assert reload_service_states == [False]
     assert automatic_restarts == []
@@ -587,6 +657,9 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
     assert core.TOKEN.read_bytes() == token
     assert enabled["value"]
     assert attempts["wait"] == 2
+    ordered = [call[0] for call in _calls]
+    assert ordered.index(("native-plugin", "install")) < ordered.index(
+        ("native-plugin", "restore")) < ordered.index(("systemctl", "start", core.SERVICE))
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
