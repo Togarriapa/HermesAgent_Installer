@@ -501,3 +501,126 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
         path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
         result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_plugin_settings_form_is_typed_exact_and_revision_bound():
+    harness = r'''
+class Target {
+  constructor(tagName='div') { this.tagName=tagName; this.listeners=new Map(); this.children=[]; this.disabled=false; this.textContent=''; this.value=''; this.attributes={}; this.open=false; }
+  append(...nodes) { for (const node of nodes) { node.parent=this; this.children.push(node); } }
+  replaceChildren(...nodes) { this.children=[]; this.append(...nodes); }
+  remove() { if (this.parent) this.parent.children=this.parent.children.filter(node=>node!==this); this.removed=true; }
+  setAttribute(key,value) { this.attributes[key]=value; }
+  addEventListener(type,listener,options={}) {
+    if (options.signal && options.signal.aborted) return;
+    const entry={listener,once:options.once===true}; const rows=this.listeners.get(type)||[]; rows.push(entry); this.listeners.set(type,rows);
+    if (options.signal) options.signal.addEventListener('abort',()=>this.listeners.set(type,(this.listeners.get(type)||[]).filter(row=>row!==entry)),{once:true});
+  }
+  dispatch(type,event={}) {
+    for (const entry of [...(this.listeners.get(type)||[])]) {
+      if (entry.once) this.listeners.set(type,(this.listeners.get(type)||[]).filter(row=>row!==entry));
+      const result=entry.listener(event); if (result && typeof result.then==='function') return result;
+    }
+  }
+  querySelector(selector) {
+    if (this.selectors && this.selectors.has(selector)) return this.selectors.get(selector);
+    const wanted=selector.toLowerCase();
+    const visit=node=>{ for (const child of node.children) { if (child.tagName===wanted) return child; const found=visit(child); if (found) return found; } return null; };
+    return visit(this);
+  }
+  showModal() { this.open=true; }
+  close() { this.open=false; this.dispatch('close'); }
+  focus() { global.document.activeElement=this; }
+}
+function deferred() { let resolve,reject; const promise=new Promise((yes,no)=>{resolve=yes;reject=no;}); return {promise,resolve,reject}; }
+function all(node) { return [node,...node.children.flatMap(all)]; }
+function button(root,label) { return all(root).find(node=>node.tagName==='button'&&node.textContent===label); }
+function makeSnapshot(revision,settings=validSettings()) { return {schema:1,revision,readiness:'observed',items:[{
+  kind:'plugins',id:'owner-plugin-id',name:'safe-package',label:'Safe package',source:'useradded',editable:true,removable:true,
+  settingsRevision:'a'.repeat(64),settings}]}; }
+function validSettings() { return [
+  {key:'site_name',label:'Site name',type:'string',value:'Home',required:true},
+  {key:'enabled',label:'Enabled',type:'boolean',value:true,required:true},
+  {key:'mode',label:'Mode',type:'enum',choices:['safe','strict'],value:'strict',required:true},
+  {key:'limit',label:'Limit',type:'number',value:2,required:true}
+]; }
+function makeRoot() {
+  const root=new Target(); root.selectors=new Map();
+  const list=new Target(),status=new Target(),refresh=new Target('button'); refresh.textContent='Refresh';
+  root.append(list,status,refresh);
+  root.selectors.set('[data-extension-list]',list); root.selectors.set('[data-extension-status]',status); root.selectors.set('[data-extension-refresh]',refresh);
+  for (const key of ['skill','plugin','mcp']) { const form=new Target('form'),input=new Target('input'),submit=new Target('button'); form.append(input,submit); root.selectors.set(`[data-add-${key}]`,form); root.append(form); }
+  root.selectors.set('[data-feature-root="extensions"]',root); return {root,list,status,refresh};
+}
+function makeApi() { const gets=[],posts=[]; return {gets,posts,get(path) { const d=deferred(); gets.push({path,...d}); return d.promise; },post(path,body) { const d=deferred(); posts.push({path,body,...d}); return d.promise; }}; }
+global.document={activeElement:null,createElement:tag=>new Target(tag)};
+global.FormData=class { constructor(form) { this.form=form; } get() { return null; } };
+global.window={prompt:message=>{const match=message.match(/^Type (.+) to confirm/);return match?match[1]:null;},confirm:()=>true};
+global.crypto={getRandomValues:bytes=>{bytes.fill(5);return bytes;}};
+global.btoa=value=>Buffer.from(value,'binary').toString('base64');
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+function editor(view) { return all(view.list).find(node=>node.tagName==='dialog'); }
+function field(dialog,key) { return all(dialog).find(node=>node.id && node.id===key); }
+function settingInput(dialog,index) { return all(dialog).find(node=>node.id===`extension-setting-${index}`); }
+function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form'); form.dispatch('submit',{preventDefault(){this.prevented=true;}}); }
+(async()=>{
+  const view=makeRoot(),api=makeApi(),unmount=mount(view.root,api);
+  api.gets[0].resolve(makeSnapshot('source-1')); await flush();
+  const opener=button(view.list,'Edit settings'); opener.focus(); opener.dispatch('click');
+  let dialog=editor(view); assert.ok(dialog && dialog.open);
+  assert.match(all(dialog).map(node=>node.textContent).join(' '),/Plugin: safe-package · Source: useradded · Inventory revision: source-1 · Native settings revision: a{64}/);
+  assert.match(all(dialog).map(node=>node.textContent).join(' '),/Nothing changes until you choose Save/);
+  const string=settingInput(dialog,0),bool=settingInput(dialog,1),enumeration=settingInput(dialog,2),number=settingInput(dialog,3);
+  assert.equal(string.tagName,'textarea'); assert.equal(string.maxLength,2048);
+  assert.equal(bool.tagName,'select'); assert.equal(enumeration.tagName,'select'); assert.equal(number.type,'number'); assert.equal(number.step,'any');
+
+  // Each native type rejects implicit, empty, or invalid values before any POST.
+  bool.value=''; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Choose true or false explicitly/); assert.equal(api.posts.length,0);
+  bool.value='false'; enumeration.value=''; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Choose one exact native option/); assert.equal(api.posts.length,0);
+  enumeration.value='safe'; number.value='Infinity'; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/Enter a finite number/); assert.equal(api.posts.length,0);
+  number.value='2.5'; string.value='   '; submit(dialog); assert.match(all(dialog).map(node=>node.textContent).join(' '),/This setting is required/); assert.equal(api.posts.length,0);
+  assert.equal(document.activeElement,string,'invalid submission focuses the first invalid control');
+
+  string.value='Office'; submit(dialog); await flush();
+  assert.equal(api.posts.length,1); assert.equal(api.posts[0].path,'/chat/api/extensions/plugins/edit');
+  assert.deepEqual(Object.keys(api.posts[0].body).sort(),['confirmation','idempotency_key','item_id','revision','values']);
+  assert.equal(api.posts[0].body.item_id,'owner-plugin-id'); assert.equal(api.posts[0].body.revision,'source-1');
+  assert.equal(api.posts[0].body.confirmation,'EDIT Safe package');
+  assert.deepEqual(api.posts[0].body.values,{site_name:'Office',enabled:false,mode:'safe',limit:2.5});
+  assert.match(api.posts[0].body.idempotency_key,/^[A-Za-z0-9_-]{32}$/);
+  assert.ok(all(view.root).filter(node=>node.tagName==='button'&&node!==view.refresh).every(node=>node.disabled), 'all owner actions stay blocked during the confirmed mutation');
+  api.posts[0].resolve({status:'applied'}); await flush(); assert.equal(api.gets.length,2);
+  api.gets[1].resolve(makeSnapshot('source-2')); await flush();
+  assert.match(view.status.textContent,/current inventory readback completed/);
+
+  // Cancel, Escape, and unmount close without writes and return focus to the invoking card action.
+  let currentOpener=button(view.list,'Edit settings'); currentOpener.focus(); currentOpener.dispatch('click'); dialog=editor(view);
+  button(dialog,'Cancel').dispatch('click'); assert.equal(document.activeElement,currentOpener); assert.equal(api.posts.length,1);
+  currentOpener=button(view.list,'Edit settings'); currentOpener.focus(); currentOpener.dispatch('click'); dialog=editor(view);
+  dialog.close(); assert.equal(document.activeElement,currentOpener,'native Escape close restores opener focus'); assert.equal(api.posts.length,1);
+  currentOpener=button(view.list,'Edit settings'); currentOpener.focus(); currentOpener.dispatch('click'); dialog=editor(view);
+  unmount(); assert.equal(document.activeElement,currentOpener,'unmount closes editor and restores focus'); assert.equal(api.posts.length,1);
+
+  // Malformed schemas remain visible as pending and cannot be silently narrowed into an edit.
+  const badView=makeRoot(),badApi=makeApi(),dispose=mount(badView.root,badApi);
+  badApi.gets[0].resolve(makeSnapshot('bad-rev',[{key:'opaque',label:'Opaque',type:'secret',value:'hidden'}])); await flush();
+  const badOpener=button(badView.list,'Edit settings'); badOpener.dispatch('click'); const pending=editor(badView);
+  assert.match(all(pending).map(node=>node.textContent).join(' '),/Editing remains pending/);
+  assert.equal(button(pending,'Save settings').disabled,true);
+  assert.equal(all(pending).some(node=>node.textContent==='hidden'),false,'untrusted unsupported values are never rendered');
+  pending.close(); assert.equal(badApi.posts.length,0); dispose();
+
+  // A refresh while an editor is open cannot rebind the form to a newer inventory revision.
+  const staleView=makeRoot(),staleApi=makeApi(),clean=mount(staleView.root,staleApi);
+  staleApi.gets[0].resolve(makeSnapshot('stale-1')); await flush();
+  const staleOpener=button(staleView.list,'Edit settings'); staleOpener.dispatch('click'); const staleDialog=editor(staleView);
+  staleView.refresh.dispatch('click'); staleApi.gets[1].resolve(makeSnapshot('stale-2')); await flush();
+  submit(staleDialog); await flush(); assert.equal(staleApi.posts.length,0); assert.match(staleView.status.textContent,/source changed while this editor was open/);
+  assert.equal(document.activeElement,staleOpener); clean();
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''.replace('MOUNT', FEATURE_ASSETS.mount_js)
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "plugin-settings-form-harness.js"
+        path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
