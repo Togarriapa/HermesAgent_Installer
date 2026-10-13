@@ -1196,6 +1196,10 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                         routes = [route for route in app.router.routes()
                                   if getattr(route.resource, "canonical", None) == path]
                         self.assertEqual([route.method for route in routes], ["GET"])
+                ecosystem_routes = [route for route in app.router.routes()
+                                    if getattr(route.resource, "canonical", None)
+                                    == "/chat/api/ecosystem"]
+                self.assertEqual([route.method for route in ecosystem_routes], ["GET"])
                 decision_routes = [
                     route for route in app.router.routes()
                     if getattr(route.resource, "canonical", None)
@@ -1278,3 +1282,215 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                             self.assertEqual(await response.text(), "Forbidden")
                 finally:
                     await client.close()
+
+
+class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
+    async def test_profiles_fail_closed_under_email_union_without_narrowing_family_reads(self):
+        from hermes_installer.remote.core_gateway_inspector import CoreGatewayInspector
+        from hermes_installer.remote.jarvis_ecosystem import install_jarvis_ecosystem_routes
+        from hermes_installer.remote.jarvis_profiles_admin import (
+            JarvisProfileAdmin, ProfileAdminDescriptor, install_jarvis_profiles_admin_routes,
+        )
+
+        class CountingProvider:
+            def __init__(self):
+                self.calls = []
+
+            def list_profiles(self, **_kwargs):
+                self.calls.append("list")
+                return (ProfileAdminDescriptor("hermes", "Jarvis", "jarvis", "f" * 64, ("soul",)),)
+
+            def read_file(self, **_kwargs):
+                self.calls.append("read")
+                raise AssertionError("profile provider must not be reached for denied authority")
+
+            def write_generation(self, **_kwargs):
+                self.calls.append("write")
+                raise AssertionError("profile provider must not be reached for denied authority")
+
+        def accepted_for(config, *, email, token):
+            base = _accepted_observation(config, now=time.monotonic())
+            principal = dataclasses.replace(base.principal, email=email,
+                token_fingerprint=hashlib.sha256(token.encode("ascii")).hexdigest())
+            claim = core_gateway._accepted_claim_digest(principal=principal,
+                jwt_expiry=base.jwt_expires_monotonic, root_proof=base.root_observation,
+                peer=(base.peer_pid, base.peer_uid, base.peer_gid),
+                listener=(base.listener_device, base.listener_inode),
+                issued=base.issued_monotonic, expiry=base.expires_monotonic,
+                core_generation=base.core_generation, config_sha256=base._config_sha256)
+            return dataclasses.replace(base, principal=principal, _claim_sha256=claim)
+
+        def make_app(config, accepted, provider, store_path):
+            from hermes_installer.remote.jarvis_profiles_admin import JarvisProfileAdmin
+            launch = core_gateway.CoreGatewayLaunch(config, RemotePolicy(
+                config.hostname, config.issuer, config.audience, config.allowed_emails, {}))
+            service = _jarvis_service(launch, store_path)
+            service.inspector = CoreGatewayInspector(config)
+            app = web.Application(middlewares=[web.middleware(core_gateway._core_ingress_middleware)])
+            app["core_gateway_launch"] = launch
+            service.install(app)
+            install_jarvis_profiles_admin_routes(app, service, JarvisProfileAdmin(provider))
+            install_jarvis_ecosystem_routes(app, service)
+            return app
+
+        token = "current-approved-access-token"
+        union = frozenset({"owner@example.test", "member@example.test", "guest@example.test"})
+        union_config = dataclasses.replace(_config(), allowed_emails=union)
+        union_accepted = accepted_for(union_config, email="owner@example.test", token=token)
+        denied_provider = CountingProvider()
+        activity = {"schema": 1, "observed_at": time.time(), "window_seconds": 604800,
+                    "coverage": "observed-callbacks", "instances": [], "relations": []}
+        with tempfile.TemporaryDirectory(prefix="jarvis-profile-union-") as temporary:
+            app = make_app(union_config, union_accepted, denied_provider,
+                           Path(temporary) / "union.sqlite3")
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            headers = {"Host": union_config.hostname, "Cf-Access-Jwt-Assertion": token}
+            try:
+                with patch.object(core_gateway, "_read_config_current"), \
+                     patch.object(core_gateway, "accept_core_ingress", return_value=union_accepted), \
+                     patch.object(core_gateway.CoreAcceptedIngressObservation,
+                                  "verify_current", return_value=True), \
+                     patch.object(CoreGatewayInspector, "read_native_activity", return_value=activity):
+                    conversations = await client.get("/chat/api/conversations", headers=headers)
+                    self.assertEqual(conversations.status, 200)
+                    ecosystem = await client.get("/chat/api/ecosystem", headers=headers)
+                    self.assertEqual(ecosystem.status, 200)
+                    self.assertEqual((await ecosystem.json())["schema"], 1)
+                    same_origin = {**headers, "Origin": f"https://{union_config.hostname}",
+                                   "Sec-Fetch-Site": "same-origin"}
+                    with patch.object(core_gateway_inspector, "verify_current_core_overview",
+                                      side_effect=AssertionError("union admin must deny before Core overview")) as overview:
+                        responses = [
+                            await client.get("/chat/api/profiles", headers=headers),
+                            await client.get("/chat/api/profiles/hermes/files/soul", headers=headers),
+                            await client.post("/chat/api/profiles/hermes/preview", headers=same_origin, json={}),
+                            await client.post("/chat/api/profiles/hermes/save", headers=same_origin, json={}),
+                        ]
+                    self.assertTrue(all(response.status == 403 for response in responses),
+                                    [response.status for response in responses])
+                    messages = [await response.text() for response in responses]
+                    self.assertTrue(all("Administrator access setup is pending" in message
+                                        for message in messages))
+                    overview.assert_not_called()
+                    self.assertEqual(denied_provider.calls, [])
+            finally:
+                await client.close()
+
+        # With one configured email and that exact current principal, the reviewed list reaches
+        # its provider. A singleton is a narrow admission condition, not an original-admin role.
+        single_config = _config()
+        single_accepted = accepted_for(single_config, email="owner@example.test", token=token)
+        allowed_provider = CountingProvider()
+        with tempfile.TemporaryDirectory(prefix="jarvis-profile-single-") as temporary:
+            app = make_app(single_config, single_accepted, allowed_provider,
+                           Path(temporary) / "single.sqlite3")
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            headers = {"Host": single_config.hostname, "Cf-Access-Jwt-Assertion": token}
+            overview = SimpleNamespace(core_generation=single_accepted.core_generation,
+                                       verify_current=lambda _config, **kwargs: (
+                                           _config is single_config
+                                           and kwargs.get("peer_pid") == single_accepted.peer_pid
+                                           and kwargs.get("peer_uid") == single_accepted.peer_uid
+                                           and kwargs.get("peer_gid") == single_accepted.peer_gid
+                                           and kwargs.get("accepted_ingress") is single_accepted))
+            try:
+                with patch.object(core_gateway, "_read_config_current"), \
+                     patch.object(core_gateway, "accept_core_ingress", return_value=single_accepted), \
+                     patch.object(core_gateway.CoreAcceptedIngressObservation,
+                                  "verify_current", return_value=True), \
+                     patch.object(core_gateway_inspector, "verify_current_core_overview",
+                                  return_value=overview):
+                    response = await client.get("/chat/api/profiles", headers=headers)
+                self.assertEqual(response.status, 200)
+                self.assertEqual(allowed_provider.calls, ["list"])
+            finally:
+                await client.close()
+
+        # A singleton configured owner does not admit another currently approved union member.
+        mismatch = accepted_for(single_config, email="member@example.test", token=token)
+        mismatch_provider = CountingProvider()
+        with tempfile.TemporaryDirectory(prefix="jarvis-profile-mismatch-") as temporary:
+            app = make_app(single_config, mismatch, mismatch_provider,
+                           Path(temporary) / "mismatch.sqlite3")
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            headers = {"Host": single_config.hostname, "Cf-Access-Jwt-Assertion": token}
+            try:
+                with patch.object(core_gateway, "_read_config_current"), \
+                     patch.object(core_gateway, "accept_core_ingress", return_value=mismatch), \
+                     patch.object(core_gateway.CoreAcceptedIngressObservation,
+                                  "verify_current", return_value=True), \
+                     patch.object(core_gateway_inspector, "verify_current_core_overview",
+                                  side_effect=AssertionError("caller mismatch must deny before Core overview")):
+                    response = await client.get("/chat/api/profiles", headers=headers)
+                self.assertEqual(response.status, 403)
+                self.assertIn("Administrator access setup is pending", await response.text())
+                self.assertEqual(mismatch_provider.calls, [])
+            finally:
+                await client.close()
+
+    def test_profile_admin_inspector_allows_matching_singleton_before_native_list(self):
+        config = _config()
+        token = "single-owner-profile-token"
+        principal = Principal("owner@example.test", "owner-subject", time.time() + 60,
+                              hashlib.sha256(token.encode("ascii")).hexdigest())
+        core_generation = "c" * 64
+        source_generation = "d" * 64
+        proof_sha256 = "e" * 64
+        now = time.monotonic()
+        retained = SimpleNamespace(expires_monotonic=now + 4, nonce="f" * 64,
+            issued_monotonic=now, caller_start_ticks="88", proof_sha256=proof_sha256,
+            owner_subject_sha256=hashlib.sha256(b"owner-subject").hexdigest())
+        current = {"proof_sha256": proof_sha256, "core_generation": core_generation,
+                   "core_source_generation": source_generation}
+        custody = SimpleNamespace(core_generation=core_generation,
+            core_source_generation=source_generation, _core_pidfd=91)
+        catalog = {"sources": {"hermes": object()}, "manifest": {}}
+        current_rows = [{"profile_id": "hermes", "files": [{"kind": "soul"}]}]
+        request = {"schema": 1, "op": "owner-profile-admin", "action": "list",
+            "nonce": "a" * 64, "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
+            "access_jwt": token, "core_generation": core_generation,
+            "ingress_nonce": "b" * 64, "ingress_proof_sha256": "9" * 64}
+        with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="88"), \
+             patch.object(core_gateway_inspector, "_consume_ingress_issue", return_value=retained), \
+             patch.object(core_gateway_inspector, "observe_current_ingress", return_value=current), \
+             patch.object(core_gateway_inspector, "_check_unit_process",
+                          return_value=(92, "88", "gateway-invocation")), \
+             patch.object(core_gateway_inspector.os, "close"), \
+             patch.object(core_gateway_inspector, "_learning_jwks", return_value={}), \
+             patch("hermes_installer.remote.gateway.validate_access_jwt", return_value=principal), \
+             patch("hermes_installer.components.resources_active_profile_source._read_catalog",
+                   return_value=catalog), \
+             patch.object(core_gateway_inspector, "capture_current_core_native_custody",
+                          side_effect=[custody, custody]), \
+             patch("hermes_installer.remote.jarvis_profile_source_adapter.current_profile_files",
+                   return_value=current_rows) as list_native:
+            result = core_gateway_inspector.observe_profile_admin(config, request=request,
+                caller_pid=440, caller_uid=996, caller_gid=981,
+                peer_pid=551, peer_uid=996, peer_gid=981)
+        self.assertEqual(result["action"], "list")
+        self.assertEqual(result["result"], current_rows)
+        list_native.assert_called_once_with(("hermes",))
+        wrong_principal = Principal("member@example.test", "owner-subject", time.time() + 60,
+                                    hashlib.sha256(token.encode("ascii")).hexdigest())
+        with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="88"), \
+             patch.object(core_gateway_inspector, "_consume_ingress_issue", return_value=retained), \
+             patch.object(core_gateway_inspector, "observe_current_ingress", return_value=current), \
+             patch.object(core_gateway_inspector, "_check_unit_process",
+                          return_value=(92, "88", "gateway-invocation")), \
+             patch.object(core_gateway_inspector.os, "close"), \
+             patch.object(core_gateway_inspector, "_learning_jwks", return_value={}), \
+             patch("hermes_installer.remote.gateway.validate_access_jwt",
+                   return_value=wrong_principal), \
+             patch("hermes_installer.components.resources_active_profile_source._read_catalog",
+                   side_effect=AssertionError("wrong caller must be denied before catalog access")), \
+             patch.object(core_gateway_inspector, "capture_current_core_native_custody",
+                          side_effect=AssertionError("wrong caller must be denied before native custody")) as custody_call:
+            with self.assertRaisesRegex(core_gateway_inspector.CoreInspectionDenied,
+                                        "Profile administration owner is unavailable"):
+                core_gateway_inspector.observe_profile_admin(config, request=request,
+                    caller_pid=440, caller_uid=996, caller_gid=981,
+                    peer_pid=551, peer_uid=996, peer_gid=981)
+        custody_call.assert_not_called()

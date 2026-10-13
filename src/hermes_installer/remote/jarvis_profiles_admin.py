@@ -618,6 +618,13 @@ async def _current_owner(request: Any, service: JarvisChatService):
     if (type(accepted) is not CoreAcceptedIngressObservation or launch is None
             or accepted.core_generation != principal.core_generation):
         raise web.HTTPServiceUnavailable(text="current Core is unavailable", headers=_secure_headers())
+    allowed_emails = launch.config.allowed_emails
+    if (len(allowed_emails) != 1
+            or not isinstance(accepted.principal.email, str)
+            or accepted.principal.email.casefold() != next(iter(allowed_emails), None)):
+        raise web.HTTPForbidden(
+            text="Global profile administration is unavailable for household access. Administrator access setup is pending; household chat remains available.",
+            headers=_secure_headers())
     try:
         observation = await asyncio.wait_for(asyncio.to_thread(
             verify_current_core_overview, launch.config, peer_pid=accepted.peer_pid,
