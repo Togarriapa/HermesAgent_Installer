@@ -977,3 +977,24 @@ passing except phone and wide control sizing: Extensions search/select had a
 and 38px. A focused CSS correction was in progress. This is not a deployed
 feature result or full UI acceptance. No full M1 acceptance is inferred from
 the A0 probes, active-unit readback, staged candidate or synthetic renderer.
+
+## Follow-on Pi 140 and Feature 58e evidence
+
+The native candidate 140 runner completed its denial group: both A0 positive
+cases and all 12 denial cases passed (985.45s); denial-log SHA-256 was
+`1d62a051ca06eaee256d69e7cece701c5f8375dda367b85e6e74122b5906e88e`. The
+update-positive case failed after 84.36s because the Root `runuser` parent,
+command, or inherited pipe changed. The importer exited `-9` during possible
+guarded cleanup; this is not evidence of OOM. The restart group was not run.
+Native diagnostic `1f4` was reviewed. Source 141
+(`4ff47f6bd44fefe4c7cc9497131b9251126055d9`) was staged pending, without a
+code or guard change. No update or restart acceptance is claimed.
+
+Feature follow-on `58e` passed Chromium checks with no failed checks at all
+three viewports; phone and wide flows also passed, and Root visually inspected
+the phone skill workbench. After correcting the knowledge CSS lookup, its
+source-bound contracts passed 71 checks in 1.92s. The one-file test lookup
+correction did not change production CSS; all other files remained unchanged.
+Earlier selector/import and asset-path failures were test invocation/contract
+errors, not product regressions. This Feature result was not deployed. The
+native and Feature evidence does not establish full M1 acceptance.
