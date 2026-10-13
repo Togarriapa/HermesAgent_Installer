@@ -2509,6 +2509,8 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
             or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
             or not _is_hash(request.get("ingress_proof_sha256"))):
         raise CoreInspectionDenied("Profile administration request is invalid")
+    if len(config.allowed_emails) != 1:
+        raise CoreInspectionDenied("Global profile administration is pending original global-admin registration; configure exactly one approved email")
     if action not in {"list", "skills-list", "skills-archives-list"}:
         if action in {"skill-read", "skill-write", "skill-archive", "skill-restore", "skill-restore-list"}:
             if (not isinstance(request.get("skill_id"), str)
@@ -2552,7 +2554,7 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
     principal = validate_access_jwt(request["access_jwt"],
         policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
     owner_hash = hashlib.sha256(principal.subject.encode("utf-8", "strict")).hexdigest()
-    if (principal.email.casefold() not in config.allowed_emails
+    if (principal.email.casefold() != next(iter(config.allowed_emails))
             or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest() != principal.token_fingerprint
             or owner_hash != retained.owner_subject_sha256
             or request["core_generation"] != current["core_generation"]):
