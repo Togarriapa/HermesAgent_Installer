@@ -842,10 +842,51 @@ def test_install_resume_and_rollback_use_only_fixed_owned_paths(tmp_path, monkey
 
 def test_interrupted_recovery_reuses_an_already_held_lock(tmp_path, monkeypatch):
     _fake_runtime(tmp_path, monkeypatch)
+    def fail_if_nested_lock():
+        raise AssertionError("held recovery attempted a nested adapter lock")
+
+    def fail_during_protected_read(*, allow_absent=False):
+        assert allow_absent is True
+        assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+        raise core.CoreRuntimeError("injected protected cohort read failure")
+
     with core._adapter_update_lock():
         assert core._ADAPTER_UPDATE_LOCK_HELD.get()
-        core._recover_interrupted_adapter_update()
+        monkeypatch.setattr(core, "_adapter_update_lock", fail_if_nested_lock)
+        monkeypatch.setattr(core, "_read_adapter_update_cohort", fail_during_protected_read)
+        with pytest.raises(core.CoreRuntimeError, match="injected protected cohort read failure"):
+            core._recover_interrupted_adapter_update()
         assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+    assert not core._ADAPTER_UPDATE_LOCK_HELD.get()
+
+
+def test_interrupted_recovery_locks_before_cohort_read_and_releases_on_failure(
+        tmp_path, monkeypatch):
+    _fake_runtime(tmp_path, monkeypatch)
+    events = []
+    original_lock = core._adapter_update_lock
+
+    @contextlib.contextmanager
+    def observed_lock():
+        events.append("lock-enter")
+        with original_lock():
+            assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+            yield
+        assert not core._ADAPTER_UPDATE_LOCK_HELD.get()
+        events.append("lock-exit")
+
+    def fail_during_protected_read(*, allow_absent=False):
+        assert allow_absent is True
+        assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+        events.append("cohort-read")
+        raise core.CoreRuntimeError("injected protected cohort read failure")
+
+    monkeypatch.setattr(core, "_adapter_update_lock", observed_lock)
+    monkeypatch.setattr(core, "_read_adapter_update_cohort", fail_during_protected_read)
+    with pytest.raises(core.CoreRuntimeError, match="injected protected cohort read failure"):
+        core._recover_interrupted_adapter_update()
+    assert events == ["lock-enter", "cohort-read", "lock-exit"]
+    assert not core._ADAPTER_UPDATE_LOCK_HELD.get()
 
 
 def test_interrupted_recovery_rejects_non_root_before_lock_or_reads(monkeypatch):
