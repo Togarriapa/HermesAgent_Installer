@@ -1669,6 +1669,11 @@ The installer SHALL satisfy: Expose polished responsive Jarvis through protected
 - **THEN** consumer guards MUST support the existing bounded208 source-verified profile schema with usable accessible selection, one Jarvis and opaque owner/Core mapping; plugin fields MUST use declared safe string/finite-number/boolean/enum form controls and exact source/confirmation/CAS/recovery.
 - **AND** missing native files, frame/deadline proof, unsupported CRUD/settings modes or unknown effect remain individually pending; no placeholder inventory, guessed boolean/enum, generic config, new grant or full208/28-family parity claim follows. Actual candidate Pi rendered/native effect evidence remains required.
 
+#### Scenario: Household admission distinct from original global administration
+- **WHEN** the existing Planned dependency #21 is implemented for global native profile/source-file/settings or Extensions operations
+- **THEN** actual original setup-administrator scope MUST be independently verified under a reviewed Root registration/enrollment/native policy contract; allowed email, opaque ID, optional display directory, first login or frontend role cannot substitute.
+- **AND** missing or ambiguous global administration stays unavailable without denying otherwise permitted family chat; Obsidian/final-effect permissions remain separate. Exact source contract and Root Pi validation precede implementation, with actual enrolled effect/denial/recovery and candidate household/global-control UI evidence required.
+
 ### Requirement: R0204 current functional obligation
 The installer SHALL satisfy: Deny unreviewed generic commands, backend management, host filesystem, clipboard, arbitrary URL and control proxies. Reviewed attachments/browser/voice capabilities require separate owner-bound finite adapters.
 
