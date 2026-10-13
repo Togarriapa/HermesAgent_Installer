@@ -2338,6 +2338,11 @@ Within R0200..R0205, server identity SHALL derive from verified Access issuer/co
 - **THEN** the locked update cohort proves installed old bytes against the actual old source, retains exact immutable two-file backup/selection joins, leaves the old plugin unchanged through old guarded reads, and installs only the new pinned members after captured old Core/listener stops. Actual strict staged proof precedes new Core start and genuine startup completion.
 - **AND** partial/mixed generations deny boot/admission; recovery accepts only protected exact old/new combinations and restores old plugin bytes before old Core admission, preserving auth/selection/unrelated plugins and owner data. Historical no-transition backups keep only their original behavior; missing backup or foreign/drifted bytes deny without weakened pins.
 
+#### Scenario: Complete pinned owner-importer receipt exceeds old limit
+- **WHEN** the genuine fixed importer returns its complete pinned skill/profile JSON receipt above16KiB
+- **THEN** accept only up to32KiB under the exact closed receipt schema, current manifest inventory and A0/A1/generation/retained-backup joins, followed by independent owner-tree/marker verification. Retain stderr/deadline/custody limits and do not truncate inventory or log raw output.
+- **AND** oversized, malformed, duplicate-key or mismatched receipts deny; success exit code alone grants nothing and does not satisfy discovery/native completion or final acceptance.
+
 #### Scenario: Completed prior ingress snapshot before successor refresh
 - **WHEN** an already-adapter refresh finds a retained prior ingress record
 - **THEN** only a structurally valid completed record genuinely matching the current active owned source/unit/config/Core/process cohort may hand off under a fixed Root lock. Exact raw protected bytes and referenced backups remain immutable in fixed digest-addressed history; a staged successor journal replaces the active slot atomically after last custody/byte CAS and binds the verified predecessor digest.

@@ -1,5 +1,7 @@
 # Proposal
 
+Within existing M1/R0201/R0203, correct the fixed importer receipt cap from16KiB to32KiB: Pi87 returned a legitimate complete16807-byte receipt. Preserve exact closed shape, pinned skill/profile arrays, Root custody and independent installed/backup proof; no raw output logging, truncation or inventory reduction. Runtime acceptance remains OPEN.
+
 M1/R0201/R0203 includes the fixed owned two-file native Resources plugin transition within the existing source/binding update cohort. Pi68 proved old installed module bytes conflict with incoming strict staging pins. Preserve old bundle/selection in immutable backup, install the new pinned bundle only after old Core stops, and restore old plugin bytes before old Core admission on recovery. No skipped pins, generic updater or new acceptance claim.
 
 Within existing M1/R0201/R0203, let a genuinely completed retained ingress snapshot hand off to an already-adapter source refresh: verify its actual current cohort, durably retain immutable exact protected history and atomically replace only the active journal with the staged successor. Preserve legacy rollback/data/auth; uncertain or drifted prior transactions still deny. This corrects the actual Pi62 pre-effect refusal without changing authority or acceptance.

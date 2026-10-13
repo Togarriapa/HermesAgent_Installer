@@ -1,5 +1,9 @@
 # Design
 
+### M1 complete fixed importer receipt bound
+
+Actual Pi87 owner importer returned success with 16807 stdout bytes and empty stderr; Core's 16KiB stdout limit rejected the legitimate complete pinned inventory. Raise only the finite successful importer JSON receipt cap to32KiB; retain stderr16KiB, process deadline and genuine Root→runuser→admin custody. Current source pins396 skills and208 profiles; accept exactly the sorted manifest skill/profile arrays, fixed closed ten-key receipt and exact A0/A1/generation/retained HOME backup joins, then independent installed/backup UID1000 tree/marker proof. No truncation, omitted inventory, arbitrary IDs or success from exit code alone; exceeding32KiB remains denial. Validate the fixed source `next_step` value/bound as receipt data, never an executable instruction or authority. Keep raw stdout/stderr out of logs/evidence; expose only bounded counts/digests/error types. Pi qualification must exercise the actual complete receipt above16KiB and accepted within32KiB, plus oversized/malformed/duplicate-key/wrong inventory or backup denial; recovery and final native completion remain required separately. No change to owner privileges, source pins or eight OPEN groups.
+
 ### M1 fixed two-file native plugin transition
 
 Actual Pi68 failure is `verify_staged_native_resources_plugin` requiring the incoming `__init__.py` while the owned installed files still match old0cb. `stage_native_resources_plugin()` intentionally refuses differing existing bytes. Keep both guards strict. The existing adapter-update cohort must include a finite transition of ONLY `hermes-installer-resources-delegation/{plugin.yaml,__init__.py}`; no generic plugin updater, selection change or manual overwrite.
