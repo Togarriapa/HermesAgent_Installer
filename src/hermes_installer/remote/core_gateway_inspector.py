@@ -2867,6 +2867,10 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
                 raise CoreInspectionDenied("profile administration Core custody changed before native access")
         finally:
             os.close(current_custody._core_pidfd)
+        # Custody/peer checks may wait on the host; authorize the effect at the
+        # end of the checkpoint too, immediately before its native call.
+        if time.monotonic() >= effect_deadline:
+            raise CoreInspectionDenied("one-use profile administrator child expired")
 
     # Root verifies the pinned Resources manifest and the current Core process on
     # every operation. Only profile IDs with actual native files are projected.
