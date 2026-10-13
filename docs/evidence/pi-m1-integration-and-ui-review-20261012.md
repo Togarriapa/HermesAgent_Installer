@@ -101,6 +101,28 @@ beta path, removing binding-cookie protection or enrolling any device.
 Renewable device pairing remains unimplemented; browser720h was separately
 verified live. Runtime tests were not repeated for this specification leaf.
 
+The v75 candidate `c263d37c97cac6f3edecd79fc5dc8f0a01f69cd2` compiled
+on the Pi and passed strict specs/plan validation. First group156 passed
+in12.68s; expanded Core group4 failed/14 passed in91.57s. Archive SHA-256
+`242a10ff10919be7223f0385b7380c62995eba66c15e3dc20d7c33ca128176d6`.
+The fixture still validated the old journal after changing HOME but before
+rewriting its recipe. The correction captures that validated record first.
+
+The v76 candidate `4519f8e2ae7dbf1b239ac1e20f30a3c2cbf19ed7` compiled
+on the Pi and passed strict specs/plan validation. Only the four changed
+full-cycle fixtures were rerun:4 failures in143.94s. Source/tools were
+byte-identical to v75, so its156 unchanged checks were not repeated.
+Archive SHA-256
+`3aaeb464a5ac4fa31c3edf92556783d11f750a1c448700fb174700f21737a4ed`.
+The first positive exposed an actual updater bug at CoreRuntime5732:
+`_read_transition_archive` returns manifest/files/helper but the caller
+unpacked only two values. Other fixtures changed their guarded-unit journal
+after rebinding discovery, leaving the recorded ownership hash stale.
+The next correction consumes the real triple consistently across Core
+initial/update/recovery paths and repairs only those fixture hash joins.
+Sol reviewed the exact Core source and one-entry Inspector pin; runtime
+qualification remains separate. No production apply followed these failures.
+
 The v69 specification-only candidate
 `6b4621209a11895ce9f7894013ce034e1bdb3b05` compiled on the Pi and passed
 strict specs/plan validation. Archive SHA-256
