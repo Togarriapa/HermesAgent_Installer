@@ -1104,22 +1104,69 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
     monkeypatch.setattr(core, "_run", fake_service_main_pid)
 
 
-def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
+def _prepare_cohort_resource_materialization(
+        tmp_path, monkeypatch, request, *, registered_obsidian=False):
     """Install a real old-helper generation and bind its receipt to the current journal."""
     from hermes_installer.registry import manual_jarvis_skills as native
     from hermes_installer.remote import obsidian_owner_lifecycle as obsidian
 
-    # This controlled cohort is explicitly unregistered. read_registration()
-    # opens the fixed root-owned directory through directory FDs, so redirect
-    # its path constant as well as the lookup; never inspect the Pi's live
-    # registration or vault while the fixture HOME is privately bind-mounted.
+    # read_registration() opens a fixed root-owned absolute directory through
+    # directory FDs. Keep this fixture hermetic by replacing that reader and
+    # its selected paths; never inspect a host registration or vault.
     monkeypatch.setattr(obsidian, "OWNER_REGISTRATION",
                         core.JOURNAL.parent / "obsidian-registration.json")
+    obsidian_fixture = None
+    if registered_obsidian:
+        account = core.pwd.getpwnam("admin")
+        owner_root = tmp_path / "registered-owner-data"
+        vault = owner_root / "obsidian-vault"
+        vault.mkdir(parents=True, mode=0o700)
+        vault_file = vault / "index.md"
+        vault_file.write_bytes(b"private owner vault fixture\n")
+        vault_file.chmod(0o600)
+        os.chown(vault_file, account.pw_uid, account.pw_gid)
+        os.chown(vault, account.pw_uid, account.pw_gid)
+        os.chown(owner_root, account.pw_uid, account.pw_gid)
+        owner_root.chmod(0o700)
+        subject_sha = "9" * 64
+        registration_raw = json.dumps({
+            "schema": 1, "core_uid": 1000, "data_root": str(owner_root),
+            "owner_subject_sha256": subject_sha,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        registration_path = obsidian.OWNER_REGISTRATION
+        registration_path.write_bytes(registration_raw)
+        registration_path.chmod(0o600)
+        os.chown(registration_path, core.ROOT_UID, core.ROOT_UID)
+        monkeypatch.setattr(obsidian, "OWNER_DATA_ROOT", owner_root)
 
-    def fixture_registration_absent():
-        raise FileNotFoundError
+        def fixture_read_registration():
+            info = registration_path.lstat()
+            current = registration_path.read_bytes()
+            value = json.loads(current, object_pairs_hook=obsidian._unique_pairs)
+            if (not stat.S_ISREG(info.st_mode)
+                    or (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode), info.st_nlink)
+                    != (core.ROOT_UID, core.ROOT_UID, 0o600, 1)
+                    or info.st_size != len(current) or current != registration_raw
+                    or json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                  allow_nan=False).encode("utf-8") != current
+                    or value != {
+                    "schema": 1, "core_uid": 1000, "data_root": str(owner_root),
+                    "owner_subject_sha256": subject_sha}):
+                raise RuntimeError("controlled Obsidian registration changed")
+            return owner_root, subject_sha, hashlib.sha256(current).hexdigest()
 
-    monkeypatch.setattr(obsidian, "read_registration", fixture_registration_absent)
+        monkeypatch.setattr(obsidian, "read_registration", fixture_read_registration)
+        obsidian_fixture = {
+            "registration_path": registration_path,
+            "registration_bytes": registration_raw,
+            "vault_root": vault,
+            "vault_files": {"index.md": b"private owner vault fixture\n"},
+        }
+    else:
+        def fixture_registration_absent():
+            raise FileNotFoundError
+
+        monkeypatch.setattr(obsidian, "read_registration", fixture_registration_absent)
 
     archive = native.build_manual_jarvis_skills_artifact()
     artifact_sha = hashlib.sha256(archive).hexdigest()
@@ -1289,7 +1336,18 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
     monkeypatch.setattr(core, "_root_native_readback", fixture_native_readback)
     monkeypatch.setattr(core, "_prove_new_cohort_startup_chat", fixture_startup_proof)
     monkeypatch.setattr(core.subprocess, "run", deny_host_subprocess)
-    return readback_calls
+    return readback_calls, obsidian_fixture
+
+
+def _assert_registered_obsidian_fixture_preserved(fixture):
+    if fixture is None:
+        return
+    assert fixture["registration_path"].read_bytes() == fixture["registration_bytes"]
+    actual_files = {
+        path.relative_to(fixture["vault_root"]).as_posix(): path.read_bytes()
+        for path in fixture["vault_root"].rglob("*") if path.is_file()
+    }
+    assert actual_files == fixture["vault_files"]
 
 
 def _fixed_service_path_identity():
@@ -1390,13 +1448,24 @@ def test_post_migration_recovery_refuses_changed_current_launcher_before_touchin
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
-def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_launcher(tmp_path, monkeypatch, request):
+@pytest.mark.parametrize("registered_obsidian", [False, True])
+def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_launcher(
+        tmp_path, monkeypatch, request, registered_obsidian):
     guard_runner = subprocess.run
     calls, enabled, _old_launcher, selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed",
         public_service_files=True, request=request)
     core.migrate_owned_core_to_adapter_path()
-    _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
+    prepared = _prepare_cohort_resource_materialization(
+        tmp_path, monkeypatch, request, registered_obsidian=registered_obsidian)
+    _readback_calls, obsidian_fixture = prepared
+    cohort, _cohort_raw = core._read_adapter_update_cohort()
+    if obsidian_fixture is not None:
+        assert cohort["obsidian_registration_state"] == "registered"
+        assert cohort["obsidian_registration_sha256"] == hashlib.sha256(
+            obsidian_fixture["registration_bytes"]).hexdigest()
+        assert cohort["obsidian_vault_tree_sha256"] == core._obsidian_vault_tree_sha256(
+            obsidian_fixture["vault_root"])
     memory = core.HERMES_HOME / "memories" / "owner.md"
     memory.parent.mkdir(parents=True)
     memory.write_text("existing owner memory")
@@ -1496,6 +1565,7 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     importer = importer_outcomes[0]
     assert importer["returncode"] == 0
     assert importer["stderr_bytes"] <= core._HELPER_IMPORT_STDERR_LIMIT
+    _assert_registered_obsidian_fixture_preserved(obsidian_fixture)
     receipt = importer["stdout"]
     assert 16 * 1024 < len(receipt) <= core._HELPER_IMPORT_STDOUT_LIMIT
     before_oversize_check = (core.JOURNAL.read_bytes(),
@@ -1513,11 +1583,22 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
-def test_native_adapter_update_restart_failure_restores_exact_prior_generation(tmp_path, monkeypatch, request):
+@pytest.mark.parametrize("registered_obsidian", [False, True])
+def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
+        tmp_path, monkeypatch, request, registered_obsidian):
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
-    _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
+    prepared = _prepare_cohort_resource_materialization(
+        tmp_path, monkeypatch, request, registered_obsidian=registered_obsidian)
+    _readback_calls, obsidian_fixture = prepared
+    cohort, _cohort_raw = core._read_adapter_update_cohort()
+    if obsidian_fixture is not None:
+        assert cohort["obsidian_registration_state"] == "registered"
+        assert cohort["obsidian_registration_sha256"] == hashlib.sha256(
+            obsidian_fixture["registration_bytes"]).hexdigest()
+        assert cohort["obsidian_vault_tree_sha256"] == core._obsidian_vault_tree_sha256(
+            obsidian_fixture["vault_root"])
     _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
@@ -1548,6 +1629,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
     assert core.UNIT.read_bytes() == unit
     assert core.TOKEN.read_bytes() == token
     assert enabled["value"]
+    _assert_registered_obsidian_fixture_preserved(obsidian_fixture)
     assert attempts["wait"] == 2
     ordered = [call[0] for call in _calls[update_call_start:]]
     restore_index = ordered.index(("native-plugin", "restore"))
