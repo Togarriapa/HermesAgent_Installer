@@ -304,28 +304,51 @@ def test_profile_admin_inspector_denies_non_singleton_allowlist_before_ingress_o
     principal = SimpleNamespace(email="owner@example.test",
         subject="immutable-subject", token_fingerprint=hashlib.sha256(
             b"signed-access-token").hexdigest(), expires_at=time.time() + 60.0)
-    with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="fixture-caller-start"), \
-            patch.object(core_gateway_inspector, "_learning_jwks", return_value={}), \
-            patch("hermes_installer.remote.gateway.validate_access_jwt", return_value=principal), \
-            patch.object(global_admin, "locked") as admin_lock, \
-            patch.object(global_admin, "read_locked", return_value=(None, None)) as read_record, \
-            patch.object(core_gateway_inspector, "_peek_ingress_issue",
-                return_value=SimpleNamespace(expires_monotonic=time.monotonic() + 5)), \
-            patch.object(core_gateway_inspector, "_consume_ingress_issue",
-                      side_effect=AssertionError("non-singleton admin must stop before ingress consumption")) as consume:
-        if not allowed_emails:
-            # Empty admission policy is invalid configuration; it must deny
-            # before registry access, native work, or ingress consumption.
-            with pytest.raises(ValueError):
-                core_gateway_inspector.observe_profile_admin(
-                    config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
-                    peer_pid=551, peer_uid=996, peer_gid=981)
-            admin_lock.assert_not_called()
-            read_record.assert_not_called()
-        else:
-            with pytest.raises(core_gateway_inspector.CoreInspectionDenied,
-                               match="original administrator setup"):
-                core_gateway_inspector.observe_profile_admin(
-                    config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
-                    peer_pid=551, peer_uid=996, peer_gid=981)
-    consume.assert_not_called()
+    now = time.monotonic()
+    retained_proof = {
+        "nonce": request["ingress_nonce"], "proof_sha256": request["ingress_proof_sha256"],
+        "issued_monotonic": now - 0.1, "expires_monotonic": now + 4.0,
+        "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
+        "origin_socket_device": 11, "origin_socket_inode": 22,
+        "core_generation": request["core_generation"],
+        "config_sha256": config.config_sha256, "boot_id": config.boot_id,
+    }
+    current_ingress = {"proof_sha256": retained_proof["proof_sha256"],
+        "core_generation": retained_proof["core_generation"]}
+    with patch.dict(core_gateway_inspector._RETAINED_INGRESS_ISSUES, {}, clear=True):
+        core_gateway_inspector._retain_ingress_issue(caller_pid=440,
+            caller_start_ticks="fixture-caller-start", proof=retained_proof)
+        with (patch.object(core_gateway_inspector, "_proc_start_ticks",
+                           return_value="fixture-caller-start"),
+              patch.object(core_gateway_inspector, "_learning_jwks", return_value={}),
+              patch("hermes_installer.remote.gateway.validate_access_jwt", return_value=principal),
+              patch.object(core_gateway_inspector, "observe_current_ingress",
+                           return_value=current_ingress),
+              patch.object(core_gateway_inspector, "_check_unit_process",
+                           return_value=(92, "fixture-caller-start", "gateway-invocation")),
+              patch.object(core_gateway_inspector.os, "close"),
+              patch.object(global_admin, "locked") as admin_lock,
+              patch.object(global_admin, "read_locked", return_value=(None, None)) as read_record,
+              patch.object(core_gateway_inspector, "_consume_ingress_issue",
+                  side_effect=AssertionError("admin denial must not consume ordinary ingress")) as consume,
+              patch.object(core_gateway_inspector, "_consume_profile_admin_child",
+                  side_effect=AssertionError("admin denial must precede child consumption")) as consume_child):
+            if not allowed_emails:
+                # Empty admission policy is invalid configuration; it must deny
+                # before registry access, native work, or ingress consumption.
+                with pytest.raises(ValueError):
+                    core_gateway_inspector.observe_profile_admin(
+                        config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
+                        peer_pid=551, peer_uid=996, peer_gid=981)
+                admin_lock.assert_not_called()
+                read_record.assert_not_called()
+            else:
+                with pytest.raises(core_gateway_inspector.CoreInspectionDenied,
+                                   match="original administrator setup"):
+                    core_gateway_inspector.observe_profile_admin(
+                        config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
+                        peer_pid=551, peer_uid=996, peer_gid=981)
+                admin_lock.assert_called()
+                read_record.assert_called()
+            consume.assert_not_called()
+            consume_child.assert_not_called()
