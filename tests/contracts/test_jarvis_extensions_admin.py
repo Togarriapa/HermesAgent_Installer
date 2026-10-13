@@ -587,7 +587,7 @@ function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form
   assert.deepEqual(Object.keys(api.posts[0].body).sort(),['confirmation','idempotency_key','item_id','revision','values']);
   assert.equal(api.posts[0].body.item_id,'owner-plugin-id'); assert.equal(api.posts[0].body.revision,'source-1');
   assert.equal(api.posts[0].body.confirmation,'EDIT Safe package');
-  assert.deepEqual(api.posts[0].body.values,{site_name:'Office',enabled:false,mode:'safe',limit:2.5,notes:''});
+  assert.deepEqual({...api.posts[0].body.values},{site_name:'Office',enabled:false,mode:'safe',limit:2.5,notes:''});
   assert.match(api.posts[0].body.idempotency_key,/^[A-Za-z0-9_-]{32}$/);
   assert.ok(all(view.root).filter(node=>node.tagName==='button'&&node!==view.refresh).every(node=>node.disabled), 'all owner actions stay blocked during the confirmed mutation');
   api.posts[0].resolve({status:'applied'}); await flush(); assert.equal(api.gets.length,2);
@@ -630,10 +630,12 @@ function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form
   staleView.refresh.dispatch('click'); staleApi.gets[1].resolve(makeSnapshot('stale-2')); await flush();
   submit(staleDialog); await flush(); assert.equal(staleApi.posts.length,0); assert.match(staleView.status.textContent,/source changed while this editor was open/);
   assert.equal(document.activeElement,staleOpener); clean();
+  console.log('PLUGIN_SETTINGS_HARNESS_COMPLETE');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''.replace('MOUNT', FEATURE_ASSETS.mount_js)
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "plugin-settings-form-harness.js"
         path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
-        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=15)
     assert result.returncode == 0, result.stderr
+    assert "PLUGIN_SETTINGS_HARNESS_COMPLETE" in result.stdout, "deferred plugin settings scenarios did not complete"
