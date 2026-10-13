@@ -104,7 +104,7 @@ _MOUNT = r'''function mount(container, api, state) {
     const ids = new Set();
     for (const item of payload.events) {
       if (!item || typeof item.id !== 'string' || !item.id || item.id.length > 128 || ids.has(item.id)
-          || typeof item.title !== 'string' || item.title.length > 240 || typeof item.all_day !== 'boolean') return false;
+          || typeof item.title !== 'string' || Array.from(item.title).length > 240 || typeof item.all_day !== 'boolean') return false;
       ids.add(item.id);
       const first = parseInstant(item.start), last = parseInstant(item.end);
       if (!Number.isFinite(first) || !Number.isFinite(last) || last <= first || first >= end || last <= start) return false;

@@ -179,6 +179,17 @@ async function run() {
   app.nodes['[data-calendar-events]'].children[0].children[0].click();
   assert.equal(app.nodes['[data-calendar-detail-title]'].textContent, 'Fresh');
 
+  // Producer title limits count Unicode code points, matching Python and keeping text inert.
+  app = setup();
+  const title240 = '😀'.repeat(240);
+  app.requests[0].resolve(ok(payload(title240))); await tick();
+  assert.deepEqual(titles(app.nodes['[data-calendar-events]']), [title240]);
+  assert.equal(app.nodes['[data-calendar-events]'].children[0].children[0].textContent, title240);
+  app = setup();
+  app.requests[0].resolve(ok(payload('😀'.repeat(241)))); await tick();
+  assert.deepEqual(titles(app.nodes['[data-calendar-events]']), [], '241 code points exceed the producer limit');
+  assert.match(app.nodes['[data-calendar-status]'].textContent, /unavailable/);
+
   // Starting removal clears the projection before either overlapping request settles.
   app.nodes['[data-calendar-source]'].textContent = 'private source';
   app.nodes['[data-calendar-source]'].hidden = false;
