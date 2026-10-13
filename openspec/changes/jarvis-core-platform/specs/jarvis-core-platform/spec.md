@@ -720,6 +720,11 @@ The installer SHALL satisfy: obsidian-skills: Implement Obsidian as the required
 - **THEN** verification MUST exercise Persistent Pi vault read/search/link/reviewed-write/restart effects, owner/expert-draft isolation, symlink/traversal/CAS/conflict/recovery denials and source-backed dashboard graph; retain Markdown/Canvas fixtures and separate native app/device/sync acceptance
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
+#### Scenario: Focused colored knowledge explorer
+- **WHEN** the existing R0090/R0203 feature leaf #20 presents an owned current vault graph
+- **THEN** actual indexed tag colors, resolved incoming/outgoing links, selected-neighborhood focus, legend/filter/reset and protected note/backlink navigation MUST form a usable responsive explorer with keyboard/text alternative.
+- **AND** tags MUST NOT imply trusted Expert/Team authorship; missing lineage, partial/unresolved/foreign/stale/empty data remains truthful, Markdown inert and all knowledge/write/owner/recovery boundaries preserved. Exact candidate Pi affected/full-shell render and native-read evidence remain separate.
+
 ### Requirement: R0091 current functional obligation
 The installer SHALL satisfy: banana-claude: Claude-oriented image plugin requiring a compatible adapter/client and separately configured Gemini credentials/billing. No automatic paid generation.
 
@@ -1124,6 +1129,11 @@ The installer SHALL satisfy: Require actual supported providers for vision, imag
 - **WHEN** a user explicitly enables browser voice
 - **THEN** Jarvis MUST feature-detect supported STT/TTS, disclose local versus external processing, require mic permission and preserve visible transcript/text control.
 - **AND** denied permission, unsupported language/device, interrupted audio or unavailable eligible provider MUST retain text chat; browser voice MUST NOT claim Android background hotword behavior.
+
+#### Scenario: Prominent operational foreground voice dock
+- **WHEN** R0140/R0203 feature leaf #19 exposes PTT, read-aloud, Stop and foreground wake beside the actual composer
+- **THEN** controls MUST reuse supported current browser capture/synthesis with explicit consent, reviewable transcript/text send, current own reply, visible unavailable next steps and immediate interrupt/hidden/navigation/revocation stop.
+- **AND** handsfree send remains separate opt-in, private/zero-extra-spend/final-effect boundaries remain, and no phone background/lock-screen/HA qualification follows fixtures. Exact candidate Pi phone/tablet/wide rendered workflow and actual audio/device evidence stay distinct.
 
 ### Requirement: R0141 current functional obligation
 The installer SHALL satisfy: Provide a simple entry point, such as `./install.sh`, backed by maintainable modular code. A thin shell bootstrap plus typed Python orchestration is a reasonable default; use another stack only if it materially improves reliability. Avoid a single giant shell script.
@@ -1643,6 +1653,21 @@ The installer SHALL satisfy: Expose polished responsive Jarvis through protected
 - **WHEN** a feature slice is integrated into Jarvis
 - **THEN** only its reviewed fixed routes/assets MUST join the existing authenticated gateway and subject-owned service; no wildcard proxy or dynamic code loader is allowed.
 - **AND** its first useful backend effect/read is qualified before reporting operation; pending capability panels MUST remain truthful.
+
+#### Scenario: Original living reactor command centre
+- **WHEN** R0203 feature leaf #17 replaces the existing Overview stage with its reviewed original central-reactor composition
+- **THEN** authored layered visuals, measured supporting cards and real owned command send MUST provide a coherent phone/tablet/wide command centre beyond saved state accents; service idle and actual assistant states remain distinct and text-accessible.
+- **AND** stale/offline/hidden/offscreen/reduced-motion pauses animation, unknown data stays unknown, every destination remains reachable and candidate Pi full-shell command/effect/denial/recovery UX review precedes rollout.
+
+#### Scenario: Real named fleet and directed communications
+- **WHEN** feature leaf #18 renders the existing sanitized native ecosystem schema1/2
+- **THEN** actual distinct execution aliases, verified Team member joins and included same-Team/Mission/revision sender-to-recipient completed-message relations MUST drive an operable roster/network/detail view with bounded layout and text alternative.
+- **AND** partial/historical/stale/missing sources cannot animate live or grant authority; fresh relation pulses are finite and deduplicated, actual running state is separately observed, and fixture layout never proves native Team dialogue. Root alone composes the finite static module into Overview.
+
+#### Scenario: Complete finite profile and plugin controls
+- **WHEN** existing feature leaves #15/#16 present profile files or editable native plugin settings
+- **THEN** consumer guards MUST support the existing bounded208 source-verified profile schema with usable accessible selection, one Jarvis and opaque owner/Core mapping; plugin fields MUST use declared safe string/finite-number/boolean/enum form controls and exact source/confirmation/CAS/recovery.
+- **AND** missing native files, frame/deadline proof, unsupported CRUD/settings modes or unknown effect remain individually pending; no placeholder inventory, guessed boolean/enum, generic config, new grant or full208/28-family parity claim follows. Actual candidate Pi rendered/native effect evidence remains required.
 
 ### Requirement: R0204 current functional obligation
 The installer SHALL satisfy: Deny unreviewed generic commands, backend management, host filesystem, clipboard, arbitrary URL and control proxies. Reviewed attachments/browser/voice capabilities require separate owner-bound finite adapters.
