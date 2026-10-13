@@ -2510,7 +2510,7 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
             or not _is_hash(request.get("ingress_proof_sha256"))):
         raise CoreInspectionDenied("Profile administration request is invalid")
     if len(config.allowed_emails) != 1:
-        raise CoreInspectionDenied("Global profile administration remains unavailable pending original-admin issue #21. Household chat remains available.")
+        raise CoreInspectionDenied("Global profile administration is unavailable for household access. Administrator access setup is pending; household chat remains available.")
     if action not in {"list", "skills-list", "skills-archives-list"}:
         if action in {"skill-read", "skill-write", "skill-archive", "skill-restore", "skill-restore-list"}:
             if (not isinstance(request.get("skill_id"), str)

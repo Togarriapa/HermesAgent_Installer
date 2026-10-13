@@ -89,7 +89,7 @@ def test_profile_admin_inspector_denies_non_singleton_allowlist_before_ingress_o
     with patch.object(core_gateway_inspector, "_consume_ingress_issue",
                       side_effect=AssertionError("non-singleton admin must stop before ingress consumption")) as consume:
         with pytest.raises(core_gateway_inspector.CoreInspectionDenied,
-                           match="pending original global-admin registration"):
+                           match="Administrator access setup is pending"):
             core_gateway_inspector.observe_profile_admin(
                 config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
                 peer_pid=551, peer_uid=996, peer_gid=981)
