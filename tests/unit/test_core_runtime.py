@@ -30,14 +30,20 @@ def _bounded_cohort_exception_sites():
     """Expose only code locations/types for a hidden cohort failure on Pi."""
     previous = sys.gettrace()
     sites = []
+    first_substantive = []
+    routine = {"GeneratorExit", "StopIteration", "StopAsyncIteration"}
     allowed = {"core_runtime.py", "manual_jarvis_skills.py", "resources_skill_overlay.py"}
 
     def trace(frame, event, arg):
         if event == "exception" and Path(frame.f_code.co_filename).name in allowed:
             exception_type = type(arg[1]).__name__
-            if len(sites) < 80:
-                sites.append((Path(frame.f_code.co_filename).name,
-                              frame.f_code.co_name, frame.f_lineno, exception_type))
+            if exception_type not in routine:
+                site = (Path(frame.f_code.co_filename).name,
+                        frame.f_code.co_name, frame.f_lineno, exception_type)
+                if len(sites) < 80:
+                    sites.append(site)
+                if not first_substantive and exception_type != "CoreRuntimeError":
+                    first_substantive.append(site)
         return trace
 
     sys.settrace(trace)
@@ -45,7 +51,8 @@ def _bounded_cohort_exception_sites():
         yield
     except BaseException:
         sys.settrace(previous)
-        print("bounded cohort exception sites: " + repr(sites[-30:]))
+        print("first substantive non-CoreRuntimeError site: " + repr(first_substantive[:1]))
+        print("bounded cohort exception sites: " + repr(sites[:30] + sites[-30:]))
         raise
     finally:
         sys.settrace(previous)
