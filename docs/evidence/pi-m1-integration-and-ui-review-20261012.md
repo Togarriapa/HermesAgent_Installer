@@ -809,3 +809,22 @@ provider, microphone, external messaging, account enrollment or production
 mutation occurs in the UI fixture runs. Android/voice/communications research,
 all14-image intake and every prior direct request remain in the one current
 roadmap; neither this review nor the MVP repair closes that backlog.
+
+## Later Pi qualification runs 118–124
+
+These are historical candidate results supplied from the Pi qualification
+ledger. They are not a statement of current production state. Unless noted,
+compilation and strict spec/plan validation passed with zero findings.
+
+| Run / candidate | Archive SHA-256 | Pi result and disposition |
+| --- | --- | --- |
+| 118 `af3ea5c5ec1a1195bb3c8cbebe3225ff04e46f95` | `0b3b7a385ca835c053d7b7e6eb037c6a670a3f8f337f0dd87842ffd013072bbe` | Compile/spec/plan passed. |
+| 119 `68aa99ab7c754c35ebfc6f596062ba6fd3cd96aa` | `da239656ac66f9f8dc57a5a00b4da314e9dace9c634f006b7df4fcebb10da6b9` | UI checks: 8 failed, 88 passed in 1.94s. Harness failures were corrected in `3d`. |
+| 120 `c371ec0f3104fea5f28e03bfb93da70b85286fdf` | `450ed7db0d24d245ed53f4997399dacb56fee142e98c82f8737d130b22acc12a` | Focused checks: 4 failed, 8 passed in 11.79s. A private-option omission retry passed 1/1 in 10.58s. Overview CSS, exact class and fake-form issues were corrected in `544`. |
+| 121 `66b08623d3afd6ae67f72a3acbc551f0e51be30e` | `0286f5d5672211bc2c316392f3536c051f54b2a0b6831a399890ec317c33aab5` | Compile/plan passed; strict spec validation reported one requirement over 500 words and two requirements. No waiver. UI collection had one error at the mount cap; Core was interrupted after one failure at 59.99s. |
+| 122 `77111ac9357520bbc79953022754115ce4bfe39b` | `8de38bd2ff8c6dfa46266bba380a742b48385e7b03d13a76e95ac3f4c66aca17` | Compile/spec/plan passed. Editors: 3 failed, 72 passed in 1.34s. Extensions harness fix `980` and `54` followed. |
+| 123 `d2819b7ced4d835d80f8f164f6b5a82494620a6d` | `fd47bc8b011185eed51c4ab42ad32ebab6d625938556514af57b89677e865116` | Compile/spec/plan passed. UI collection had one error: actual Obsidian UTF-8 mount measured 30,035 bytes. Core was interrupted after one failure at 58.88s: `_native_plugin_transition_scope` falsely reported the adapter lock unavailable, and `root_setup_install_resume` also lacked the lock before recovery effects. Fix `b0` acquires the existing protected lock before journal/effects and reuses the held path. Exact new Core `0dac9c434b5c9af0a7dc07dbecd1a8e9546951e1fa08a6786a04d49761394af5` was pinned in `6fe`; source review passed, Pi validation remains pending. |
+| 124 `7c2ce140540887b5c5fab269cb285c676d800f83` | `cb1d89a445393c41d5a483b340ebbec615849b07d8b5818d89e79dc8743bf634` | Compile/spec/plan passed. Editors: 1 failed, 74 passed in 1.32s. A typed-required fixture accepted whitespace; `3aa` corrected it to require an exact empty value. |
+
+The source-reviewed UI originals `4` and Sources `33/35` were not deployed.
+At this ledger point, production remained on `0cbf9b819a6be41b3ff34d623374355cb64c3834`, and the Pi configuration still had its original single approved address. No result for run 126 was available. Accordingly, these entries record qualification evidence only; they do not establish deployment, additional-account access, or current acceptance.
