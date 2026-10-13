@@ -265,6 +265,10 @@ node = function(){ const value=originalNode(); value.attributes={};
 
 def test_project_note_page_reads_ignore_aba_success_and_error_and_keep_get_targets():
     source = FEATURE_ASSETS.mount_js
+    assert source.count("const validNoteId = ") == 1
+    valid_id = "const validNoteId = " + source.split(
+        "const validNoteId = ", 1
+    )[1].split(";\n  function clearPreview", 1)[0] + ";"
     page_path = "function notePagePath(" + source.split(
         "function notePagePath(", 1
     )[1].split("\n  async function loadNotePage", 1)[0]
@@ -282,7 +286,7 @@ const noteEmpty={hidden:false};
 const $=()=>({textContent:''});
 const renderNoteRows=()=>{}, renderSelectedNotes=()=>{};
 const call=path=>{targets.push(path); return new Promise((resolve,reject)=>pending.push({resolve,reject}));};
-''' + loader + r'''
+''' + valid_id + "\n" + loader + r'''
 (async()=>{
   const oldA=loadNotePage('recent','',null,false);
   selected={id:'B'}; projectRevision++;
@@ -313,12 +317,16 @@ const call=path=>{targets.push(path); return new Promise((resolve,reject)=>pendi
 
 def test_project_note_preview_and_save_effects_are_deferred_and_target_bound():
     source = FEATURE_ASSETS.mount_js
+    assert source.count("const validNoteId = ") == 1
+    valid_id = "const validNoteId = " + source.split(
+        "const validNoteId = ", 1
+    )[1].split(";\n  function clearPreview", 1)[0] + ";"
     preview = "async function previewNote(" + source.split(
         "async function previewNote(", 1
     )[1].split("\n  refreshButton.addEventListener", 1)[0]
     submit = "async function submitSnapshot(" + source.split(
         "async function submitSnapshot(", 1
-    )[1].split("\n  form.addEventListener('submit'", 1)[0]
+    )[1].split("\n  function submitCurrentProject", 1)[0]
     harness = r'''
 const assert=require('node:assert/strict');
 let selected={id:'project-A'},selectionRevision=1,previewRevision=0,stopped=false;
@@ -333,7 +341,7 @@ const text=(target,value)=>{target.textContent=value;};
 const renderSelectedNotes=()=>{},renderNoteRows=()=>{},refresh=async()=>true;
 let selectedProject=null;
 function selectProject(project){selectedProject=project;}
-''' + preview + "\n" + submit + r'''
+''' + valid_id + "\n" + preview + "\n" + submit + r'''
 (async()=>{
   const stale=previewNote('note-one');
   assert.equal(targets[0].path,'/chat/api/second-brain/notes/note-one');
