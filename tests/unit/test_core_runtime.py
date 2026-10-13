@@ -3007,6 +3007,12 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request, *, empty_op
                       tmp_path / "backups", tmp_path / "overlays"):
         directory.mkdir(parents=True, exist_ok=True)
         directory.chmod(0o700 if directory not in {unit_dir, libexec} else 0o755)
+    # The unmodified guard stats these original service paths as admin. Keep
+    # traversal public only in this disposable two-file service tree; its
+    # credentials, journal, and recovery backups remain private under tmp_path.
+    for directory in (service_root / "etc", service_root / "etc" / "systemd",
+                      service_root / "usr", service_root / "usr" / "local"):
+        directory.chmod(0o755)
     monkeypatch.setattr(core, "PYTHON", Path(sys.executable))
     monkeypatch.setattr(core, "JOURNAL", runtime / "ownership.json")
     monkeypatch.setattr(core, "RESOURCES_RECORD", runtime / "resources.json")
@@ -3044,6 +3050,45 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request, *, empty_op
     core.LAUNCHER.chmod(0o755)
     core.UNIT.write_bytes(new_unit)
     core.UNIT.chmod(0o644)
+    expected_service_files = {core.UNIT.resolve(), core.LAUNCHER.resolve()}
+    actual_service_files = {
+        path.resolve() for path in service_root.rglob("*") if path.is_file()
+    }
+    expected_service_directories = {
+        service_root.resolve(), (service_root / "etc").resolve(),
+        (service_root / "etc" / "systemd").resolve(), unit_dir.resolve(),
+        (service_root / "usr").resolve(), (service_root / "usr" / "local").resolve(),
+        libexec.resolve(),
+    }
+    actual_service_directories = {
+        path.resolve() for path in service_root.rglob("*") if path.is_dir()
+    } | {service_root.resolve()}
+    actual_service_entries = {path.resolve() for path in service_root.rglob("*")}
+    service_directory_custody = all(
+        not path.is_symlink()
+        and stat.S_ISDIR(path.lstat().st_mode)
+        and (path.lstat().st_uid, path.lstat().st_gid,
+             stat.S_IMODE(path.lstat().st_mode)) == (core.ROOT_UID, core.ROOT_UID, 0o755)
+        for path in (service_root, service_root / "etc", service_root / "etc" / "systemd",
+                     unit_dir, service_root / "usr", service_root / "usr" / "local", libexec)
+    )
+    service_file_custody = (
+        not core.UNIT.is_symlink() and not core.LAUNCHER.is_symlink()
+        and (core.UNIT.stat().st_uid, core.UNIT.stat().st_gid,
+             stat.S_IMODE(core.UNIT.stat().st_mode), core.UNIT.stat().st_nlink)
+            == (core.ROOT_UID, core.ROOT_UID, 0o644, 1)
+        and (core.LAUNCHER.stat().st_uid, core.LAUNCHER.stat().st_gid,
+             stat.S_IMODE(core.LAUNCHER.stat().st_mode), core.LAUNCHER.stat().st_nlink)
+            == (core.ROOT_UID, core.ROOT_UID, 0o755, 1)
+    )
+    if (actual_service_files != expected_service_files
+            or actual_service_directories != expected_service_directories
+            or actual_service_entries != expected_service_files | (expected_service_directories - {service_root.resolve()})
+            or any(path.is_symlink() for path in service_root.rglob("*"))
+            or not service_directory_custody or not service_file_custody):
+        raise AssertionError(
+            "public fixture tree must contain only the two root-owned service files "
+            "and root-owned 0755 traversal directories")
     new_recipe = core._adapter_recipe_sha256(
         str(new_source), new_adapter, hashlib.sha256(new_unit).hexdigest(),
         hashlib.sha256(new_launcher).hexdigest())
