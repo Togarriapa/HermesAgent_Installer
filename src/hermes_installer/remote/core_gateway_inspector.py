@@ -151,6 +151,8 @@ _SERVER_SLOTS = threading.BoundedSemaphore(16)
 _MAX_RETAINED_INGRESS_ISSUES = 128
 _RETAINED_INGRESS_ISSUES: dict[tuple[int, str, str, str], "_RetainedIngressIssue"] = {}
 _RETAINED_INGRESS_LOCK = threading.RLock()
+_PROFILE_ADMIN_CHILDREN: dict[tuple[int, str, str, str], "_RetainedProfileAdminChild"] = {}
+_PROFILE_ADMIN_CHILD_COUNTS: dict[tuple[int, str, str, str], int] = {}
 _LEARNING_JWKS_CACHE: Any = None
 _LEARNING_JWKS_LOCK = threading.Lock()
 _CORE_NATIVE_CUSTODY: Any = None
@@ -439,6 +441,25 @@ class _RetainedIngressIssue:
     boot_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class _RetainedProfileAdminChild:
+    """One-use native child derived from, and never extending, a retained ingress."""
+
+    parent_key: tuple[int, str, str, str]
+    action: str
+    issued_monotonic: float
+    expires_monotonic: float
+    peer: tuple[int, int, int]
+    core_generation: str
+    config_sha256: str
+    boot_id: str
+    owner_subject_sha256: str
+    token_fingerprint_sha256: str
+    admin_revision: int
+    admin_record_sha256: str
+    purpose: str
+
+
 def _retain_ingress_issue(*, caller_pid: int, caller_start_ticks: str,
                           proof: dict[str, Any]) -> None:
     now = time.monotonic()
@@ -506,6 +527,151 @@ def _peek_ingress_issue(*, caller_pid: int, caller_start_ticks: str,
             or now >= retained.expires_monotonic):
         raise CoreInspectionDenied("original ingress proof is unavailable or expired")
     return retained
+
+
+_PROFILE_ADMIN_ACTIONS = frozenset({"list", "read", "write", "skills-list",
+    "skills-archives-list", "skill-read", "skill-write", "skill-archive",
+    "skill-restore", "skill-restore-list"})
+
+
+def _current_profile_admin_status(config: CoreGatewayConfig, *, request: dict[str, Any],
+                                  caller_pid: int, caller_uid: int, caller_gid: int,
+                                  peer_pid: int, peer_uid: int, peer_gid: int,
+                                  retained: _RetainedIngressIssue, principal: Any) -> dict[str, Any]:
+    """Read current role independently, without touching any native profile file."""
+    from . import global_admin
+    owner_sha = hashlib.sha256(principal.subject.encode("utf-8", "strict")).hexdigest()
+    if (principal.email.casefold() not in config.allowed_emails
+            or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest()
+                != principal.token_fingerprint
+            or not _is_hash(request["core_generation"])):
+        raise CoreInspectionDenied("current profile administrator identity is unavailable")
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=retained.expires_monotonic,
+        _retain_issuance=False)
+    if (current.get("proof_sha256") != retained.proof_sha256
+            or current.get("core_generation") != request["core_generation"]):
+        raise CoreInspectionDenied("original profile ingress changed")
+    gateway_pidfd, gateway_start, _invocation = _check_unit_process(
+        config, unit=CORE_GATEWAY_UNIT, pid=caller_pid,
+        deadline=retained.expires_monotonic)
+    try:
+        if gateway_start != retained.caller_start_ticks:
+            raise CoreInspectionDenied("profile gateway process changed")
+    finally:
+        os.close(gateway_pidfd)
+    with global_admin.locked(exclusive=False):
+        record, digest = global_admin.read_locked()
+        if record is None:
+            if len(config.allowed_emails) == 1 and principal.email.casefold() in config.allowed_emails:
+                return {"state": "legacy-singleton", "authorized": True,
+                    "revision": 0, "record_sha256": "0" * 64}
+            return {"state": "unconfigured", "authorized": False,
+                "revision": 0, "record_sha256": "0" * 64}
+        identity_matches = (record["hostname"] == config.hostname
+            and record["issuer"] == config.issuer and record["audience"] == config.audience
+            and record["home_uid"] == 1000 and record["home_realpath"] == "/home/admin/.hermes"
+            and record["admin_email_sha256"] == hashlib.sha256(
+                global_admin.normalize_email(principal.email).encode("utf-8")).hexdigest()
+            and record["admin_subject_sha256"] == owner_sha
+            and principal.email.casefold() in config.allowed_emails)
+        active = record["state"] == "active" and identity_matches
+        return {"state": record["state"], "authorized": bool(active),
+            "revision": record["revision"], "record_sha256": digest}
+
+
+def derive_profile_admin_ingress(config: CoreGatewayConfig, *, request: dict[str, Any],
+                                 caller_pid: int, caller_uid: int, caller_gid: int,
+                                 peer_pid: int, peer_uid: int, peer_gid: int) -> dict[str, Any]:
+    """Derive one action child from a live retained parent, capped at sixteen."""
+    fields = {"op", "nonce", "peer_pid", "peer_uid", "peer_gid",
+        "access_jwt", "core_generation", "ingress_nonce", "ingress_proof_sha256", "action"}
+    if (type(request) is not dict or set(request) != fields
+            or request.get("op") != "derive-profile-admin-ingress"
+            or request.get("action") not in _PROFILE_ADMIN_ACTIONS
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or not isinstance(request.get("nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None
+            or not isinstance(request.get("access_jwt"), str)
+            or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("core_generation"))):
+        raise CoreInspectionDenied("Profile child ingress request is invalid")
+    caller_start = _proc_start_ticks(caller_pid)
+    parent = _peek_ingress_issue(caller_pid=caller_pid, caller_start_ticks=caller_start,
+        nonce=request.get("ingress_nonce"), proof_sha256=request.get("ingress_proof_sha256"),
+        peer=(peer_pid, peer_uid, peer_gid), core_generation=request.get("core_generation"), config=config)
+    deadline = min(parent.expires_monotonic,
+        time.monotonic() + MAX_PROOF_SECONDS)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
+    status_request = {**request, "action": "admin-status"}
+    status = _current_profile_admin_status(config, request=status_request,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        retained=parent, principal=principal)
+    if status["authorized"] is not True:
+        raise CoreInspectionDenied("original administrator scope is unavailable")
+    jwt_deadline = time.monotonic() + max(0.0, principal.expires_at - time.time())
+    expires = min(parent.expires_monotonic, jwt_deadline)
+    now = time.monotonic()
+    if now >= expires:
+        raise CoreInspectionDenied("original profile ingress is expired")
+    parent_key = (parent.caller_pid, parent.caller_start_ticks, parent.nonce, parent.proof_sha256)
+    child_nonce = os.urandom(32).hex()
+    child_proof = os.urandom(32).hex()
+    child_key = (caller_pid, caller_start, child_nonce, child_proof)
+    child = _RetainedProfileAdminChild(parent_key, request["action"], now, expires,
+        (peer_pid, peer_uid, peer_gid), request["core_generation"], config.config_sha256,
+        config.boot_id, hashlib.sha256(principal.subject.encode("utf-8", "strict")).hexdigest(),
+        principal.token_fingerprint, status["revision"], status["record_sha256"],
+        "profile-admin-child")
+    with _RETAINED_INGRESS_LOCK:
+        for old_key, old in tuple(_PROFILE_ADMIN_CHILDREN.items()):
+            if old.expires_monotonic <= now:
+                _PROFILE_ADMIN_CHILDREN.pop(old_key, None)
+        for old_key, count in tuple(_PROFILE_ADMIN_CHILD_COUNTS.items()):
+            if old_key not in _RETAINED_INGRESS_ISSUES:
+                _PROFILE_ADMIN_CHILD_COUNTS.pop(old_key, None)
+        count = _PROFILE_ADMIN_CHILD_COUNTS.get(parent_key, 0)
+        if count >= 16 or child_key in _PROFILE_ADMIN_CHILDREN:
+            raise CoreInspectionDenied("profile administrator child capacity is exhausted")
+        _PROFILE_ADMIN_CHILDREN[child_key] = child
+        _PROFILE_ADMIN_CHILD_COUNTS[parent_key] = count + 1
+    return {"schema": 1, "nonce": request["nonce"], "ok": True,
+        "child_nonce": child_nonce, "child_proof_sha256": child_proof,
+        "action": request["action"], "revision": status["revision"],
+        "record_sha256": status["record_sha256"],
+        "expires_in_seconds": max(0.0, expires - time.monotonic())}
+
+
+def _consume_profile_admin_child(*, caller_pid: int, caller_start_ticks: str,
+                                 nonce: str, proof_sha256: str, action: str,
+                                 parent: _RetainedIngressIssue,
+                                 peer: tuple[int, int, int], core_generation: str,
+                                 config: CoreGatewayConfig, principal: Any,
+                                 expected_revision: int, expected_record_sha256: str) -> _RetainedProfileAdminChild:
+    now = time.monotonic()
+    key = (caller_pid, caller_start_ticks, nonce, proof_sha256)
+    parent_key = (parent.caller_pid, parent.caller_start_ticks, parent.nonce, parent.proof_sha256)
+    with _RETAINED_INGRESS_LOCK:
+        child = _PROFILE_ADMIN_CHILDREN.pop(key, None)
+    if (child is None or child.parent_key != parent_key or child.action != action
+            or child.peer != peer or child.core_generation != core_generation
+            or child.config_sha256 != config.config_sha256 or child.boot_id != config.boot_id
+            or child.owner_subject_sha256 != hashlib.sha256(
+                principal.subject.encode("utf-8", "strict")).hexdigest()
+            or child.token_fingerprint_sha256 != principal.token_fingerprint
+            or child.admin_revision != expected_revision
+            or child.admin_record_sha256 != expected_record_sha256
+            or child.purpose != "profile-admin-child"
+            or not child.issued_monotonic < now < child.expires_monotonic
+            or child.expires_monotonic > parent.expires_monotonic):
+        raise CoreInspectionDenied("one-use profile administrator child is unavailable or changed")
+    return child
 
 
 def _learning_digest(values: dict[str, Any]) -> str:
@@ -2482,21 +2648,8 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
                           peer_pid: int, peer_uid: int, peer_gid: int) -> dict[str, Any]:
     """Lock and independently authorize each native Profiles/skill operation."""
     action = request.get("action") if type(request) is dict else None
-    expected_admin_fields = {"expected_admin_revision", "expected_admin_sha256"}
-    if action == "admin-status":
-        if type(request) is not dict or expected_admin_fields & set(request):
-            raise CoreInspectionDenied("Profile administrator status request is invalid")
-    elif (type(request) is not dict
-            or (not expected_admin_fields.issubset(request)
-                and action not in {"list", "skills-list", "skills-archives-list"})
-            or (expected_admin_fields & set(request)
-                and (not expected_admin_fields.issubset(request)
-                    or type(request.get("expected_admin_revision")) is not int
-                    or request["expected_admin_revision"] < 0
-                    or not _is_hash(request.get("expected_admin_sha256"))))):
-        raise CoreInspectionDenied("Current original administrator proof is required")
-
-    from . import global_admin
+    if type(request) is not dict:
+        raise CoreInspectionDenied("Profile administrator request is invalid")
     from .gateway import validate_access_jwt
     caller_start_ticks = _proc_start_ticks(caller_pid)
     retained = _peek_ingress_issue(caller_pid=caller_pid, caller_start_ticks=caller_start_ticks,
@@ -2505,28 +2658,54 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
     deadline = min(time.monotonic() + MAX_PROOF_SECONDS, retained.expires_monotonic)
     principal = validate_access_jwt(request.get("access_jwt"),
         policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
+    jwt_deadline = time.monotonic() + max(0.0, principal.expires_at - time.time())
+    status_deadline = min(retained.expires_monotonic, jwt_deadline)
+    if action == "admin-status":
+        status_fields = {"schema", "op", "action", "nonce", "peer_pid", "peer_uid", "peer_gid",
+            "access_jwt", "core_generation", "ingress_nonce", "ingress_proof_sha256"}
+        if set(request) != status_fields:
+            raise CoreInspectionDenied("Profile administrator status request is invalid")
+        scope = _current_profile_admin_status(config, request=request,
+            caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+            peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+            retained=retained, principal=principal)
+        return {"schema": 1, "nonce": request["nonce"], "ok": True,
+            "action": action, "result": {"data": {"state": "current"}, "admin_scope": {
+            **scope, "owner_subject_sha256": hashlib.sha256(
+                principal.subject.encode("utf-8", "strict")).hexdigest(),
+            "token_fingerprint_sha256": principal.token_fingerprint,
+            "config_sha256": config.config_sha256, "core_generation": request["core_generation"],
+            "parent_nonce": retained.nonce, "parent_proof_sha256": retained.proof_sha256,
+            "purpose": "profiles-native-skills",
+            "expires_in_seconds": max(0.0, status_deadline - time.monotonic())}}}
+
+    required = {"child_nonce", "child_proof_sha256", "expected_admin_revision", "expected_admin_sha256"}
+    if (action not in _PROFILE_ADMIN_ACTIONS or not required.issubset(request)
+            or type(request.get("expected_admin_revision")) is not int
+            or request["expected_admin_revision"] < 0
+            or not _is_hash(request.get("expected_admin_sha256"))):
+        raise CoreInspectionDenied("Current original administrator proof is required")
+    if (not isinstance(request.get("child_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["child_nonce"]) is None
+            or not _is_hash(request.get("child_proof_sha256"))):
+        raise CoreInspectionDenied("One-use profile administrator child is required")
+    from . import global_admin
     proof_context = {"owner_subject_sha256": hashlib.sha256(
             principal.subject.encode("utf-8", "strict")).hexdigest(),
+        "token_fingerprint_sha256": principal.token_fingerprint,
         "config_sha256": config.config_sha256, "core_generation": request.get("core_generation"),
+        "parent_nonce": retained.nonce, "parent_proof_sha256": retained.proof_sha256,
         "purpose": "profiles-native-skills"}
 
     def sealed_scope(scope: dict[str, Any]) -> dict[str, Any]:
         return {**scope, **proof_context,
             "expires_in_seconds": max(0.0, min(MAX_PROOF_SECONDS,
-                retained.expires_monotonic - time.monotonic()))}
+                status_deadline - time.monotonic()))}
 
     with global_admin.locked(exclusive=False):
         record, digest = global_admin.read_locked()
         if record is None:
-            if (len(config.allowed_emails) != 1
-                    or principal.email.casefold() not in config.allowed_emails):
-                if action == "admin-status":
-                    scope = {"state": "unconfigured", "authorized": False,
-                        "revision": 0, "record_sha256": "0" * 64}
-                    result = _observe_profile_admin_transaction(config, request=request,
-                        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
-                        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid)
-                    return {"data": result["result"], "admin_scope": sealed_scope(scope)}
+            if len(config.allowed_emails) != 1 or principal.email.casefold() not in config.allowed_emails:
                 raise CoreInspectionDenied("Global profile administration is pending original administrator setup")
             scope = {"state": "legacy-singleton", "authorized": True,
                 "revision": 0, "record_sha256": "0" * 64}
@@ -2539,36 +2718,40 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
                 and record["admin_subject_sha256"] == hashlib.sha256(
                     principal.subject.encode("utf-8", "strict")).hexdigest()
                 and principal.email.casefold() in config.allowed_emails)
-            if action == "admin-status":
-                scope = {"state": record["state"], "authorized": bool(
-                    record["state"] == "active" and identity_matches),
-                    "revision": record["revision"], "record_sha256": digest}
-            elif (record["state"] != "active" or not identity_matches
-                    or (expected_admin_fields.issubset(request)
-                        and (request["expected_admin_revision"] != record["revision"]
-                            or request["expected_admin_sha256"] != digest))):
+            if (record["state"] != "active" or not identity_matches
+                    or request["expected_admin_revision"] != record["revision"]
+                    or request["expected_admin_sha256"] != digest):
                 raise CoreInspectionDenied("Original administrator is unavailable or changed")
             else:
                 scope = {"state": "active", "authorized": True,
                     "revision": record["revision"], "record_sha256": digest}
-        if action != "admin-status" and record is None:
-            if (expected_admin_fields.issubset(request) and
-                    (request["expected_admin_revision"] != 0
-                        or request["expected_admin_sha256"] != "0" * 64)):
-                raise CoreInspectionDenied("Singleton profile administration proof changed")
+        if record is None and (request["expected_admin_revision"] != 0
+                or request["expected_admin_sha256"] != "0" * 64):
+            raise CoreInspectionDenied("Singleton profile administration proof changed")
+        child = _consume_profile_admin_child(caller_pid=caller_pid,
+            caller_start_ticks=caller_start_ticks, nonce=request["child_nonce"],
+            proof_sha256=request["child_proof_sha256"], action=action,
+            parent=retained, peer=(peer_pid, peer_uid, peer_gid),
+            core_generation=request.get("core_generation"), config=config, principal=principal,
+            expected_revision=request["expected_admin_revision"],
+            expected_record_sha256=request["expected_admin_sha256"])
         result = _observe_profile_admin_transaction(config, request=request,
             caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
-            peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid)
-        return {"data": result["result"], "admin_scope": sealed_scope(scope)}
+            peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+            child_expires_monotonic=child.expires_monotonic)
+        return {"schema": 1, "nonce": request["nonce"], "ok": True, "action": action,
+            "result": {"data": result["result"], "admin_scope": sealed_scope(scope)}}
 
 
 def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: dict[str, Any],
                           caller_pid: int, caller_uid: int, caller_gid: int,
-                          peer_pid: int, peer_uid: int, peer_gid: int) -> dict[str, Any]:
+                          peer_pid: int, peer_uid: int, peer_gid: int,
+                          child_expires_monotonic: float) -> dict[str, Any]:
     """Perform one owner-authorized operation on an existing verified profile leaf."""
     action = request.get("action") if type(request) is dict else None
     base = {"schema", "op", "action", "nonce", "peer_pid", "peer_uid", "peer_gid",
-            "access_jwt", "core_generation", "ingress_nonce", "ingress_proof_sha256"}
+            "access_jwt", "core_generation", "ingress_nonce", "ingress_proof_sha256",
+            "child_nonce", "child_proof_sha256", "expected_admin_revision", "expected_admin_sha256"}
     fields = (set() if action in {"admin-status", "list", "skills-list", "skills-archives-list"} else {"profile_id", "file_kind"} if action == "read" else
               {"profile_id", "file_kind", "expected_sha256", "content", "idempotency_key"}
               if action == "write" else {"skill_id"} if action == "skill-read" else
@@ -2578,8 +2761,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
               if action == "skill-archive" else
               {"skill_id", "expected_sha256", "idempotency_key", "restore_id"}
               if action == "skill-restore" else {"skill_id"} if action == "skill-restore-list" else None)
-    expected_admin_fields = {"expected_admin_revision", "expected_admin_sha256"} & set(request)
-    if (fields is None or type(request) is not dict or set(request) != base | fields | expected_admin_fields
+    if (fields is None or type(request) is not dict or set(request) != base | fields
             or type(request.get("schema")) is not int or request["schema"] != 1
             or request.get("op") != "owner-profile-admin"
             or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
@@ -2621,10 +2803,11 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
             raise CoreInspectionDenied("Profile edit payload is invalid")
 
     caller_start = _proc_start_ticks(caller_pid)
-    retained = _consume_ingress_issue(caller_pid=caller_pid, caller_start_ticks=caller_start,
+    retained = _peek_ingress_issue(caller_pid=caller_pid, caller_start_ticks=caller_start,
         nonce=request["ingress_nonce"], proof_sha256=request["ingress_proof_sha256"],
         peer=(peer_pid, peer_uid, peer_gid), core_generation=request["core_generation"], config=config)
-    deadline = min(time.monotonic() + MAX_PROOF_SECONDS, retained.expires_monotonic)
+    deadline = min(time.monotonic() + MAX_PROOF_SECONDS, retained.expires_monotonic,
+                   child_expires_monotonic)
     current = observe_current_ingress(config, nonce=retained.nonce,
         caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
         peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
@@ -2642,7 +2825,6 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
     owner_hash = hashlib.sha256(principal.subject.encode("utf-8", "strict")).hexdigest()
     if (principal.email.casefold() not in config.allowed_emails
             or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest() != principal.token_fingerprint
-            or owner_hash != retained.owner_subject_sha256
             or request["core_generation"] != current["core_generation"]):
         raise CoreInspectionDenied("Profile administration owner is unavailable")
     if action == "admin-status":
@@ -4798,6 +4980,36 @@ def _read_frame(conn: socket.socket, deadline: float, maximum: int, *,
     return value
 
 
+def _profile_admin_root_call(config: CoreGatewayConfig, *, packet: dict[str, Any],
+                             nonce: str, deadline: float) -> dict[str, Any]:
+    """Send one bounded profile-admin request to the fixed Root inspector socket."""
+    info = os.lstat(CORE_INSPECTOR_SOCKET)
+    if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+            or info.st_gid != config.gateway_gid or stat.S_IMODE(info.st_mode) != 0o660):
+        raise CoreGatewayDenied("root profile inspector is unavailable")
+    raw = json.dumps(packet, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+    if len(raw) > MAX_PROFILE_ADMIN_REQUEST_BYTES or time.monotonic() >= deadline:
+        raise CoreGatewayDenied("profile administration request exceeded its bound")
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        conn.settimeout(max(0.05, deadline - time.monotonic()))
+        conn.connect(str(CORE_INSPECTOR_SOCKET))
+        if not hasattr(socket, "SO_PEERCRED"):
+            raise ValueError
+        pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if uid != 0 or pid <= 1:
+            raise ValueError
+        conn.sendall(struct.pack("!I", len(raw)) + raw)
+        result = _read_frame(conn, deadline, MAX_PROFILE_ADMIN_RESPONSE_BYTES, encoding="utf-8")
+    except Exception:
+        raise CoreGatewayDenied("root profile source is unavailable") from None
+    finally:
+        conn.close()
+    if result.get("schema") != 1 or result.get("nonce") != nonce or result.get("ok") is not True:
+        raise CoreGatewayDenied("root profile source response is malformed or stale")
+    return result
+
+
 def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
     try:
         issued = time.monotonic()
@@ -4884,6 +5096,11 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
                 caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
                 peer_uid=request.get("peer_uid"), peer_gid=request.get("peer_gid"))
             maximum = MAX_PROFILE_ADMIN_RESPONSE_BYTES
+        elif request.get("op") == "derive-profile-admin-ingress":
+            result = derive_profile_admin_ingress(config, request=request, caller_pid=caller_pid,
+                caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
+                peer_uid=request.get("peer_uid"), peer_gid=request.get("peer_gid"))
+            maximum = MAX_RESPONSE
         elif request.get("op") in {"list-final-effects", "decide-final-effect"}:
             result = observe_final_effect_request(config, request=request, caller_pid=caller_pid,
                 caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
@@ -5941,8 +6158,7 @@ class CoreGatewayInspector:
                             expected_sha256: str | None = None, content: str | None = None,
                             idempotency_key: str | None = None,
                             restore_id: str | None = None,
-                            expected_admin_revision: int | None = None,
-                            expected_admin_sha256: str | None = None) -> dict[str, Any]:
+                            admin_context: Any = None) -> dict[str, Any]:
         """Use the fixed root inspector for current profile and native skill files."""
         from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
         if (action not in {"admin-status", "list", "read", "write", "skills-list", "skills-archives-list", "skill-read", "skill-write",
@@ -5956,7 +6172,7 @@ class CoreGatewayInspector:
         if action in {"skill-read", "skill-write", "skill-archive", "skill-restore", "skill-restore-list"}:
             if not isinstance(skill_id, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", skill_id) is None:
                 raise CoreGatewayDenied("verified native skill selector is required")
-        elif action not in {"list", "skills-list", "skills-archives-list"}:
+        elif action not in {"admin-status", "list", "skills-list", "skills-archives-list"}:
             if (not isinstance(profile_id, str)
                     or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,95}", profile_id) is None
                     or file_kind not in {"soul", "description", "instructions"}):
@@ -5990,15 +6206,24 @@ class CoreGatewayInspector:
         elif action not in {"admin-status", "list", "skills-list", "skills-archives-list"}:
             body.update({"profile_id": profile_id, "file_kind": file_kind})
         if action != "admin-status":
-            if (expected_admin_revision is None and expected_admin_sha256 is None
-                    and action in {"list", "skills-list", "skills-archives-list"}):
-                pass
-            elif (type(expected_admin_revision) is int and expected_admin_revision >= 0
-                    and _is_hash(expected_admin_sha256)):
-                body.update({"expected_admin_revision": expected_admin_revision,
-                             "expected_admin_sha256": expected_admin_sha256})
-            else:
+            if (type(admin_context) is not dict
+                    or set(admin_context) != {"revision", "record_sha256", "owner_subject_sha256",
+                        "token_fingerprint_sha256", "config_sha256", "core_generation",
+                        "parent_nonce", "parent_proof_sha256", "expires_monotonic"}
+                    or type(admin_context["revision"]) is not int or admin_context["revision"] < 0
+                    or not _is_hash(admin_context["record_sha256"])
+                    or admin_context["owner_subject_sha256"] != hashlib.sha256(
+                        accepted_ingress.principal.subject.encode("utf-8", "strict")).hexdigest()
+                    or admin_context["token_fingerprint_sha256"] != accepted_ingress.principal.token_fingerprint
+                    or admin_context["config_sha256"] != self._config.config_sha256
+                    or admin_context["core_generation"] != accepted_ingress.core_generation
+                    or admin_context["parent_nonce"] != proof.nonce
+                    or admin_context["parent_proof_sha256"] != proof.proof_sha256
+                    or type(admin_context["expires_monotonic"]) not in {int, float}
+                    or time.monotonic() >= admin_context["expires_monotonic"]):
                 raise CoreGatewayDenied("current Root administrator proof is required")
+            body.update({"expected_admin_revision": admin_context["revision"],
+                         "expected_admin_sha256": admin_context["record_sha256"]})
         if action in {"write", "skill-write"}:
             body.update({"expected_sha256": expected_sha256, "content": content,
                          "idempotency_key": idempotency_key})
@@ -6008,24 +6233,30 @@ class CoreGatewayInspector:
                 if not _valid_profile_skill_restore_candidate(restore_id):
                     raise CoreGatewayDenied("an exact archived native skill version is required")
                 body["restore_id"] = restore_id
-        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
-        if len(raw) > MAX_PROFILE_ADMIN_REQUEST_BYTES or time.monotonic() >= deadline:
-            raise CoreGatewayDenied("profile administration request exceeded its bound")
-        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            conn.settimeout(max(0.05, deadline - time.monotonic()))
-            conn.connect(str(CORE_INSPECTOR_SOCKET))
-            if not hasattr(socket, "SO_PEERCRED"):
-                raise ValueError
-            pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-            if uid != 0 or pid <= 1:
-                raise ValueError
-            conn.sendall(struct.pack("!I", len(raw)) + raw)
-            result = _read_frame(conn, deadline, MAX_PROFILE_ADMIN_RESPONSE_BYTES, encoding="utf-8")
-        except Exception:
-            raise CoreGatewayDenied("root profile source is unavailable") from None
-        finally:
-            conn.close()
+        if action != "admin-status":
+            derive_nonce = os.urandom(32).hex()
+            derive = {"op": "derive-profile-admin-ingress", "nonce": derive_nonce,
+                "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+                "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+                "core_generation": accepted_ingress.core_generation,
+                "ingress_nonce": proof.nonce, "ingress_proof_sha256": proof.proof_sha256,
+                "action": action}
+            derived = _profile_admin_root_call(self._config, packet=derive,
+                nonce=derive_nonce, deadline=deadline)
+            if (set(derived) != {"schema", "nonce", "ok", "child_nonce", "child_proof_sha256",
+                    "action", "revision", "record_sha256", "expires_in_seconds"}
+                    or derived["action"] != action
+                    or not isinstance(derived.get("child_nonce"), str)
+                    or re.fullmatch(r"[0-9a-f]{64}", derived["child_nonce"]) is None
+                    or not _is_hash(derived.get("child_proof_sha256"))
+                    or derived["revision"] != admin_context["revision"]
+                    or derived["record_sha256"] != admin_context["record_sha256"]
+                    or type(derived["expires_in_seconds"]) not in {int, float}
+                    or not 0 < derived["expires_in_seconds"] <= admin_context["expires_monotonic"] - time.monotonic() + 0.01):
+                raise CoreGatewayDenied("Root profile child issuance is malformed or stale")
+            body.update({"child_nonce": derived["child_nonce"],
+                         "child_proof_sha256": derived["child_proof_sha256"]})
+        result = _profile_admin_root_call(self._config, packet=body, nonce=nonce, deadline=deadline)
         _read_config_current(self._config)
         if accepted_ingress.verify_current(self._config) is not True:
             raise CoreGatewayDenied("profile administration ingress changed during operation")
@@ -6038,15 +6269,19 @@ class CoreGatewayInspector:
                 or type(result["result"]["admin_scope"]) is not dict
                 or set(result["result"]["admin_scope"]) != {
                     "state", "authorized", "revision", "record_sha256", "owner_subject_sha256",
-                    "config_sha256", "core_generation", "purpose", "expires_in_seconds"}
+                    "token_fingerprint_sha256", "config_sha256", "core_generation",
+                    "parent_nonce", "parent_proof_sha256", "purpose", "expires_in_seconds"}
                 or result["result"]["admin_scope"]["state"] not in {"active", "revoked", "unconfigured", "legacy-singleton"}
                 or type(result["result"]["admin_scope"]["authorized"]) is not bool
                 or type(result["result"]["admin_scope"]["revision"]) is not int
                 or not _is_hash(result["result"]["admin_scope"]["record_sha256"])
                 or result["result"]["admin_scope"]["owner_subject_sha256"] != hashlib.sha256(
                     accepted_ingress.principal.subject.encode("utf-8", "strict")).hexdigest()
+                or result["result"]["admin_scope"]["token_fingerprint_sha256"] != accepted_ingress.principal.token_fingerprint
                 or result["result"]["admin_scope"]["config_sha256"] != self._config.config_sha256
                 or result["result"]["admin_scope"]["core_generation"] != accepted_ingress.core_generation
+                or result["result"]["admin_scope"]["parent_nonce"] != proof.nonce
+                or result["result"]["admin_scope"]["parent_proof_sha256"] != proof.proof_sha256
                 or result["result"]["admin_scope"]["purpose"] != "profiles-native-skills"
                 or type(result["result"]["admin_scope"]["expires_in_seconds"]) not in {int, float}
                 or not 0 < result["result"]["admin_scope"]["expires_in_seconds"] <= MAX_PROOF_SECONDS

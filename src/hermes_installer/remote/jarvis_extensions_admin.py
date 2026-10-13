@@ -366,10 +366,12 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
         token = access_jwt(request)
         # Root independently authorizes the native skill source before CoreRpc
         # plugin/MCP catalogs are read or projected.
+        admin_context = provider.admin_status(access_jwt=token, accepted_ingress=accepted)
+        request["profile_admin_context"] = admin_context
         skill_files = provider.list_skills(core_generation=principal.core_generation,
-            access_jwt=token, accepted_ingress=accepted)
+            access_jwt=token, accepted_ingress=accepted, admin_context=admin_context)
         archived_skill_files = provider.list_skill_archives(core_generation=principal.core_generation,
-            access_jwt=token, accepted_ingress=accepted)
+            access_jwt=token, accepted_ingress=accepted, admin_context=admin_context)
         skills, plugins, mcps = await asyncio.gather(
             service.backend.skills_inventory(), service.backend.list_managed_plugins(),
             service.backend.list_mcp_servers())
@@ -587,7 +589,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                                            headers=_secure_headers())
                 current_file = skill_provider(request).read_skill(core_generation=before.core_generation,
                     skill_id=target["name"], access_jwt=access_jwt(request),
-                    accepted_ingress=request.get("core_ingress"))
+                    accepted_ingress=request.get("core_ingress"),
+                    admin_context=request.get("profile_admin_context"))
                 source_expected = "resources" if target.get("source") == "bundledResources" else "owner-added"
                 if (current_file.source != source_expected or current_file.sha256 != target.get("sha256")
                         or current_file.overlay_active != target.get("overlayActive")):
@@ -634,7 +637,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 write = skill_provider(request).write_skill(core_generation=before.core_generation,
                     skill_id=target["name"], expected_sha256=current_file.sha256,
                     content=body["content"], idempotency_key=body["idempotency_key"],
-                    access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"))
+                    access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"),
+                    admin_context=request.get("profile_admin_context"))
                 if write.state == "conflict":
                     complete_action(body, before.subject)
                     raise web.HTTPConflict(text="skill source changed; refresh and retry",
@@ -662,7 +666,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 archived = skill_provider(request).archive_skill(core_generation=before.core_generation,
                     skill_id=target["name"], expected_sha256=current_file.sha256,
                     idempotency_key=body["idempotency_key"], access_jwt=access_jwt(request),
-                    accepted_ingress=request.get("core_ingress"))
+                    accepted_ingress=request.get("core_ingress"),
+                    admin_context=request.get("profile_admin_context"))
                 if archived.state == "conflict":
                     complete_action(body, before.subject)
                     raise web.HTTPConflict(text="skill source changed; refresh and retry",
@@ -696,7 +701,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             elif operation == "skills:restore":
                 provider = skill_provider(request)
                 archive_rows = provider.list_skill_archives(core_generation=before.core_generation,
-                    access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"))
+                    access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"),
+                    admin_context=request.get("profile_admin_context"))
                 archive_row = next((item for item in archive_rows if item["skill_id"] == target["name"]
                                     and item["source"] == ("resources" if target.get("source") == "bundledResources" else "owner-added")), None)
                 versions = archive_row["versions"] if archive_row else ()
@@ -709,7 +715,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 restored = provider.restore_skill(core_generation=before.core_generation,
                     skill_id=target["name"], expected_sha256=restore_expected_sha,
                     restore_id=archived["restore_id"], idempotency_key=body["idempotency_key"],
-                    access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"))
+                    access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"),
+                    admin_context=request.get("profile_admin_context"))
                 expected_restore_state = "discovered" if target.get("source") == "bundledResources" else "restored"
                 restore_id_valid = ((restored.recovery_id is None or re.fullmatch(r"[0-9a-f]{64}", restored.recovery_id) is not None)
                     if target.get("source") == "bundledResources" else restored.recovery_id == body["restore_id"])
@@ -830,7 +837,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                                        headers=_secure_headers())
             row = resolve_item_id(body, snapshot["items"], "skills", before.subject, before.core_generation)
             archive_rows = skill_provider(request).list_skill_archives(core_generation=before.core_generation,
-                access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"))
+                access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"),
+                admin_context=request.get("profile_admin_context"))
             archive_row = next((item for item in archive_rows if item["skill_id"] == row["name"]), None)
             versions = archive_row["versions"] if archive_row else ()
             after = current_owner(request, require_origin=True)
@@ -862,7 +870,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                                        headers=_secure_headers())
             value = skill_provider(request).read_skill(core_generation=before.core_generation,
                 skill_id=row["name"], access_jwt=access_jwt(request),
-                accepted_ingress=request.get("core_ingress"))
+                accepted_ingress=request.get("core_ingress"),
+                admin_context=request.get("profile_admin_context"))
             after = current_owner(request, require_origin=True)
             if after.subject != before.subject or after.core_generation != before.core_generation:
                 raise JarvisChatDenied("owner or core generation changed during skill read")
