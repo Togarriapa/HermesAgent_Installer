@@ -509,6 +509,11 @@ exec "$runuser_bin" -u admin -- "$@"
                                     "source-starting", "bindings-verified", "committed"})):
                             diagnostic_summary = candidate
                         break
+            if diagnostic:
+                print("bounded ExecStartPre failure diagnostics: " + repr({
+                    "guard_flags": diagnostic_summary,
+                    "diagnostic_meta": diagnostic_meta,
+                }))
             raise AssertionError(
                 f"generated ExecStartPre should {outcome}; exit={result.returncode}; "
                 f"stderr={'<suppressed>' if diagnostic else (stderr or '<empty>')}; "
