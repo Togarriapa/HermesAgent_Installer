@@ -530,6 +530,12 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="act
                         "hermes_installer.remote.native_plugin_bootstrap", bootstrap)
     monkeypatch.setitem(sys.modules,
                         "hermes_installer.remote.core_gateway_inspector", inspector)
+    # Core uses `from .remote import ...`, which can resolve an already cached
+    # package attribute instead of the replacement sys.modules entries above.
+    # Keep both import routes bound to these same explicit fixture adapters.
+    import hermes_installer.remote as remote_package
+    monkeypatch.setattr(remote_package, "native_plugin_bootstrap", bootstrap, raising=False)
+    monkeypatch.setattr(remote_package, "core_gateway_inspector", inspector, raising=False)
     monkeypatch.setattr(core, "_native_plugin_source_members",
         lambda source: dict(plugin_bundles["new" if Path(source) == core.ADAPTER_SOURCE else "old"]))
     return calls, enabled, launcher_bytes, selection
