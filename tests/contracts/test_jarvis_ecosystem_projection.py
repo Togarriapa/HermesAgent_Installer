@@ -49,11 +49,11 @@ def _snapshot(instances: list[dict]) -> dict:
     }
 
 
-def _team_snapshot() -> dict:
+def _team_snapshot(*, recipient_profile: str = "researcher") -> dict:
     sender = _instance(profile="developer")
     sender["execution_key"] = "e" * 32
     sender["gateway_turn_id"] = "f" * 32
-    recipient = _instance(profile="researcher")
+    recipient = _instance(profile=recipient_profile)
     recipient["execution_key"] = "g" * 32
     recipient["gateway_turn_id"] = "f" * 32
     now = max(sender["updated_at"], recipient["updated_at"])
@@ -182,6 +182,9 @@ def test_projection_exposes_only_root_joined_team_instances_and_completed_messag
     assert projected["observation"]["partial"] is True
     assert projected["pending"]["team_membership"] == "verified"
     assert projected["pending"]["communication_edges"] == "verified"
+    assert projected["instances"][0]["profile_id"] == "developer"
+    assert projected["instances"][1]["profile_id"] == "researcher"
+    assert projected["instances"][0]["id"] != projected["instances"][1]["id"]
     assert projected["teams"] == [{
         "id": "T" * 32, "team_execution_key": "T" * 32, "team_id": "pair_1",
         "name": "pair_1", "source_revision": "team-source-v3",
@@ -202,11 +205,34 @@ def test_projection_exposes_only_root_joined_team_instances_and_completed_messag
     assert "completion_handle" not in str(projected)
 
 
+def test_current_same_profile_instances_keep_exact_directed_execution_join():
+    value = _team_snapshot(recipient_profile="developer")
+    sender_key = value["relations"][0]["sender_execution_key"]
+    recipient_key = value["relations"][0]["recipient_execution_key"]
+    value["team_instances"][0]["state"] = "current"
+    value["relations"][0]["state"] = "current"
+
+    projected = project_native_activity_snapshot(value)
+
+    assert projected["pending"]["communication_edges"] == "verified"
+    assert projected["instances"][0]["profile_id"] == projected["instances"][1]["profile_id"] == "developer"
+    assert sender_key != recipient_key
+    relation = projected["relations"][0]
+    assert relation["from"] == sender_key == "e" * 32
+    assert relation["to"] == recipient_key == "g" * 32
+    assert relation["state"] == "current"
+    assert relation["mission_id"] == "c" * 32 and relation["mission_revision"] == 2
+
+
 @pytest.mark.parametrize("mutate", [
     lambda value: value["team_instances"][0].update(members=["z" * 32]),
+    lambda value: value["team_instances"][0].update(members=[value["relations"][0]["sender_execution_key"]]),
     lambda value: value["relations"][0].update(mission_revision=3),
+    lambda value: value["relations"][0].update(mission_id="z" * 32),
     lambda value: value["relations"][0].update(recipient_execution_key="z" * 32),
+    lambda value: value["relations"][0].update(recipient_execution_key=value["relations"][0]["sender_execution_key"]),
     lambda value: value["instances"][0].update(status="responded"),
+    lambda value: value["relations"][0].update(event_at=value["observed_at"] + 1),
 ])
 def test_projection_rejects_team_relations_without_exact_included_mission_join(mutate):
     value = _team_snapshot()
@@ -214,6 +240,19 @@ def test_projection_rejects_team_relations_without_exact_included_mission_join(m
 
     with pytest.raises(ValueError):
         project_native_activity_snapshot(value)
+
+
+def test_rejected_relation_does_not_mutate_input_and_fresh_snapshot_recovers():
+    rejected = _team_snapshot()
+    rejected["relations"][0]["event_at"] = rejected["observed_at"] + 1
+    rejected_relation = dict(rejected["relations"][0])
+    with pytest.raises(ValueError):
+        project_native_activity_snapshot(rejected)
+    assert rejected["relations"][0] == rejected_relation
+
+    recovered = project_native_activity_snapshot(_team_snapshot())
+    assert len(recovered["relations"]) == 1
+    assert recovered["relations"][0]["state"] == "historical"
 
 
 def test_partial_or_stale_team_and_relation_state_is_preserved():
@@ -229,6 +268,18 @@ def test_partial_or_stale_team_and_relation_state_is_preserved():
     assert projected["teams"][0]["state"] == "partial"
     assert projected["teams"][0]["partial"] is True
     assert projected["relations"][0]["state"] == "stale"
+
+
+def test_partial_relation_coverage_remains_partial_in_projection():
+    value = _team_snapshot()
+    value["relations"][0]["state"] = "partial"
+    value["relations"][0]["coverage"] = "partial"
+
+    projected = project_native_activity_snapshot(value)
+
+    assert projected["observation"]["state"] == "partial"
+    assert projected["relations"][0]["state"] == "partial"
+    assert projected["relations"][0]["partial"] is True
 
 
 @pytest.mark.parametrize("field, rows", [
