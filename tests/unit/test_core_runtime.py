@@ -2109,7 +2109,8 @@ def test_atomic_primary_restore_accepts_new_inode_but_keeps_original_owner_metad
         assert not core._restored_soul_signature_matches(tampered, original)
 
 
-def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request, *, empty_optional_backups=False):
+def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request, *, empty_optional_backups=False,
+                                     empty_required_backup=None):
     """Build the exact on-disk systemd inputs used by the M1 source-start gate."""
     from hermes_installer.remote import obsidian_owner_lifecycle as obsidian
 
@@ -2176,8 +2177,13 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request, *, empty_op
     backup_directory = core.ADAPTER_UPDATE_BACKUPS / old_adapter
     backup_directory.mkdir(mode=0o700)
     optional_empty = set(core._ADAPTER_UPDATE_OPTIONAL_EMPTY_BACKUP_MEMBERS)
+    empty_members = optional_empty if empty_optional_backups else set()
+    if empty_required_backup is not None:
+        assert empty_required_backup in core._ADAPTER_UPDATE_BACKUP_MEMBERS
+        assert empty_required_backup not in optional_empty
+        empty_members.add(empty_required_backup)
     backup_contents = {
-        name: (b"" if empty_optional_backups and name in optional_empty
+        name: (b"" if name in empty_members
                else ("proof:" + name + "\n").encode())
         for name in core._ADAPTER_UPDATE_BACKUP_MEMBERS}
     backup_files = {name: hashlib.sha256(content).hexdigest()
@@ -2688,13 +2694,13 @@ def test_m1_boot_gate_accepts_only_manifested_empty_optional_legacy_backups(
         tmp_path, monkeypatch, request):
     unit, _cohort, _journal, _resources = _adapter_cohort_starting_fixture(
         tmp_path, monkeypatch, request, empty_optional_backups=True)
-    credentials = {row.partition(":")[0]: row.partition(":")[2]
+    credentials = {row.partition("=")[2].partition(":")[0]: row.partition("=")[2].partition(":")[2]
                    for row in unit.decode().splitlines()
                    if row.startswith("LoadCredential=adapter-backup-")}
     assert len(credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 1
     assert _exec_start_pre(unit, expect_success=True) == 0
 
-    required = next(name for name in credentials if name.endswith("journal-json"))
+    required = next(name for name in credentials if name.endswith("journal"))
     assert _exec_start_pre(unit, credential_mutations={required: ("bytes", b"")},
                            expect_success=False) != 0
     optional = next(name for name in credentials if name.endswith("overlay-record"))
@@ -2704,19 +2710,32 @@ def test_m1_boot_gate_accepts_only_manifested_empty_optional_legacy_backups(
                            expect_success=False) != 0
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
+def test_m1_boot_gate_rejects_empty_required_backup_even_with_matching_manifest(
+        tmp_path, monkeypatch, request):
+    unit, _cohort, _journal, _resources = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request, empty_optional_backups=True,
+        empty_required_backup="journal.json")
+    backup_directory = core.ADAPTER_UPDATE_BACKUPS / ("a" * 64)
+    manifest = json.loads((backup_directory / "manifest.json").read_bytes())
+    assert (backup_directory / "journal.json").read_bytes() == b""
+    assert manifest["journal.json"] == hashlib.sha256(b"").hexdigest()
+    assert _exec_start_pre(unit, expect_success=False) != 0
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="native start gate requires the enrolled Pi root actor")
 def test_m1_boot_gate_accepts_only_manifested_empty_optional_native_backups(
         tmp_path, monkeypatch, request):
     unit, _plugin, _old_members, _new_members = _native_plugin_starting_fixture(
         tmp_path, monkeypatch, request, empty_optional_backups=True)
-    credentials = {row.partition(":")[0]: row.partition(":")[2]
+    credentials = {row.partition("=")[2].partition(":")[0]: row.partition("=")[2].partition(":")[2]
                    for row in unit.decode().splitlines()
                    if row.startswith("LoadCredential=adapter-backup-")}
     assert len(credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 3
     assert _exec_start_pre(unit, expect_success=True) == 0
 
     required = next(name for name in credentials if name.endswith("unit"))
-    optional = next(name for name in credentials if name.endswith("cohort-json"))
+    optional = next(name for name in credentials if name.endswith("cohort"))
     assert _exec_start_pre(unit, credential_mutations={required: ("bytes", b"")},
                            expect_success=False) != 0
     assert _exec_start_pre(unit, credential_mutations={optional: ("bytes", b"wrong hash")},
