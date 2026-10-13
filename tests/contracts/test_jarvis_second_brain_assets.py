@@ -79,7 +79,7 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
     def test_knowledge_map_list_alternative_includes_isolated_notes(self):
         self.assertIn("data-graph-notes", FEATURE_ASSETS.view_html)
         self.assertIn("Notes in this map", FEATURE_ASSETS.view_html)
-        self.assertIn("const graphNotes = $('[data-graph-notes]')", FEATURE_ASSETS.mount_js)
+        self.assertIn("const graphNotes=$('[data-graph-notes]')", FEATURE_ASSETS.mount_js)
         self.assertIn("graphNotes.append(button)", FEATURE_ASSETS.mount_js)
         self.assertIn("graphNotes.querySelectorAll('button[data-note-id]')", FEATURE_ASSETS.mount_js)
         self.assertIn("button.addEventListener('click', () => openNote(node.noteId))", FEATURE_ASSETS.mount_js)
@@ -90,11 +90,11 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn('data-graph-focus', FEATURE_ASSETS.view_html)
         self.assertIn('data-graph-reset', FEATURE_ASSETS.view_html)
         self.assertIn('data-graph-back', FEATURE_ASSETS.view_html)
-        self.assertIn('function focusNeighborhood(noteId = currentNoteId)', FEATURE_ASSETS.mount_js)
+        self.assertIn('function focusNeighborhood(noteId=currentNoteId)', FEATURE_ASSETS.mount_js)
         self.assertIn('function showFullGraph()', FEATURE_ASSETS.mount_js)
         self.assertIn('async function goBackNote()', FEATURE_ASSETS.mount_js)
         self.assertIn('new Set([graphFocusNoteId])', FEATURE_ASSETS.mount_js)
-        self.assertIn('graphLayout(nodes, edges, graphFocusNoteId)', FEATURE_ASSETS.mount_js)
+        self.assertIn('graphLayout(nodes,edges,graphFocusNoteId)', FEATURE_ASSETS.mount_js)
         self.assertIn("relationships.backlinks", FEATURE_ASSETS.mount_js)
         self.assertIn("relationships.unresolved", FEATURE_ASSETS.mount_js)
         self.assertIn('partial coverage', FEATURE_ASSETS.mount_js)
@@ -102,7 +102,7 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn('function onGraphFocus()', FEATURE_ASSETS.mount_js)
         self.assertIn('function onGraphReset()', FEATURE_ASSETS.mount_js)
         self.assertIn('function onGraphBack()', FEATURE_ASSETS.mount_js)
-        self.assertIn('graphBackButton.removeEventListener(\'click\', onGraphBack)', FEATURE_ASSETS.mount_js)
+        self.assertIn('graphBackButton.removeEventListener(\'click\',onGraphBack)', FEATURE_ASSETS.mount_js)
 
     def test_graph_navigation_and_note_readback_dom_harness(self):
         harness = r'''const assert = require('node:assert/strict');
@@ -163,7 +163,17 @@ const ids=()=>els.get('[data-graph-scene]').querySelectorAll('.brain-node').map(
  assert.equal(els.get('[data-note-body]').textContent,before,'late response after unmount cannot restore or replace the reader');
  console.log('SECOND_BRAIN_DOM_HARNESS_COMPLETE');
 })().catch(error=>{console.error(error);process.exitCode=1;});
-'''.replace('MOUNT', FEATURE_ASSETS.mount_js.replace('  return function cleanup() {', '  globalThis.__secondBrainHarness={graphLayout,focusNeighborhood,renderGraph,openNote};\n  return function cleanup() {'))
+'''
+        cleanup_marker = "return function cleanup(){"
+        self.assertEqual(FEATURE_ASSETS.mount_js.count(cleanup_marker), 1)
+        harness = harness.replace(
+            "MOUNT",
+            FEATURE_ASSETS.mount_js.replace(
+                cleanup_marker,
+                "globalThis.__secondBrainHarness={graphLayout,focusNeighborhood,renderGraph,openNote};\n  "
+                + cleanup_marker,
+            ),
+        )
         with tempfile.TemporaryDirectory() as temporary:
             script = Path(temporary) / "second-brain-dom-harness.js"
             script.write_text(harness, encoding="utf-8")
