@@ -354,6 +354,7 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
         os.chown(cred_dir, admin.pw_uid, admin.pw_gid)
         os.chmod(cred_dir, 0o500)
         command = shlex.split(line.partition("=")[2])
+        original_command = list(command)
         if diagnostic:
             try:
                 code_index = command.index("-c")
@@ -380,7 +381,7 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
                 " check('service_files',lambda: all(values.get('valid')(p,u,g,m,h) for p,u,g,m,h in values.get('files')))\n"
                 " return result\n"
                 "def _guard_trace(frame,event,arg):\n"
-                " if frame.f_code.co_filename!='<untouched-generated-guard>': return _guard_trace\n"
+                " if frame.f_code.co_filename!='<untouched-generated-guard>' or frame.f_code.co_name!='<module>': return _guard_trace\n"
                 " if event=='call': frame.f_trace_opcodes=True; return _guard_trace\n"
                 " values=frame.f_locals\n"
                 " if event=='opcode' and 'cohort_ok' in values and 'base_ok' not in _guard_diag_state and type(values.get('ok')) is bool: _guard_diag_state['base_ok']=values['ok']; return _guard_trace\n"
@@ -415,13 +416,22 @@ printf 'FIXTURE_NAMESPACE_READY\\n'
 exec "$runuser_bin" -u admin -- "$@"
 """
         run = subprocess.run if runner is None else runner
-        result = run(
-            [unshare, "--mount", "--propagation", "private", "--", "sh", "-eu", "-c",
-             namespace_script, "core-start-guard", str(source_unit), str(source_launcher),
-             str(cred_dir), str(cred_view), runuser, *command],
-            cwd="/", env={"PATH": "/usr/bin:/bin"}, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, check=False,
-        )
+        def execute(guard_command):
+            return run(
+                [unshare, "--mount", "--propagation", "private", "--", "sh", "-eu", "-c",
+                 namespace_script, "core-start-guard", str(source_unit), str(source_launcher),
+                 str(cred_dir), str(cred_view), runuser, *guard_command],
+                cwd="/", env={"PATH": "/usr/bin:/bin"}, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, check=False,
+            )
+
+        # The untouched guard always decides the result. A diagnostic execution
+        # is permitted only after that command has denied startup, while the
+        # same private credentials and source view are still present.
+        result = execute(original_command)
+        diagnostic_result = None
+        if diagnostic and result.returncode != 0:
+            diagnostic_result = execute(command)
         after_fixed_paths = _fixed_service_path_identity()
         if after_fixed_paths != before_fixed_paths:
             raise AssertionError("private guard fixture changed a live Pi Core service file")
@@ -438,8 +448,9 @@ exec "$runuser_bin" -u admin -- "$@"
             outcome = "succeed" if expect_success else "fail closed"
             stderr = result.stderr.decode("utf-8", errors="replace").strip()
             diagnostic_summary = None
-            if diagnostic:
-                for row in stdout.splitlines():
+            if diagnostic_result is not None:
+                diagnostic_stdout = diagnostic_result.stdout.decode("utf-8", errors="replace")
+                for row in diagnostic_stdout.splitlines():
                     if row.startswith("GUARD_DIAGNOSTIC="):
                         try:
                             candidate = json.loads(row.partition("=")[2])
