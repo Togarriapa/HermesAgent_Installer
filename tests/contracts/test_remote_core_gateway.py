@@ -1199,7 +1199,7 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                 ecosystem_routes = [route for route in app.router.routes()
                                     if getattr(route.resource, "canonical", None)
                                     == "/chat/api/ecosystem"]
-                self.assertEqual([route.method for route in ecosystem_routes], ["GET"])
+                self.assertEqual(sorted(route.method for route in ecosystem_routes), ["GET", "HEAD"])
                 decision_routes = [
                     route for route in app.router.routes()
                     if getattr(route.resource, "canonical", None)
@@ -1338,8 +1338,44 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
         union_config = dataclasses.replace(_config(), allowed_emails=union)
         union_accepted = accepted_for(union_config, email="owner@example.test", token=token)
         denied_provider = CountingProvider()
-        activity = {"schema": 1, "observed_at": time.time(), "window_seconds": 604800,
-                    "coverage": "observed-callbacks", "instances": [], "relations": []}
+        observed_at = time.time()
+        mission_id = "m" * 24
+        sender_key, recipient_key = "sender-execution-key-0001", "recipient-execution-key-01"
+
+        def activity_instance(execution_key, profile_id, alias):
+            timestamp = observed_at - 10
+            return {
+                "execution_key": execution_key, "display_alias": alias,
+                "gateway_turn_id": ("t" * 24 if profile_id == "expert-one" else "u" * 24),
+                "mission_id": mission_id, "mission_revision": 3,
+                "profile_id": profile_id, "source_revision": "reviewed-profile-r3",
+                "source_generation_sha256": "a" * 64, "status": "completed", "stale": False,
+                "created_at": timestamp, "updated_at": observed_at,
+                "tool_count": 2,
+                "events": [{"kind": "completed", "status": "completed", "at": observed_at,
+                            "duration_ms": 120, "tool_count": 2}],
+            }
+
+        team_key, relation_key = "team-execution-key-00001", "relation-execution-key-001"
+        activity = {
+            "schema": 2, "observed_at": observed_at, "window_seconds": 604800,
+            "coverage": "observed-callbacks", "partial": False,
+            "instances": [activity_instance(sender_key, "expert-one", "Expert One"),
+                          activity_instance(recipient_key, "expert-two", "Expert Two")],
+            "team_instances": [{
+                "team_execution_key": team_key, "team_id": "reviewed-team",
+                "source_revision": "reviewed-profile-r3", "mission_id": mission_id,
+                "mission_revision": 3, "members": [sender_key, recipient_key],
+                "state": "current", "coverage": "observed-callbacks",
+            }],
+            "relations": [{
+                "relation_key": relation_key, "team_execution_key": team_key,
+                "mission_id": mission_id, "mission_revision": 3,
+                "sender_execution_key": sender_key, "recipient_execution_key": recipient_key,
+                "kind": "completed_message", "event_at": observed_at,
+                "state": "current", "coverage": "observed-callbacks",
+            }],
+        }
         with tempfile.TemporaryDirectory(prefix="jarvis-profile-union-") as temporary:
             app = make_app(union_config, union_accepted, denied_provider,
                            Path(temporary) / "union.sqlite3")
@@ -1356,7 +1392,18 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(conversations.status, 200)
                     ecosystem = await client.get("/chat/api/ecosystem", headers=headers)
                     self.assertEqual(ecosystem.status, 200)
-                    self.assertEqual((await ecosystem.json())["schema"], 1)
+                    snapshot = await ecosystem.json()
+                    self.assertEqual(snapshot["schema"], 2)
+                    self.assertEqual(snapshot["pending"], {
+                        "team_membership": "verified", "communication_edges": "verified",
+                    })
+                    self.assertEqual(snapshot["teams"][0]["team_execution_key"], team_key)
+                    self.assertEqual(snapshot["teams"][0]["members"], [sender_key, recipient_key])
+                    self.assertEqual(snapshot["relations"][0]["id"], relation_key)
+                    self.assertEqual(snapshot["relations"][0]["from"], sender_key)
+                    self.assertEqual(snapshot["relations"][0]["to"], recipient_key)
+                    self.assertEqual({item["profile_id"] for item in snapshot["top_experts"]},
+                                     {"expert-one", "expert-two"})
                     same_origin = {**headers, "Origin": f"https://{union_config.hostname}",
                                    "Sec-Fetch-Site": "same-origin"}
                     with patch.object(core_gateway_inspector, "verify_current_core_overview",

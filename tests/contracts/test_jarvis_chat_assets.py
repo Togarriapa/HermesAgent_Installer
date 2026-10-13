@@ -241,7 +241,16 @@ class JarvisChatAssetTests(unittest.TestCase):
         for feature in FEATURE_ASSETS:
             with self.subTest(feature=feature.feature_id):
                 self.assertIn("id:" + json.dumps(feature.feature_id), source)
-                self.assertIn(feature.view_html, markup)
+                if feature.feature_id == "overview":
+                    # Composition replaces the raw ecosystem host with its reviewed entry point.
+                    self.assertIn(
+                        '<div id="jarvis-ecosystem-feature-host" data-feature-host="ecosystem-fleet">'
+                        '<div class="ecosystem-heading"><button type="button" data-view="ecosystem">'
+                        'Explore Experts</button></div></div>',
+                        markup,
+                    )
+                else:
+                    self.assertIn(feature.view_html, markup)
                 self.assertIn(feature.mount_js, source)
                 self.assertIn(feature.unmount_js, source)
                 for method, path in feature.api_routes:
@@ -509,6 +518,7 @@ let readAloudEnabled = false, speechUtterance = null;
 const utterances = [];
 class FakeUtterance { constructor(text) { this.text = text; } }
 const ui = {speechStop:{hidden:true, disabled:true}};
+ui.connection = {dataset:{state:"ready"}, lastElementChild:{textContent:"Secure connection"}};
 const uiPreferences = {voiceURI:""};
 const window = {SpeechSynthesisUtterance:FakeUtterance, speechSynthesis:{
   cancel(){}, getVoices(){return [];}, speak(utterance){utterances.push(utterance);}
@@ -526,9 +536,15 @@ function showVoiceStatus() {}
 function setAssistantState() {}
 function renderVoiceDock() {}
 function stopSpeech() { speechUtterance = null; ui.speechStop.hidden = true; ui.speechStop.disabled = true; }
-function setConnection(state, label) { connections.push([state, label]); }
+function setConnection(state, label) {
+  connections.push([state, label]);
+  ui.connection.dataset.state = state;
+  ui.connection.lastElementChild.textContent = label;
+}
 function rememberCompletedReply(id, text) { completedReply = id && text ? {id, text} : null; }
 function refreshConversations() { return Promise.resolve(); }
+let backgroundRefreshes = 0;
+function refreshConversationsInBackground() { backgroundRefreshes += 1; }
 const assistantBody = {textContent: "partial reply"};
 const waiting = {removed: false, remove() { this.removed = true; }};
 RENEW
@@ -579,6 +595,7 @@ SPEAK
   assert.equal(waiting.removed, true);
   assert.equal(closed, 2);
   assert.deepEqual(connections.at(-1), ["ready", "Secure connection"]);
+  assert.equal(backgroundRefreshes, 1, "recovered completion refreshes history through the background-safe path");
   assert.equal(utterances.length, 0, "the default-off preference keeps recovered replies silent");
   assert.deepEqual(completedReply, {id:"conversation", text:"Jarvis"}, "the explicit dock action can use the recovered reply");
 
@@ -932,7 +949,9 @@ FEATURE_API
         self.assertIn("not sent until you submit", disclosure)
         self.assertIn('id="voice-read-aloud" type="button" disabled', composer)
         self.assertIn('id="speech-stop" type="button" aria-label="Stop reply audio" hidden disabled', composer)
-        self.assertIn("@media(max-width:390px){.voice-dock-opt-ins{grid-template-columns:1fr}", markup)
+        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
+        css = stylesheet.decode("utf-8")
+        self.assertIn("@media(max-width:390px){.voice-dock-opt-ins{grid-template-columns:1fr}", css)
 
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
@@ -1011,6 +1030,7 @@ const ui = {speechStop: byId("speech-stop"), voiceWake: byId("voice-wake-toggle"
 let voiceSupported = false, synthesisSupported = false;
 let window = {isSecureContext: true};
 function pushToTalkEnabled() { return false; }
+function renderVoiceDock() {}
 CONFIGURE
 configureVoice();
 assert.equal(byId("chat-voice-unavailable").hidden, false);
@@ -1093,7 +1113,9 @@ function element(id) {
   return elements.get(id);
 }
 const ui = {input:element("input"), voiceInput:element("voice-input"),
-  voiceStop:element("voice-stop"), voiceWake:element("voice-wake"), form:{requestSubmit(){throw Error("unexpected submit");}}};
+  voiceStop:element("voice-stop"), voiceWake:element("voice-wake"),
+  connection:{dataset:{state:"ready"}, lastElementChild:{textContent:"Secure connection"}},
+  form:{requestSubmit(){throw Error("unexpected submit");}}};
 element("speech-consent").checked = true;
 element("main-content").hidden = false;
 element("speech-language").value = "en-US";
