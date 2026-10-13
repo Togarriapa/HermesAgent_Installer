@@ -351,7 +351,7 @@ def _bounded_owner_generation_restore_failure():
             if type(stdout) is bytes and len(stdout) <= 8192:
                 try:
                     parsed = json.loads(stdout)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, RecursionError):
                     parsed = None
                 expected = {"state", "artifact_sha256", "generation_path",
                             "retained_generation_backup", "retained_artifact_sha256"}
