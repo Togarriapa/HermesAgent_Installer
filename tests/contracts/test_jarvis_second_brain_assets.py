@@ -142,6 +142,10 @@ const ids=()=>els.get('[data-graph-scene]').querySelectorAll('.brain-node').map(
  assert(isolated,'isolated vault note is included in the accessible list alternative');
  assert.equal(graph.edges.some(e=>e.fromNoteId==='E'||e.toNoteId==='E'),false,'fixture note has no graph edges');
  isolated.dispatch('click'); await flush(); assert(requests.some(p=>p.endsWith('/notes/E')),'isolated note opens through the real note read route');
+ assert(requests.some(p=>p.endsWith('/notes/E/links')),'isolated note reads its current resolved links');
+ assert.equal(els.get('[data-reader-title]').textContent,'E','reader identity follows the selected isolated note');
+ assert.equal(els.get('[data-note-body]').textContent,'<script>inert</script> **plain**','isolated Markdown remains inert text');
+ assert.equal(els.get('[data-note-backlinks]').querySelectorAll('button').length,1,'current isolated-note backlink DTO is rendered');
  const layout=__secondBrainHarness.graphLayout(nodes.slice(0,3),graph.edges.slice(0,2),'B');
  assert.deepEqual(layout.get('B'),{x:500,y:310});
  __secondBrainHarness.focusNeighborhood('B');
