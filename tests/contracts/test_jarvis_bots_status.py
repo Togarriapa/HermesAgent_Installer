@@ -335,8 +335,9 @@ const status = app => app.nodes['[data-bots-status]'].textContent;
 async function readySchedules(app, timestamp='schedule-current', revision='rev-1') {
   get(app, 0, base('bots-initial')); await tick();
   get(app, 1, {profiles:[]}); await tick();
-  await app.click(app.tabs[2]);
+  const navigation = app.click(app.tabs[2]);
   get(app, 2, schedules(timestamp, revision)); await tick();
+  await navigation;
 }
 async function run() {
   // Schedules -> Bots: duplicate clicks spend only one exact one-use POST; late success stays off Bots.
@@ -350,9 +351,10 @@ async function run() {
   assert.equal(app.calls[3].body.revision, 'rev-1');
   assert.equal(app.calls[3].body.approval_nonce, 'one-use-nonce');
   assert.match(app.calls[3].body.idempotency_key, /^[0-9a-f]{48}$/);
-  await app.click(app.tabs[0]);
+  const botsNavigation = app.click(app.tabs[0]);
   get(app, 4, {...base('bots-current'), profiles:[]}); await tick();
   get(app, 5, {profiles:[]}); await tick();
+  await botsNavigation;
   pause(app, 3); await continuation; await tick();
   assert.match(status(app), /Observed bots-current/);
   assert.doesNotMatch(status(app), /Pause was confirmed|Pause result is pending/);
@@ -360,8 +362,9 @@ async function run() {
   // Schedules -> Channels: late rejection cannot replace the selected Channels status.
   app = setup(); await readySchedules(app, 'schedule-before-channel');
   const failedContinuation = app.click(app.pauseButton()); await tick();
-  await app.click(app.tabs[1]);
+  const channelsNavigation = app.click(app.tabs[1]);
   get(app, 4, {...base('channels-current'), channels:[]}); await tick();
+  await channelsNavigation;
   app.calls[3].reject(new Error('uncertain')); await failedContinuation; await tick();
   assert.match(status(app), /Observed channels-current/);
   assert.doesNotMatch(status(app), /Pause result|could not be confirmed/);
@@ -369,21 +372,24 @@ async function run() {
   // ABA navigation and a newer Schedules refresh make the pending success stale.
   app = setup(); await readySchedules(app, 'schedule-before-aba');
   const abaContinuation = app.click(app.pauseButton()); await tick();
-  await app.click(app.tabs[0]);
+  const abaBotsNavigation = app.click(app.tabs[0]);
   get(app, 4, {...base('bots-aba'), profiles:[]}); await tick();
   get(app, 5, {profiles:[]}); await tick();
-  await app.click(app.tabs[2]);
+  await abaBotsNavigation;
+  const abaSchedulesNavigation = app.click(app.tabs[2]);
   get(app, 6, schedules('schedule-aba-current', 'rev-2')); await tick();
+  await abaSchedulesNavigation;
   pause(app, 3); await abaContinuation; await tick();
   assert.match(status(app), /Observed schedule-aba-current/);
   assert.doesNotMatch(status(app), /Pause was confirmed/);
 
   // A refresh during a POST is authoritative; the old action continuation cannot replace it.
   app = setup(); await readySchedules(app, 'schedule-before-refresh');
-  const refreshContinuation = app.click(app.pauseButton()); await tick();
-  await app.click(app.refresh);
+  const actionContinuation = app.click(app.pauseButton()); await tick();
+  const refreshLoad = app.click(app.refresh);
   get(app, 4, schedules('schedule-refreshed', 'rev-2')); await tick();
-  pause(app, 3); await refreshContinuation; await tick();
+  await refreshLoad;
+  pause(app, 3); await actionContinuation; await tick();
   assert.match(status(app), /Observed schedule-refreshed/);
   assert.doesNotMatch(status(app), /Pause was confirmed/);
   assert.equal(app.calls.filter(call => call.kind === 'POST').length, 1);
@@ -397,9 +403,11 @@ async function run() {
   assert.equal(app.calls.length, 4);
   assert.equal(status(app), priorStatus);
 }
-run().catch(error => { console.error(error); process.exitCode = 1; });
+run().then(() => { console.log('BOTS_HARNESS_COMPLETE'); })
+  .catch(error => { console.error(error); process.exitCode = 1; });
 '''.replace("__MOUNT__", json.dumps(FEATURE_ASSETS.mount_js))
     path = tmp_path / "bots-pause-lifecycle.cjs"
     path.write_text(harness, encoding="utf-8")
-    result = subprocess.run([node, str(path)], capture_output=True, text=True, check=False)
+    result = subprocess.run([node, str(path)], capture_output=True, text=True, check=False, timeout=15)
     assert result.returncode == 0, result.stderr
+    assert "BOTS_HARNESS_COMPLETE" in result.stdout
