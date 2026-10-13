@@ -43,7 +43,10 @@ _VIEW = """<section class=\"second-brain-page\" aria-labelledby=\"second-brain-t
     <div class=\"brain-graph-tools\"><div data-graph-legend aria-label=\"Filter notes by their actual Obsidian tags\"></div>
       <div class=\"brain-graph-zoom\" aria-label=\"Knowledge map controls\"><button type=\"button\" data-zoom-out aria-label=\"Zoom out\">−</button><button type=\"button\" data-zoom-in aria-label=\"Zoom in\">+</button><button type=\"button\" data-zoom-reset>Reset map</button></div></div>
     <div class=\"brain-graph-layout\"><svg data-graph viewBox=\"0 0 1000 620\" role=\"group\" tabindex=\"0\" aria-label=\"Map of actual linked notes. Drag to pan; use plus and minus buttons to zoom.\"><g data-graph-scene></g></svg>
-      <ol data-graph-list aria-label=\"Knowledge map links\"></ol></div>
+      <section class=\"brain-graph-browse\" aria-label=\"Knowledge map lists\">
+        <h3>Notes in this map</h3><ol data-graph-notes aria-label=\"All visible notes\"></ol>
+        <h3>Resolved links</h3><ol data-graph-list aria-label=\"Knowledge map links\"></ol>
+      </section></div>
   </section>
   <p class=\"brain-safety-note\" role=\"note\">Vault text is untrusted Markdown, displayed without executing HTML or fetching embeds. Shared-note review and writes are unavailable until the owner-authorized review route is active.</p>
   <p data-status class=\"brain-status\" role=\"status\" aria-live=\"polite\">Loading your private vault…</p>
@@ -92,6 +95,7 @@ _CSS = """
 [data-feature-root=\"second-brain\"] .brain-links button{min-height:44px;border:0;padding:.2rem .25rem;color:#95e7e9;background:transparent;text-align:left;font-size:inherit}
 [data-feature-root=\"second-brain\"] .brain-graph{margin-top:1rem}
 [data-feature-root=\"second-brain\"] .brain-graph-tools{display:flex;justify-content:space-between;align-items:center;gap:.8rem;margin:.8rem 0}
+[data-feature-root=\"second-brain\"] .brain-graph-layout{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(260px,.8fr);gap:.8rem;align-items:start}
 [data-feature-root=\"second-brain\"] [data-graph-legend]{display:flex;flex-wrap:wrap;gap:.4rem}
 [data-feature-root=\"second-brain\"] [data-graph-legend] button{display:inline-flex;align-items:center;gap:.45rem;min-height:44px;padding:.35rem .65rem;font-size:.74rem}
 [data-feature-root=\"second-brain\"] .brain-legend-dot{width:.65rem;height:.65rem;border-radius:50%;background:var(--tag-color);box-shadow:0 0 10px color-mix(in srgb,var(--tag-color),transparent 55%)}
@@ -109,6 +113,13 @@ _CSS = """
 [data-feature-root=\"second-brain\"] [data-graph] .brain-node text{fill:#daf7f8;font:11px ui-sans-serif,system-ui,sans-serif;text-anchor:middle}
 [data-feature-root=\"second-brain\"] [data-graph] .brain-node{cursor:pointer}
 [data-feature-root=\"second-brain\"] [data-graph-list]{max-height:340px;overflow:auto;margin:.2rem 0;padding-left:1.25rem;color:#a9c6ca;font-size:.78rem;line-height:1.7}
+[data-feature-root=\"second-brain\"] .brain-graph-browse{min-width:0;max-height:620px;overflow:auto;padding:.2rem .6rem;border:1px solid rgba(91,199,211,.17);border-radius:10px;background:rgba(8,23,28,.45)}
+[data-feature-root=\"second-brain\"] .brain-graph-browse h3{position:sticky;top:0;margin:.25rem 0;padding:.45rem 0;background:#0b1d24;color:#a9c6ca;font-size:.8rem}
+[data-feature-root=\"second-brain\"] [data-graph-notes]{max-height:260px;overflow:auto;margin:.2rem 0 .8rem;padding-left:1.25rem;color:#a9c6ca;font-size:.78rem;line-height:1.55}
+[data-feature-root=\"second-brain\"] [data-graph-notes] li{padding:.12rem 0}
+[data-feature-root=\"second-brain\"] [data-graph-notes] button{display:inline-flex;align-items:center;gap:.45rem;max-width:100%;min-height:44px;border:0;padding:.2rem .25rem;color:#95e7e9;background:transparent;text-align:left;font-size:inherit}
+[data-feature-root=\"second-brain\"] [data-graph-notes] button[aria-current=\"true\"]{color:#dfffff;background:rgba(65,198,207,.1)}
+[data-feature-root=\"second-brain\"] .brain-graph-note-dot{flex:0 0 .65rem;width:.65rem;height:.65rem;border-radius:50%;background:var(--tag-color)}
 [data-feature-root=\"second-brain\"] [data-graph-list] li{padding:.2rem 0}
 [data-feature-root=\"second-brain\"] [data-graph-list] button{min-height:44px;border:0;padding:.2rem .25rem;color:#95e7e9;background:transparent;text-align:left;font-size:inherit}
 [data-feature-root=\"second-brain\"] .brain-graph-note,[data-feature-root=\"second-brain\"] .brain-safety-note,[data-feature-root=\"second-brain\"] .brain-status{font-size:.74rem}
@@ -138,6 +149,7 @@ _MOUNT = r"""function mount(container, api, state) {
   const graphScene = $('[data-graph-scene]');
   const graphLegend = $('[data-graph-legend]');
   const graphList = $('[data-graph-list]');
+  const graphNotes = $('[data-graph-notes]');
   const zoomInButton = $('[data-zoom-in]');
   const zoomOutButton = $('[data-zoom-out]');
   const zoomResetButton = $('[data-zoom-reset]');
@@ -417,11 +429,14 @@ _MOUNT = r"""function mount(container, api, state) {
       const selected = node.getAttribute('data-note-id') === currentNoteId;
       node.setAttribute('aria-current', selected ? 'true' : 'false');
     });
+    graphNotes.querySelectorAll('button[data-note-id]').forEach(node => {
+      node.setAttribute('aria-current', node.dataset.noteId === currentNoteId ? 'true' : 'false');
+    });
   }
   function renderGraph(data) {
     if (!data || !Array.isArray(data.nodes) || !Array.isArray(data.edges) || !Array.isArray(data.unresolved)) throw new Error('The vault graph returned an invalid snapshot.');
     graphData = data;
-    graphScene.replaceChildren(); graphList.replaceChildren();
+    graphScene.replaceChildren(); graphList.replaceChildren(); graphNotes.replaceChildren();
     const allNodes = data.nodes.filter(node => node && typeof node.noteId === 'string' && typeof node.title === 'string');
     const categories = graphCategories(allNodes);
     if (selectedTags !== null) for (const tag of [...selectedTags]) if (!categories.includes(tag)) selectedTags.delete(tag);
@@ -432,7 +447,16 @@ _MOUNT = r"""function mount(container, api, state) {
     $('[data-graph-status]').textContent = allNodes.length
       ? `${nodes.length} of ${allNodes.length} indexed notes shown · ${edges.length} actual note links · ${data.unresolved.length} unresolved references${data.partial ? ' · partial coverage' : ''}. Colors and filters use note tags; only resolved vault links are drawn.`
       : 'No notes are present in this vault snapshot yet.';
-    if (!nodes.length) { addText(graphList, 'li', 'No notes match these tag filters.'); return; }
+    if (!nodes.length) { addText(graphNotes, 'li', 'No notes match these tag filters.'); addText(graphList, 'li', 'No resolved links match these tag filters.'); return; }
+    for (const node of nodes) {
+      const item = document.createElement('li');
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.noteId = node.noteId;
+      button.setAttribute('aria-current', node.noteId === currentNoteId ? 'true' : 'false');
+      button.setAttribute('aria-label', `Open note ${node.title}; tags ${noteTags(node).join(', ') || 'Uncategorized'}`);
+      const dot = addText(button, 'span', '', 'brain-graph-note-dot'); dot.style.setProperty('--tag-color', tagColor(tagCategory(node)));
+      addText(button, 'span', node.title);
+      button.addEventListener('click', () => openNote(node.noteId)); item.append(button); graphNotes.append(item);
+    }
     const positions = graphLayout(nodes, edges);
     const markerIds = new Map(), defs = document.createElementNS(SVG, 'defs');
     function markerFor(color) {
