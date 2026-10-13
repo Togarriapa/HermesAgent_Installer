@@ -39,6 +39,15 @@ _CSS = '''[data-feature-root="extensions"]{max-width:1100px;margin:0 auto;paddin
 [data-feature-root="extensions"] dialog{width:min(760px,92vw);border:1px solid #3c858b;border-radius:10px;background:#0b1b20;color:#e4f3f3;padding:16px}
 [data-feature-root="extensions"] dialog::backdrop{background:rgba(0,0,0,.72)}
 [data-feature-root="extensions"] dialog textarea{width:100%;min-height:360px;resize:vertical;border:1px solid #315058;border-radius:6px;background:#061115;color:#e4f3f3;padding:12px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+[data-feature-root="extensions"] dialog .settings-fields{display:grid;gap:12px;margin:16px 0}
+[data-feature-root="extensions"] dialog .settings-field{display:grid;gap:6px}
+[data-feature-root="extensions"] dialog .settings-field label{color:#d7e7e9;font-size:.9rem}
+[data-feature-root="extensions"] dialog .settings-field input,[data-feature-root="extensions"] dialog .settings-field select,[data-feature-root="extensions"] dialog .settings-field textarea{width:100%;min-height:42px;border:1px solid #315058;border-radius:7px;background:#061115;color:#e4f3f3;padding:9px;font:inherit}
+[data-feature-root="extensions"] dialog .settings-field [aria-invalid="true"]{border-color:#ff9393}
+[data-feature-root="extensions"] dialog .settings-help{margin:0;font-size:.78rem;color:#aabfc3}
+[data-feature-root="extensions"] dialog .settings-error{margin:0;color:#ffb0b0;font-size:.82rem}
+[data-feature-root="extensions"] dialog [role="alert"]{padding:10px;border-left:3px solid #e59c58;background:rgba(229,156,88,.1)}
+[data-feature-root="extensions"] dialog .settings-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:16px}
 @media(max-width:600px){[data-feature-root="extensions"] .extensions-head{flex-direction:column}[data-feature-root="extensions"] .extensions-head button{width:100%}}'''
 
 _MOUNT = r'''function mount(container, api) {
@@ -46,14 +55,17 @@ _MOUNT = r'''function mount(container, api) {
   const list = root.querySelector('[data-extension-list]'), status = root.querySelector('[data-extension-status]');
   const refresh = root.querySelector('[data-extension-refresh]');
   const lifecycle = new AbortController(), signal = lifecycle.signal, editors = new Set();
-  const controls = new Set(), renderedControls = new Set();
+  const controls = new Set(), renderedControls = new Set(), settingsDialogControls = new Set();
   const forms = ['[data-add-skill]','[data-add-plugin]','[data-add-mcp]'].map(selector => root.querySelector(selector));
   let active = true, snapshot = null, busy = false, inventoryLoading = false, pendingSkillReads = 0;
+  let settingsDialogOpen = false;
   let recoveryRequired = false, inventoryReadRevision = 0;
-  const actionsBlocked = () => busy || inventoryLoading || pendingSkillReads > 0 || recoveryRequired || !snapshot;
+  const coreActionsBlocked = () => busy || inventoryLoading || pendingSkillReads > 0 || recoveryRequired || !snapshot;
+  const actionsBlocked = () => coreActionsBlocked() || settingsDialogOpen;
   function syncControls() {
-    const disabled = actionsBlocked();
-    for (const control of controls) control.disabled = disabled;
+    const disabled = coreActionsBlocked();
+    for (const control of controls)
+      control.disabled = disabled || (settingsDialogOpen && !settingsDialogControls.has(control));
     refresh.disabled = busy || inventoryLoading;
   }
   const text = (parent, tag, value) => {
@@ -71,6 +83,169 @@ _MOUNT = r'''function mount(container, api) {
     return !!snapshot && snapshot.revision === sourceRevision && snapshot.items.some(candidate =>
       candidate && candidate.id === item.id && candidate.kind === item.kind
         && candidate.source === item.source && candidate.editable === item.editable);
+  }
+  const sensitiveSettingName = /(?:credential|secret|password|token|api[_ -]?key|private[_ -]?key|command|shell|path|file)/i;
+  function safeSettingName(value, maximum) {
+    return typeof value === 'string' && value.length > 0 && value.length <= maximum
+      && !/[\\/\x00-\x1f\x7f]/.test(value) && !sensitiveSettingName.test(value);
+  }
+  function safeSettingText(value, maximum=160) {
+    return safeSettingName(value, maximum) && !/[;|&<>$`]/.test(value)
+      && !/(?:^|\s)(?:sudo|sh|bash|zsh|python(?:\d+(?:\.\d+)?)?|node|curl|wget|chmod|rm|cat|exec)\b/i.test(value);
+  }
+  function inspectPluginSettings(settings) {
+    const kinds = new Set(['string','number','boolean','enum']), keys = new Set();
+    if (!Array.isArray(settings) || settings.length < 1 || settings.length > 32)
+      return {fields:[], pending:true};
+    const fields=[];
+    for (const field of settings) {
+      if (!field || typeof field !== 'object' || !kinds.has(field.type)
+          || !safeSettingName(field.key,64) || !/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(field.key)
+          || keys.has(field.key) || (field.required !== undefined && typeof field.required !== 'boolean'))
+        return {fields:[], pending:true};
+      keys.add(field.key);
+      const label=field.label === undefined ? field.key : field.label;
+      if (!safeSettingText(label,120)) return {fields:[], pending:true};
+      const choices = field.type === 'enum' ? field.choices : undefined;
+      if (field.type === 'enum' && (!Array.isArray(choices) || choices.length < 1 || choices.length > 64
+          || choices.some(choice => !safeSettingText(choice) || choices.filter(value => value === choice).length !== 1)))
+        return {fields:[], pending:true};
+      const value=field.value;
+      if (value !== undefined && value !== null) {
+        if (field.type === 'string' && (typeof value !== 'string' || value.length > 2048 || !safeSettingText(value,2048)))
+          return {fields:[], pending:true};
+        if (field.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value)))
+          return {fields:[], pending:true};
+        if (field.type === 'boolean' && typeof value !== 'boolean') return {fields:[], pending:true};
+        if (field.type === 'enum' && (typeof value !== 'string' || !choices.includes(value)))
+          return {fields:[], pending:true};
+      }
+      fields.push({key:field.key,label,type:field.type,required:field.required === true,
+        value,choices});
+    }
+    return {fields,pending:false};
+  }
+  function openPluginSettings(item, sourceRevision, opener) {
+    const inspected=inspectPluginSettings(item.settings);
+    const contextSafe=safeSettingText(item.name || item.label,160) && safeSettingText(item.label,160)
+      && safeSettingText(item.source,80) && safeSettingText(sourceRevision,128);
+    const schema=contextSafe ? inspected : {fields:[],pending:true};
+    const displayLabel=contextSafe ? item.label : 'Unavailable plugin';
+    const dialog=document.createElement('dialog');
+    dialog.setAttribute('aria-labelledby','extension-plugin-settings-title');
+    dialog._extensionOpener=opener;
+    const form=document.createElement('form'); form.method='dialog';
+    const heading=text(form,'h3',`Edit settings: ${displayLabel}`); heading.id='extension-plugin-settings-title';
+    const scope=document.createElement('p'); scope.className='settings-help';
+    const nativeSettingsRevision=typeof item.settingsRevision==='string' && /^[0-9a-f]{64}$/.test(item.settingsRevision)
+      ? item.settingsRevision : 'Unknown';
+    scope.textContent=`Plugin: ${contextSafe ? item.name || item.label : 'Unavailable'} · Source: ${contextSafe ? item.source : 'Unavailable'} · Inventory revision: ${contextSafe ? sourceRevision : 'Unavailable'} · Native settings revision: ${nativeSettingsRevision}`;
+    form.append(scope);
+    const consequence=document.createElement('p'); consequence.className='settings-help';
+    consequence.textContent='Saving submits these typed values through the owner-confirmed native plugin settings action. Nothing changes until you choose Save and confirm the exact edit phrase.';
+    form.append(consequence);
+    const pending=document.createElement('p'); pending.setAttribute('role','alert'); pending.setAttribute('aria-live','polite');
+    pending.textContent=schema.pending
+      ? 'Native settings are unavailable, unsupported, or malformed. Editing remains pending; no values were changed.'
+      : '';
+    pending.hidden=!schema.pending; form.append(pending);
+    const fields=document.createElement('div'); fields.className='settings-fields';
+    const entries=[];
+    if (!schema.pending) schema.fields.forEach((field,index)=>{
+      const row=document.createElement('div'); row.className='settings-field';
+      const label=document.createElement('label'); label.htmlFor=`extension-setting-${index}`; label.textContent=field.label;
+      let input;
+      if (field.type === 'boolean' || field.type === 'enum') {
+        input=document.createElement('select');
+        const placeholder=document.createElement('option'); placeholder.value='';
+        placeholder.textContent=field.type === 'boolean' ? 'Choose true or false' : 'Choose a value'; input.append(placeholder);
+        const values=field.type === 'boolean' ? ['true','false'] : field.choices;
+        for (const choice of values) { const option=document.createElement('option'); option.value=String(choice); option.textContent=String(choice); input.append(option); }
+        if (field.type === 'boolean' && typeof field.value === 'boolean') input.value=String(field.value);
+        if (field.type === 'enum' && typeof field.value === 'string' && field.choices.includes(field.value)) input.value=field.value;
+      } else if (field.type === 'number') {
+        input=document.createElement('input'); input.type='number'; input.step='any';
+        if (typeof field.value === 'number' && Number.isFinite(field.value)) input.value=String(field.value);
+      } else {
+        input=document.createElement('textarea'); input.maxLength=2048; input.rows=3;
+        if (typeof field.value === 'string') input.value=field.value;
+        if (field.required) input.required=true;
+      }
+      input.id=`extension-setting-${index}`; input.setAttribute('aria-describedby',`extension-setting-help-${index} extension-setting-error-${index}`);
+      if (field.type !== 'string' && field.required) input.required=true;
+      const help=document.createElement('p'); help.className='settings-help'; help.id=`extension-setting-help-${index}`;
+      help.textContent=field.type === 'boolean' && field.value === undefined
+        ? 'Current value is unknown. Choose true or false explicitly.'
+        : field.type === 'enum' && field.value === undefined
+          ? 'No current choice is known. Select an exact native option; no default is guessed.'
+          : field.type === 'number' && field.value === undefined
+            ? 'Enter a finite number explicitly.'
+            : field.type === 'string' ? 'Text value, limited to 2048 characters.' : '';
+      const error=document.createElement('p'); error.className='settings-error'; error.id=`extension-setting-error-${index}`;
+      error.setAttribute('role','alert'); error.hidden=true;
+      row.append(label,input,help,error); fields.append(row);
+      controls.add(input); settingsDialogControls.add(input);
+      entries.push({field,input,error});
+    });
+    form.append(fields);
+    const actions=document.createElement('div'); actions.className='settings-actions';
+    const save=document.createElement('button'); save.type='submit'; save.textContent='Save settings';
+    const cancel=document.createElement('button'); cancel.type='button'; cancel.textContent='Cancel';
+    controls.add(save); controls.add(cancel);
+    if (!schema.pending) settingsDialogControls.add(save);
+    settingsDialogControls.add(cancel);
+    if (schema.pending) save.disabled=true;
+    actions.append(save,cancel); form.append(actions); dialog.append(form); root.append(dialog);
+    let submitted=false;
+    async function submitSettings(event) {
+      event.preventDefault();
+      if (!active || submitted || coreActionsBlocked()) return;
+      if (!sourceStillCurrent(item,sourceRevision)) {
+        status.textContent='The plugin source changed while this editor was open. Close it, refresh, and reopen current settings before saving.';
+        dialog.close(); return;
+      }
+      if (schema.pending) return;
+      const values={}; let firstInvalid=null;
+      for (const entry of entries) {
+        const {field,input,error}=entry, raw=input.value;
+        let value, message='';
+        if (field.type === 'boolean') {
+          if (raw !== 'true' && raw !== 'false') message='Choose true or false explicitly.';
+          else value=raw === 'true';
+        } else if (field.type === 'enum') {
+          if (typeof raw !== 'string' || !field.choices.includes(raw)) message='Choose one exact native option.';
+          else value=raw;
+        } else if (field.type === 'number') {
+          if (typeof raw !== 'string' || !raw.trim()) message='Enter a finite number explicitly.';
+          else { const number=Number(raw); if (!Number.isFinite(number)) message='Enter a finite number.'; else value=number; }
+        } else {
+          if (typeof raw !== 'string' || raw.length > 2048) message='Use no more than 2048 characters.';
+          else if (field.required && !raw.trim()) message='This setting is required.';
+          else value=raw;
+        }
+        if (message) {
+          error.textContent=message; error.hidden=false; input.setAttribute('aria-invalid','true');
+          if (!firstInvalid) firstInvalid=input;
+        } else {
+          error.textContent=''; error.hidden=true; input.setAttribute('aria-invalid','false'); values[field.key]=value;
+        }
+      }
+      if (firstInvalid) { status.textContent='Review the highlighted setting errors before saving.'; firstInvalid.focus(); return; }
+      if (!Object.keys(values).length) { status.textContent='No supported settings are available to save.'; return; }
+      submitted=true; dialog.close();
+      await mutate('/chat/api/extensions/plugins/edit',{item_id:item.id,values},`EDIT ${displayLabel}`,sourceRevision);
+    }
+    form.addEventListener('submit',submitSettings,{signal});
+    cancel.addEventListener('click',()=>dialog.close(),{signal});
+    dialog.addEventListener('close',()=>{
+      settingsDialogOpen=false; dialog.remove(); editors.delete(dialog);
+      for (const entry of entries) { controls.delete(entry.input); settingsDialogControls.delete(entry.input); }
+      controls.delete(save); controls.delete(cancel); settingsDialogControls.delete(save); settingsDialogControls.delete(cancel);
+      syncControls(); if (opener && typeof opener.focus === 'function') opener.focus();
+    },{once:true,signal});
+    editors.add(dialog); settingsDialogOpen=true; syncControls(); dialog.showModal();
+    const firstInput=entries.length ? entries[0].input : cancel;
+    if (firstInput && typeof firstInput.focus === 'function') firstInput.focus();
   }
   async function mutate(path, body, phrase, sourceRevision) {
     if (!active || actionsBlocked()) return;
@@ -167,17 +342,10 @@ _MOUNT = r'''function mount(container, api) {
         await mutate('/chat/api/extensions/skills/restore',{item_id:item.id,restore_id:version.restoreId,restore_sha256:version.sha256},`RESTORE ${item.label} ${version.restoreId}`,sourceRevision);
       },{signal});
     }
-    if (item.kind === 'plugins' && item.editable && Array.isArray(item.settings) && item.settings.some((field)=>['string','number','boolean','enum'].includes(field.type))) {
+    if (item.kind === 'plugins' && item.editable) {
       const edit = text(actions,'button','Edit settings'); edit.type='button'; edit.addEventListener('click',async()=>{
-        const values={};
-        for (const field of item.settings) { if (!field || !['string','number','boolean','enum'].includes(field.type)) continue;
-          const current = field.value === undefined || field.value === null ? '' : String(field.value);
-          const entered = window.prompt(`${field.label || field.key}${field.required?' (required)':''}`,current);
-          if (entered === null) return; if (field.type==='boolean') values[field.key]=entered.toLowerCase()==='true';
-          else if (field.type==='number') { const number=Number(entered); if (!Number.isFinite(number)) { status.textContent='Enter a valid number.'; return; } values[field.key]=number; }
-          else values[field.key]=entered;
-        }
-        if (Object.keys(values).length) await mutate('/chat/api/extensions/plugins/edit',{item_id:item.id,values},`EDIT ${item.label}`,sourceRevision);
+        if (!active || actionsBlocked()) return;
+        openPluginSettings(item,sourceRevision,edit);
       },{signal});
       if (item.source==='useradded') { const toggle = text(actions,'button',item.state==='enabled'?'Disable':'Enable'); toggle.type='button'; toggle.addEventListener('click',()=>{
         const enabled = item.state!=='enabled'; const phrase=`${enabled?'ENABLE':'DISABLE'} ${item.label}`;
@@ -241,7 +409,7 @@ _MOUNT = r'''function mount(container, api) {
   bind('[data-add-plugin]','/chat/api/extensions/plugins/add','catalog_name','catalog_name','ADD');
   bind('[data-add-mcp]','/chat/api/extensions/mcps/add','catalog_name','catalog_name','ADD');
   refresh.addEventListener('click',()=>load({explicit:true}),{signal}); void load();
-  return ()=>{active=false;lifecycle.abort();for(const dialog of editors){if(dialog.open)dialog.close();dialog.remove();}editors.clear();list.replaceChildren();};
+  return ()=>{active=false;for(const dialog of editors){if(dialog.open)dialog.close();dialog.remove();}lifecycle.abort();editors.clear();list.replaceChildren();};
 }'''
 
 _UNMOUNT = "function unmount() {}"
