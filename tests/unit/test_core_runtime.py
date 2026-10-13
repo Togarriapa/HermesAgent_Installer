@@ -2589,6 +2589,80 @@ def test_m1_boot_gate_checks_typed_native_plugin_transition_quickly(
     assert _exec_start_pre(unit, expect_success=True) == 0
 
 
+def _committed_initial_primary_guard_fixture(tmp_path, monkeypatch, request):
+    """Build a committed C/J/R tuple whose primary adoption used starting R."""
+    unit, cohort, _starting_journal_raw, starting_resources_raw = (
+        _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request))
+    journal = json.loads(core.JOURNAL.read_bytes())
+    journal["state"] = "active"
+    journal["adapter_update_state"] = "active"
+    journal_raw = core._canonical_json(journal)
+    core.JOURNAL.write_bytes(journal_raw)
+    core.JOURNAL.chmod(0o600)
+    resources = json.loads(core.RESOURCES_RECORD.read_bytes())
+    resources["core_ownership_sha256"] = hashlib.sha256(journal_raw).hexdigest()
+    resources_raw = core._canonical_json(resources)
+    core.RESOURCES_RECORD.write_bytes(resources_raw)
+    core.RESOURCES_RECORD.chmod(0o600)
+
+    adopted_record_sha = "8" * 64
+    cohort["phase"] = "committed"
+    cohort["new_journal_sha256"] = hashlib.sha256(journal_raw).hexdigest()
+    cohort["new_resources_record_sha256"] = hashlib.sha256(resources_raw).hexdigest()
+    cohort["primary_record_sha256"] = adopted_record_sha
+    cohort["initial_primary_transition"] = {
+        "schema": 1, "purpose": "initial-primary-adoption", "state": "adopted",
+        "prior_record_state": "absent", "prior_soul_sha256": "1" * 64,
+        "prior_soul_signature": [1, 2, stat.S_IFREG | 0o600, 1000, 1000, 1, 10, 1, 1],
+        "source_prompt_sha256": "2" * 64, "managed_block_sha256": "3" * 64,
+        "desired_soul_sha256": "4" * 64, "owner_separator_hex": "0a",
+        "owner_backup_sha256": "1" * 64,
+        "preparing_record_sha256": "5" * 64, "writing_record_sha256": "6" * 64,
+        "adopted_record_sha256": adopted_record_sha,
+        "before_resources_record_sha256": "7" * 64,
+        "after_resources_record_sha256": cohort["starting_resources_record_sha256"],
+    }
+    reconstruction = dict(cohort["reconstruction"])
+    reconstruction["phase"] = "committed"
+    cohort["reconstruction"] = reconstruction
+    cohort["reconstruction_sha256"] = hashlib.sha256(
+        core._canonical_json(reconstruction)).hexdigest()
+    prior_raw = core._projection_file(core.ADAPTER_UPDATE_COHORT,
+        owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o400, maximum=128 * 1024)
+    core._write_adapter_update_cohort(cohort, expected_raw=prior_raw)
+    return unit, cohort, resources_raw, starting_resources_raw
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="committed guard requires the enrolled Pi root actor")
+def test_m1_boot_gate_committed_primary_uses_adoption_starting_resources_digest(
+        tmp_path, monkeypatch, request):
+    unit, cohort, final_resources_raw, starting_resources_raw = (
+        _committed_initial_primary_guard_fixture(tmp_path, monkeypatch, request))
+    assert cohort["initial_primary_transition"]["after_resources_record_sha256"] == (
+        hashlib.sha256(starting_resources_raw).hexdigest())
+    assert final_resources_raw != starting_resources_raw
+    assert _exec_start_pre(unit, expect_success=True) == 0
+
+    wrong_transition = dict(cohort)
+    wrong_initial = dict(cohort["initial_primary_transition"])
+    wrong_initial["after_resources_record_sha256"] = "f" * 64
+    wrong_transition["initial_primary_transition"] = wrong_initial
+    core._atomic_replace(core.ADAPTER_UPDATE_COHORT,
+        core._canonical_json(wrong_transition), 0o400, core.ROOT_UID, core.ROOT_UID)
+    assert _exec_start_pre(unit, expect_success=False) != 0
+    core._atomic_replace(core.ADAPTER_UPDATE_COHORT,
+        core._canonical_json(cohort), 0o400, core.ROOT_UID, core.ROOT_UID)
+
+    resources = json.loads(final_resources_raw)
+    resources["fixture_readback_change"] = True
+    core.RESOURCES_RECORD.write_bytes(core._canonical_json(resources))
+    core.RESOURCES_RECORD.chmod(0o600)
+    assert _exec_start_pre(unit, expect_success=False) != 0
+    core.RESOURCES_RECORD.write_bytes(final_resources_raw)
+    core.RESOURCES_RECORD.chmod(0o600)
+    assert _exec_start_pre(unit, expect_success=True) == 0
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="unit recipe stability is qualified on the enrolled Pi")
 def test_core_service_unit_bytes_are_stable_across_fresh_hash_seeds():
     source = Path("/opt/hermes-installer-core-fixture/src")
