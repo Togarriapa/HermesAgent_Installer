@@ -773,6 +773,13 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="act
         elif operation == "restore":
             installed_plugin.update(context.old_members)
             member_inodes["__init__.py"] += 1
+        if operation in {"install", "restore"}:
+            plugin_directory = core.HERMES_HOME / "plugins" / "hermes-installer-resources-delegation"
+            for name, content in installed_plugin.items():
+                member = plugin_directory / name
+                member.write_bytes(content)
+                os.chown(member, core.ROOT_UID, core.ROOT_UID)
+                os.chmod(member, 0o444)
         installed = dict(installed_plugin)
         signatures = dict(plugin_snapshot().signatures)
         hashes = lambda members: {name: hashlib.sha256(members[name]).hexdigest()
@@ -1110,6 +1117,12 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
     home = admin_home / ".hermes"
     admin_home.mkdir(mode=0o700)
     home.mkdir(mode=0o700)
+    # The generated systemd guard reads this installed pair through the
+    # private HOME bind; model the actual root-owned files, not only receipts.
+    plugin_directory = home / "plugins" / "hermes-installer-resources-delegation"
+    plugin_directory.mkdir(parents=True, mode=0o700)
+    (plugin_directory / "plugin.yaml").write_bytes(b"manifest-v1\n")
+    (plugin_directory / "__init__.py").write_bytes(b"old native tools\n")
     prior_soul = b"# Existing owner instructions\nKeep these bytes before adoption.\n"
     (home / "SOUL.md").write_bytes(prior_soul)
     (home / "SOUL.md").chmod(0o600)
@@ -1133,6 +1146,12 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
     os.chown(admin_home, account.pw_uid, account.pw_gid)
     os.chmod(home, 0o700)
     os.chmod(admin_home, 0o700)
+    os.chown(plugin_directory, core.ROOT_UID, core.ROOT_UID)
+    os.chmod(plugin_directory, 0o555)
+    for plugin_member in (plugin_directory / "plugin.yaml",
+                          plugin_directory / "__init__.py"):
+        os.chown(plugin_member, core.ROOT_UID, core.ROOT_UID)
+        os.chmod(plugin_member, 0o444)
     _bind_private_fixed_hermes_home(home, request)
     fixed_home = Path("/home/admin")
     fixed_hermes_home = fixed_home / ".hermes"
