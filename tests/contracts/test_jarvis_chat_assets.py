@@ -383,7 +383,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("conversations.filter((entry)", history)
         self.assertIn("loadConversation(entry.id)", history)
         self.assertIn('ui.sessionCount.textContent', history)
-        self.assertIn('ui.speechStop.hidden = !synthesisSupported', client)
+        self.assertIn('ui.speechStop.hidden = true', client)
         self.assertIn('ui.speechStop.disabled = true', client)
         self.assertIn('ui.speechStop.disabled = false', client)
 
@@ -464,11 +464,12 @@ class JarvisChatAssetTests(unittest.TestCase):
         harness = r'''const assert = require("node:assert/strict");
 const API = "/chat/api";
 let request, activeTurnId = "old-success", conversationId = "conversation";
-let heartbeatNonce = "unchanged", closed = 0, errors = 0, connections = [], recoveredSpeech = [];
+let heartbeatNonce = "unchanged", closed = 0, errors = 0, connections = [], recoveredSpeech = [], completedReply = null;
 function closeStream() { closed += 1; activeTurnId = null; }
 function showError(message) { errors += 1; }
 function setConnection(state, label) { connections.push([state, label]); }
 function speakCompletedReply(text) { recoveredSpeech.push(text); }
+function rememberCompletedReply(id, text) { completedReply = id && text ? {id, text} : null; }
 function refreshConversations() { return Promise.resolve(); }
 const assistantBody = {textContent: "partial reply"};
 const waiting = {removed: false, remove() { this.removed = true; }};
@@ -519,7 +520,8 @@ RECONCILE
   assert.equal(waiting.removed, true);
   assert.equal(closed, 2);
   assert.deepEqual(connections.at(-1), ["ready", "Secure connection"]);
-  assert.deepEqual(recoveredSpeech, ["Jarvis"]);
+  assert.deepEqual(recoveredSpeech, [], "recovering a completed turn never starts TTS automatically");
+  assert.deepEqual(completedReply, {id:"conversation", text:"Jarvis"}, "the explicit dock action can use the recovered reply");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 '''.replace("RENEW", renew).replace("RECONCILE", reconcile)
         with tempfile.TemporaryDirectory() as temporary:
@@ -651,6 +653,7 @@ function currentTurnChoice() {
 function clearError() {}
 function stopRecognition() {}
 function stopSpeech() {}
+function rememberCompletedReply() {}
 function setAssistantState() {}
 function appendMessage() { return assistantBody; }
 function renderTurnModelControls() {}
@@ -821,7 +824,8 @@ FEATURE_API
         self.assertIn("window.SpeechRecognition || window.webkitSpeechRecognition", source)
         self.assertIn("current.interimResults = false", source)
         self.assertIn("Transcript added to your message. Review it before sending.", source)
-        self.assertIn("speakCompletedReply(finalText)", source)
+        self.assertIn("speakCompletedReply(lastCompletedReply.text)", source)
+        self.assertNotIn("speakCompletedReply(finalText)", source, "completed turns never start TTS without an explicit dock action")
         self.assertIn("utterance.onend", source)
         self.assertIn("stopRecognition(); stopSpeech();", source)
         self.assertGreaterEqual(source.count("if (recognition !== current) return;"), 3)
@@ -832,6 +836,76 @@ FEATURE_API
         self.assertIn('byId("voice-handsfree-send").checked && !existingDraft', source)
         self.assertIn("ui.form.requestSubmit()", source)
         self.assertIn("Foreground wake listening ended", source)
+
+    def test_voice_dock_is_composer_adjacent_and_read_aloud_is_explicit_and_conversation_bound(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        markup = page.decode("utf-8")
+        composer = markup.split('id="composer"', 1)[1].split("</form>", 1)[0]
+        self.assertIn('class="voice-dock" aria-labelledby="voice-dock-title"', composer)
+        self.assertIn('id="voice-read-aloud" type="button" disabled', composer)
+        self.assertIn('id="speech-stop" type="button" aria-label="Stop reply audio" hidden disabled', composer)
+        self.assertIn("@media(max-width:390px){.voice-dock-opt-ins{grid-template-columns:1fr}", markup)
+
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        dock_start = client.index("  function renderVoiceDock() {")
+        dock_end = client.index("\n  function stopRecognition(", dock_start)
+        dock_source = client[dock_start:dock_end]
+        read_start = client.index("  function readLatestReplyAloud() {")
+        read_end = client.index("\n  function configureVoice()", read_start)
+        read_source = client[read_start:read_end]
+        harness = r'''const assert = require("node:assert/strict");
+const elements = new Map();
+function byId(id) {
+  if (!elements.has(id)) elements.set(id, {checked:false, disabled:false, textContent:"", focused:false, focus(){this.focused=true;}});
+  return elements.get(id);
+}
+const ui = {voiceRead:byId("voice-read-aloud"), voiceInput:byId("voice-input"),
+  voiceWake:byId("voice-wake-toggle"), connection:{dataset:{state:"ready"}}};
+let voiceSupported = true, synthesisSupported = true, activeTurnId = null, conversationId = "A";
+let lastCompletedReply = null, spoken = [];
+function pushToTalkEnabled() { return byId("speech-consent").checked; }
+function showVoiceStatus(message) { byId("voice-status").textContent = message; }
+function speakCompletedReply(text) { spoken.push(text); }
+DOCK
+READ
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, true, "read-aloud starts disabled before a completed reply and opt-in");
+rememberCompletedReply("A", "A completed answer");
+assert.equal(ui.voiceRead.disabled, true, "a reply alone does not enable audio without output opt-in");
+byId("speech-output").checked = true;
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, false);
+readLatestReplyAloud();
+assert.deepEqual(spoken, ["A completed answer"], "audio starts only after the explicit button action");
+conversationId = "B";
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, true, "the previous conversation reply cannot be read in B");
+readLatestReplyAloud();
+assert.deepEqual(spoken, ["A completed answer"], "stale reply is not spoken after a conversation switch");
+rememberCompletedReply("B", "B answer");
+activeTurnId = "turn-B";
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, true, "an active turn prevents read-aloud");
+readLatestReplyAloud();
+assert.deepEqual(spoken, ["A completed answer"], "active turn guard prevents playback");
+activeTurnId = null;
+byId("speech-output").checked = false;
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, true, "revoking output opt-in disables the action");
+byId("speech-output").checked = true;
+ui.connection.dataset.state = "error";
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, true, "stale session access cannot start another read-aloud");
+assert.equal(ui.voiceInput.disabled, true, "voice capture is unavailable while secure access is down");
+'''.replace("DOCK", dock_source).replace("READ", read_source)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "voice-dock-read-aloud-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                ["node", str(path)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_chat_explains_voice_unavailability_in_the_composer(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")

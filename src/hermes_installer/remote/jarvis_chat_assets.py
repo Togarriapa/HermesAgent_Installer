@@ -106,8 +106,6 @@ _HTML = '''<!doctype html>
               <div class="chat-preferences-heading"><h2 id="chat-preferences-title">Chat controls</h2><span>Conversation model · session only · voice · display</span></div>
               <button type="button" class="chat-model-link" data-view="models-settings">Choose conversation model <span>Session only ↗</span></button>
               <p class="chat-preferences-note">Voice and display choices apply across this browser and are also available in System settings.</p>
-              <label class="chat-preference-toggle" id="chat-speech-consent-row"><input id="chat-speech-consent" type="checkbox"><span><strong>Allow browser voice input</strong><small>Push-to-talk or foreground wake phrase · review before sending</small></span></label>
-              <label class="chat-preference-toggle" id="chat-speech-output-row"><input id="chat-speech-output" type="checkbox"><span><strong>Read completed replies aloud</strong><small>Uses voices provided by this browser or device</small></span></label>
               <label class="chat-preference-field"><span>Recognition language</span><select id="chat-speech-language" aria-label="Recognition language">
                 <option value="en-US">English (United States)</option><option value="en-GB">English (United Kingdom)</option><option value="pt-PT">Português (Portugal)</option><option value="pt-BR">Português (Brasil)</option><option value="es-ES">Español (España)</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="it-IT">Italiano</option>
               </select></label>
@@ -144,24 +142,37 @@ _HTML = '''<!doctype html>
               placeholder="Message Jarvis…" autocomplete="off" autocapitalize="sentences"
               inputmode="text" autocorrect="on" spellcheck="true"
               enterkeyhint="send" aria-describedby="composer-hint"></textarea>
+            <section class="voice-dock" aria-labelledby="voice-dock-title">
+              <div class="voice-dock-heading">
+                <div><span class="voice-dock-kicker">OPTIONAL · THIS BROWSER</span><h2 id="voice-dock-title">Voice controls</h2>
+                  <p id="voice-dock-status" role="status" aria-live="polite">Text chat is ready. Browser voice is off until you enable it.</p></div>
+                <div class="voice-dock-opt-ins">
+                  <label class="chat-preference-toggle" id="chat-speech-consent-row"><input id="chat-speech-consent" type="checkbox"><span><strong>Allow browser voice input</strong><small>Microphone access is requested only when you start listening.</small></span></label>
+              <label class="chat-preference-toggle" id="chat-speech-output-row"><input id="chat-speech-output" type="checkbox"><span><strong>Allow browser read-aloud</strong><small>Used only when you choose Read latest reply aloud.</small></span></label>
+                </div>
+              </div>
+              <div class="voice-dock-controls" role="group" aria-label="Voice actions">
+                <button class="voice-button" id="voice-input" type="button" aria-label="Start push to talk" hidden>Push to talk</button>
+                <button class="voice-button" id="voice-stop" type="button" hidden>Stop listening</button>
+                <button class="voice-button voice-wake-button" id="voice-wake-toggle" type="button" aria-pressed="false" hidden>Enable foreground wake</button>
+                <button class="voice-button" id="voice-read-aloud" type="button" disabled>Read latest reply aloud</button>
+                <button class="voice-button" id="speech-stop" type="button" aria-label="Stop reply audio" hidden disabled>Stop audio</button>
+              </div>
+              <div class="voice-wake-controls" id="voice-wake-controls" hidden>
+                <label><input id="voice-handsfree-send" type="checkbox"><span>Send a command after “Jarvis” without review</span></label>
+                <p>Foreground only. Wake listening uses this browser’s speech service, may send audio outside Jarvis, and stops when this page is hidden or leaves Chat.</p>
+              </div>
+              <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
+              <p class="voice-status" id="chat-voice-unavailable" role="status" aria-live="polite" hidden></p>
+            </section>
             <div class="composer-actions">
               <span class="composer-hint" id="composer-hint">Enter to send · Shift + Enter for a new line</span>
               <button class="send-button" id="send-button" type="submit" aria-label="Send message">
                 <span class="send-label">Send</span><span class="send-icon" aria-hidden="true">↑</span>
               </button>
               <button class="stop-button" id="stop-button" type="button" hidden>Stop response</button>
-              <button class="voice-button" id="voice-input" type="button" aria-label="Start push to talk" hidden>Speak</button>
-              <button class="voice-button" id="voice-stop" type="button" hidden>Stop listening</button>
-              <button class="voice-button voice-wake-button" id="voice-wake-toggle" type="button" aria-pressed="false" hidden>Enable foreground wake phrase</button>
-              <button class="voice-button" id="speech-stop" type="button" aria-label="Stop reply audio" hidden disabled>Stop audio</button>
             </div>
           </form>
-          <div class="voice-wake-controls" id="voice-wake-controls" hidden>
-            <label><input id="voice-handsfree-send" type="checkbox"><span>Send a command after “Jarvis” without review</span></label>
-            <p>Foreground only. Wake listening uses this browser’s speech service, may send audio outside Jarvis, and stops when this page is hidden or leaves Chat.</p>
-          </div>
-          <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
-          <p class="voice-status" id="chat-voice-unavailable" role="status" aria-live="polite" hidden></p>
         </div>
       </main>
       <!-- JARVIS_OVERVIEW_PANEL -->
@@ -195,7 +206,7 @@ _HTML = '''<!doctype html>
           <label class="voice-choice voice-select-row" id="speech-language-row"><span><strong>Recognition language</strong><select id="speech-language" aria-label="Speech recognition language"><option value="en-US">English (United States)</option><option value="en-GB">English (United Kingdom)</option><option value="pt-PT">Português (Portugal)</option><option value="pt-BR">Português (Brasil)</option><option value="es-ES">Español (España)</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="it-IT">Italiano</option></select><small>Applies to the next push-to-talk capture. The browser or operating system chooses the microphone; manage the input device there.</small></span></label>
           <p class="voice-unavailable" id="speech-unavailable" hidden></p>
           <h3 class="voice-group-title">Speech output</h3>
-          <label class="voice-choice" id="speech-output-row" hidden><input id="speech-output" type="checkbox"><span><strong>Read completed replies aloud</strong><small>Uses voices available from your browser or operating system; selected voices may use their platform speech service. No separate Jarvis TTS provider is used. Replies are spoken only after Jarvis finishes.</small></span></label>
+          <label class="voice-choice" id="speech-output-row" hidden><input id="speech-output" type="checkbox"><span><strong>Allow browser read-aloud</strong><small>Used only when you choose Read latest reply aloud. Voices come from your browser or operating system, which may use its platform speech service; no separate Jarvis TTS provider is used.</small></span></label>
           <label class="voice-choice voice-select-row" id="speech-voice-row" hidden><span><strong>Speech voice</strong><select id="speech-voice" aria-label="Speech voice"></select></span></label>
           <div class="voice-range-row" id="speech-tuning-row" hidden><label for="speech-rate"><strong>Speaking rate</strong><output id="speech-rate-value" for="speech-rate">1.0×</output><input id="speech-rate" type="range" min="0.5" max="2" step="0.1" value="1"></label><label for="speech-pitch"><strong>Voice pitch</strong><output id="speech-pitch-value" for="speech-pitch">1.0</output><input id="speech-pitch" type="range" min="0" max="2" step="0.1" value="1"></label></div>
           <p class="voice-unavailable" id="speech-voice-status" role="status" aria-live="polite" hidden></p>
@@ -444,12 +455,25 @@ html[data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{b
 .history-action-status{min-height:18px;margin:6px 9px;color:#91cfc9;font-size:10px;line-height:1.4}
 .history-action-status[data-state="error"]{color:#f2c17e}
 .history-action-status[hidden]{display:none}
-.voice-wake-controls{max-width:880px;margin:8px 3px 0;color:#9bb6bb;font-size:11px;line-height:1.5}
+.voice-dock{display:grid;gap:11px;margin:10px -5px 12px;padding:13px;border:1px solid rgba(88,228,235,.24);border-radius:13px;background:linear-gradient(115deg,rgba(13,53,62,.42),rgba(8,25,32,.72));}
+.voice-dock-heading{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,1fr);align-items:start;gap:14px}
+.voice-dock-heading h2{margin:3px 0;color:#e3fbfc;font-size:14px;font-weight:620}
+.voice-dock-kicker{color:#84dce1;font-size:9px;font-weight:700;letter-spacing:.13em}
+.voice-dock-heading p{margin:4px 0 0;color:#a7c1c4;font-size:11px;line-height:1.45}
+.voice-dock-opt-ins{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.voice-dock-opt-ins .chat-preference-toggle{min-height:48px;align-items:flex-start;padding:5px 0;border-bottom:0}
+.voice-dock-opt-ins .chat-preference-toggle strong{font-size:11px}
+.voice-dock-opt-ins .chat-preference-toggle small{font-size:9px}
+.voice-dock-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.voice-dock-controls .voice-button{min-height:42px;padding-inline:13px}
+.voice-dock-controls .voice-button:disabled{opacity:.48}
+.voice-wake-controls{max-width:880px;margin:0;color:#9bb6bb;font-size:11px;line-height:1.5}
 .voice-wake-controls label{min-height:44px;display:flex;align-items:center;gap:10px;color:#cce2e5;cursor:pointer}
 .voice-wake-controls input{width:18px;height:18px;flex:none;accent-color:var(--cyan)}
 .voice-wake-controls p{margin:0 0 0 28px;max-width:74ch}
 .voice-wake-button[aria-pressed="true"]{border-color:#83d7bd;background:rgba(39,137,111,.2);color:#c4f7e5}
-@media(max-width:760px){.composer-actions{flex-wrap:wrap}.composer-hint{flex:1 0 100%;padding:2px 0 5px}.voice-wake-controls p{margin-left:0}.turn-model-controls{gap:6px 9px;padding-bottom:8px}.turn-model-controls label{grid-template-columns:1fr;gap:3px;flex:1 1 120px}.turn-model-controls select{min-width:0;max-width:100%;width:100%}.turn-model-controls>span{flex-basis:100%}.chat-trash{margin-top:12px}}
+@media(max-width:760px){.composer-actions{flex-wrap:wrap}.composer-hint{flex:1 0 100%;padding:2px 0 5px}.voice-dock{margin:8px -3px 10px;padding:11px}.voice-dock-heading{grid-template-columns:1fr;gap:7px}.voice-dock-opt-ins{grid-template-columns:1fr 1fr;gap:8px}.voice-dock-controls .voice-button{flex:1 1 132px}.voice-wake-controls p{margin-left:0}.turn-model-controls{gap:6px 9px;padding-bottom:8px}.turn-model-controls label{grid-template-columns:1fr;gap:3px;flex:1 1 120px}.turn-model-controls select{min-width:0;max-width:100%;width:100%}.turn-model-controls>span{flex-basis:100%}.chat-trash{margin-top:12px}}
+@media(max-width:390px){.voice-dock-opt-ins{grid-template-columns:1fr}.voice-dock-controls .voice-button{flex-basis:100%}}
 @media(prefers-reduced-motion:reduce){.jarvis-presence .presence-orbit-inner,.jarvis-presence .presence-orbit-reactor,.jarvis-presence .presence-orbit-outer,.jarvis-presence .presence-core,.assistant-hud .orb-halo,.assistant-hud .orb-ring{animation:none!important;transform:none!important}}
 '''.encode("utf-8")
 
@@ -506,7 +530,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     messages: byId("message-list"), welcome: byId("welcome-panel"),
     scroll: byId("message-scroll"), form: byId("composer"), input: byId("message-input"),
     send: byId("send-button"), stop: byId("stop-button"), notice: byId("chat-notice"),
-    voiceInput: byId("voice-input"), voiceStop: byId("voice-stop"), voiceWake: byId("voice-wake-toggle"), speechStop: byId("speech-stop"),
+    voiceInput: byId("voice-input"), voiceStop: byId("voice-stop"), voiceWake: byId("voice-wake-toggle"),
+    voiceRead: byId("voice-read-aloud"), speechStop: byId("speech-stop"),
     turnModel: byId("turn-model"), turnEffort: byId("turn-effort"), turnModelStatus: byId("turn-model-status"),
     voiceStatus: byId("voice-status"),
     toggle: byId("history-toggle"), close: byId("history-close"), panel: byId("conversation-panel"),
@@ -527,6 +552,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   let conversationHydrated = false;
   let activeTurnId = null;
   let eventSource = null;
+  let lastCompletedReply = null;
   let heartbeatTimer = null;
   let heartbeatNonce = null;
   let latestSequence = 0;
@@ -738,6 +764,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     ui.voiceWake.disabled = active;
     renderTurnModelControls();
     setAssistantState(active ? "busy" : "ready", active ? "Jarvis is responding" : "Ready for your message");
+    renderVoiceDock();
   }
 
   function renderTurnModelControls() {
@@ -950,6 +977,33 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       : "Browser speech output is available, but no selectable voices are currently reported. Read-aloud will use the browser default voice.";
     status.hidden = false;
   }
+  function renderVoiceDock() {
+    const status = byId("voice-dock-status");
+    const accessReady = ui.connection.dataset.state === "ready";
+    if (!accessReady) {
+      status.textContent = "Secure Chat access is not ready. Text remains available; reconnect before using browser voice.";
+    } else if (!voiceSupported && !synthesisSupported) {
+      status.textContent = "Browser voice input and read-aloud are unavailable here. Continue by typing and reading replies.";
+    } else if (!voiceSupported) {
+      status.textContent = "Browser voice input is unavailable here. You can still type; read-aloud uses the browser voice service.";
+    } else if (!pushToTalkEnabled()) {
+      status.textContent = "Voice input is off. Enable it here; microphone permission is requested only when you start listening.";
+    } else {
+      status.textContent = "Browser speech recognition is available. Permission is requested when you start; transcripts stay in the composer for review.";
+    }
+    if (!synthesisSupported) status.textContent += " Read-aloud is not supported by this browser.";
+    const canRead = accessReady && synthesisSupported && byId("speech-output").checked
+      && !activeTurnId && lastCompletedReply && lastCompletedReply.conversationId === conversationId
+      && typeof lastCompletedReply.text === "string" && Boolean(lastCompletedReply.text.trim());
+    ui.voiceRead.disabled = !canRead;
+    ui.voiceInput.disabled = Boolean(activeTurnId) || !accessReady;
+    ui.voiceWake.disabled = Boolean(activeTurnId) || !accessReady;
+  }
+  function rememberCompletedReply(id, text) {
+    lastCompletedReply = typeof id === "string" && typeof text === "string" && text.trim()
+      ? {conversationId: id, text} : null;
+    renderVoiceDock();
+  }
   function stopRecognition(message = "") {
     const current = recognition;
     recognition = null;
@@ -967,15 +1021,17 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     }
     if (message && current) showVoiceStatus(message);
     if (current && !activeTurnId) setAssistantState("ready", "Ready for your message");
+    renderVoiceDock();
   }
   function stopSpeech(message = "") {
     const wasSpeaking = speechUtterance !== null;
     if (synthesisSupported) window.speechSynthesis.cancel();
     speechUtterance = null;
-    ui.speechStop.hidden = !synthesisSupported;
+    ui.speechStop.hidden = true;
     ui.speechStop.disabled = true;
     if (wasSpeaking && !activeTurnId) setAssistantState("ready", "Ready for your message");
     if (message && wasSpeaking) showVoiceStatus(message);
+    renderVoiceDock();
   }
   function speakCompletedReply(text) {
     if (!synthesisSupported || !byId("speech-output").checked || !text.trim()) return;
@@ -997,9 +1053,11 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     setAssistantState("speaking", "Reading the completed reply aloud");
     ui.speechStop.hidden = false;
     ui.speechStop.disabled = false;
+    renderVoiceDock();
     utterance.onend = () => {
       if (speechUtterance === utterance) {
         speechUtterance = null;
+        ui.speechStop.hidden = true;
         ui.speechStop.disabled = true;
         setAssistantState("ready", "Ready for your message");
         showVoiceStatus("Reply audio finished.");
@@ -1008,6 +1066,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     utterance.onerror = () => {
       if (speechUtterance === utterance) {
         speechUtterance = null;
+        ui.speechStop.hidden = true;
         ui.speechStop.disabled = true;
         setAssistantState("error", "Read-aloud unavailable");
         showVoiceStatus("This device could not play the reply. Text chat is still available.");
@@ -1016,16 +1075,35 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     try { window.speechSynthesis.speak(utterance); }
     catch (_) {
       speechUtterance = null;
+      ui.speechStop.hidden = true;
       ui.speechStop.disabled = true;
       setAssistantState("error", "Read-aloud unavailable");
       showVoiceStatus("This device could not play the reply. Text chat is still available.");
     }
   }
+  function readLatestReplyAloud() {
+    if (!synthesisSupported) {
+      showVoiceStatus("Browser speech output is unavailable. You can still read the reply here.");
+      return;
+    }
+    if (!byId("speech-output").checked) {
+      showVoiceStatus("Turn on “Allow browser read-aloud” in this dock before using read-aloud.");
+      byId("chat-speech-output").focus();
+      return;
+    }
+    if (ui.connection.dataset.state !== "ready" || !lastCompletedReply
+        || lastCompletedReply.conversationId !== conversationId || activeTurnId) {
+      showVoiceStatus("A completed reply in this conversation will be available to read aloud after Jarvis finishes.");
+      return;
+    }
+    speakCompletedReply(lastCompletedReply.text);
+    showVoiceStatus("Reading the latest completed reply aloud.");
+  }
   function configureVoice() {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     voiceSupported = Boolean(Recognition && window.isSecureContext);
     synthesisSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
-    ui.speechStop.hidden = !synthesisSupported;
+    ui.speechStop.hidden = true;
     ui.speechStop.disabled = true;
     const consentRow = byId("speech-consent-row");
     const unavailable = byId("speech-unavailable");
@@ -1052,6 +1130,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     byId("speech-output-unavailable").hidden = synthesisSupported;
     if (!synthesisSupported) byId("speech-output-unavailable").textContent = "Speech output is not supported by this browser. Replies remain available as text.";
     byId("speech-tuning-row").hidden = !synthesisSupported;
+    renderVoiceDock();
     if (synthesisSupported) {
       const refreshVoices = () => {
         const select = byId("speech-voice");
@@ -1084,6 +1163,10 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!voiceSupported || !byId("speech-consent").checked || !Recognition
         || byId("main-content").hidden || document.visibilityState !== "visible") return;
+    if (ui.connection.dataset.state !== "ready") {
+      showVoiceStatus("Secure Chat access is unavailable. Reconnect before using browser voice; you can still type.");
+      return;
+    }
     if (ui.input.disabled) return;
     if (recognition) stopRecognition();
     stopSpeech();
@@ -1100,6 +1183,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     let transcriptReceived = false;
     let recognitionStarted = false;
     const captureEligible = () => byId("speech-consent").checked
+      && ui.connection.dataset.state === "ready"
       && !ui.input.disabled && !byId("main-content").hidden
       && document.visibilityState === "visible";
     current.onresult = (event) => {
@@ -1231,6 +1315,11 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   function setConnection(state, label) {
     ui.connection.dataset.state = state;
     ui.connection.lastElementChild.textContent = label;
+    if (state === "error") {
+      stopRecognition("Voice listening stopped because secure access is unavailable.");
+      stopSpeech("Reply audio stopped because secure access is unavailable.");
+    }
+    renderVoiceDock();
   }
   function appendMessage(role, text, state) {
     if (role !== "user" && role !== "assistant") return null;
@@ -1420,6 +1509,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   }
   async function loadConversation(id) {
     if (typeof id !== "string" || !id) return;
+    rememberCompletedReply(null, "");
     stopRecognition("Push-to-talk stopped when switching conversations.");
     stopSpeech("Reply audio stopped when switching conversations.");
     closeStream();
@@ -1434,6 +1524,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         appendMessage(message.role, message.content);
       }
       ui.welcome.hidden = data.messages.length !== 0;
+      const latestReply = [...data.messages].reverse().find((message) =>
+        message && message.role === "assistant" && typeof message.content === "string");
+      rememberCompletedReply(id, latestReply && latestReply.content);
       ui.title.textContent = conversations.find((item) => item.id === id)?.title || "Your conversation";
       updateOverviewCommandTarget();
       renderHistory();
@@ -1442,6 +1535,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     } catch (error) { showError(error.message); }
   }
   async function createConversation() {
+    rememberCompletedReply(null, "");
     stopRecognition("Push-to-talk stopped for the new conversation.");
     stopSpeech("Reply audio stopped for the new conversation.");
     closeStream();
@@ -1451,6 +1545,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (!data.conversation || typeof data.conversation.id !== "string" || !data.conversation.id) throw new Error("Jarvis could not start a conversation.");
       conversationId = data.conversation.id;
       ui.messages.replaceChildren();
+      rememberCompletedReply(null, "");
       ui.welcome.hidden = false;
       ui.title.textContent = "A clear mind, at your service.";
       updateOverviewCommandTarget();
@@ -1496,9 +1591,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (reply) {
         assistantBody.textContent = reply.content;
         waiting.remove();
+        rememberCompletedReply(conversationAtStart, reply.content);
         closeStream();
         setConnection("ready", "Secure connection");
-        speakCompletedReply(reply.content);
         refreshConversationsInBackground();
         return true;
       }
@@ -1572,11 +1667,12 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       showTurnConfiguration(assistantBody, `Core confirmed OpenAI Codex · ${configuration.modelId} · effort ${effort}`, "confirmed");
     });
     eventSource.addEventListener("turn.completed", () => {
+      if (activeTurnId !== turnId || conversationId !== conversationAtStart) return;
       waiting.remove();
       const finalText = assistantBody.textContent;
+      rememberCompletedReply(conversationAtStart, finalText);
       closeStream();
       loadTurnSelection(conversationAtStart);
-      speakCompletedReply(finalText);
       refreshConversationsInBackground();
     });
     eventSource.addEventListener("message.completed", () => { if (activeTurnId === turnId) waiting.remove(); });
@@ -1618,6 +1714,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     clearError();
     stopRecognition();
     stopSpeech();
+    rememberCompletedReply(null, "");
     setAssistantState("busy", "Preparing your response");
     if (!conversationId) {
       const data = await request(`${API}/conversations`, { method: "POST", body: "{}" });
@@ -1920,6 +2017,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     else startRecognition("wake");
   });
   ui.voiceStop.addEventListener("click", () => stopRecognition("Speech input stopped. Review the text before sending."));
+  ui.voiceRead.addEventListener("click", readLatestReplyAloud);
   ui.speechStop.addEventListener("click", () => stopSpeech("Reply audio stopped."));
   for (const id of ["speech-consent", "chat-speech-consent"]) byId(id).addEventListener("change", (event) => {
     const enabled = Boolean(event.currentTarget.checked);
@@ -1937,6 +2035,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ui.voiceInput.hidden = !voiceSupported || Boolean(activeTurnId);
       showVoiceStatus("Push-to-talk is enabled. Tap Speak when you are ready.");
     }
+    renderVoiceDock();
   });
   for (const id of ["speech-output", "chat-speech-output"]) byId(id).addEventListener("change", (event) => {
     byId("speech-output").checked = Boolean(event.currentTarget.checked);
@@ -1944,6 +2043,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     if (!event.currentTarget.checked) stopSpeech("Read-aloud is off.");
     saveUIPreferences({readAloud: Boolean(event.currentTarget.checked)});
     updateSpeechVoiceStatus();
+    renderVoiceDock();
   });
   for (const id of ["speech-voice", "chat-speech-voice"]) byId(id).addEventListener("change", (event) => {
     stopSpeech("Speech voice changed.");
@@ -2027,6 +2127,11 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     focusSelectedViewHeading("overview");
   });
   window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); unmountFeature(); });
+  window.addEventListener("offline", () => {
+    setConnection("checking", "Network unavailable");
+    stopRecognition("Voice listening stopped because this device is offline. Your text draft remains available.");
+    stopSpeech("Reply audio stopped because this device is offline.");
+  });
   document.addEventListener("visibilitychange", () => {
     document.documentElement.dataset.pageVisible = String(document.visibilityState === "visible");
     if (document.visibilityState !== "visible") {
