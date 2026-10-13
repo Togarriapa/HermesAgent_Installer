@@ -1454,27 +1454,38 @@ def _prepare_cohort_resource_materialization(
     if owner_overlay:
         from hermes_installer.registry import resources_skill_overlay as transform
 
-        skill_id = manifest["skill_members"][0]["skill_id"]
-        overlay_content = f"---\nname: {skill_id}\n---\ncontrolled owner overlay\n".encode("utf-8")
-        old_archive, old_sha = transform.build_effective_artifact(
-            old_base_archive, skill_id, overlay_content)
+        overlay_rows = {}
+        overlay_payloads = {}
+        selected_skills = sorted(manifest["skill_members"], key=lambda row: row["skill_id"])[:2]
+        for index, row in enumerate(selected_skills):
+            skill_id = row["skill_id"]
+            overlay_content = (
+                f"---\nname: {skill_id}\n---\ncontrolled owner overlay {index + 1}\n"
+            ).encode("utf-8")
+            old_archive, old_sha = transform.build_effective_artifact(
+                old_archive, skill_id, overlay_content)
+            content_sha = hashlib.sha256(overlay_content).hexdigest()
+            overlay_payloads[skill_id] = overlay_content
+            overlay_rows[skill_id] = {
+                "content_sha256": content_sha,
+                "archive_sha256": old_sha,
+            }
         manifest, files = native._read_artifact(old_archive, old_sha)
-        content_sha = hashlib.sha256(overlay_content).hexdigest()
         overlay_record = {
             "schema": 1,
             "base_artifact_sha256": old_base_sha,
-            "skills": {skill_id: {
-                "content_sha256": content_sha,
-                "archive_sha256": old_sha,
-            }},
+            "skills": overlay_rows,
         }
         overlay_root = core.RESOURCES_SKILL_OVERLAYS
         overlay_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         overlay_raw = native._canonical_json(overlay_record)
         core._atomic_replace(overlay_root / "active.json", overlay_raw,
             0o600, core.ROOT_UID, core.ROOT_UID)
-        core._atomic_replace(overlay_root / (content_sha + ".bin"), overlay_content,
-            0o600, core.ROOT_UID, core.ROOT_UID)
+        for content_sha, overlay_content in (
+                (hashlib.sha256(payload).hexdigest(), payload)
+                for payload in overlay_payloads.values()):
+            core._atomic_replace(overlay_root / (content_sha + ".bin"), overlay_content,
+                0o600, core.ROOT_UID, core.ROOT_UID)
 
     # _hash_generation_tree enforces real root-owned ancestors and the exact
     # admin-owned .hermes subtree; keep the fixture inside a private root path.
@@ -1689,6 +1700,20 @@ def _adapter_a0_migration_proof_inputs():
         core.HERMES_HOME / "skills" / native._GENERATION / native._OWNER_FILE,
         owner=1000, group=1000, mode=0o600, maximum=2 * 1024 * 1024)
     new_base = native.build_manual_jarvis_skills_artifact()
+    if overlay_raw is not None:
+        old_base_manifest, old_base_files = native._read_artifact(
+            old_base, hashlib.sha256(old_base).hexdigest())
+        _new_base_manifest, _new_base_files, _new_base_helper = native._read_transition_archive(
+            new_base, hashlib.sha256(new_base).hexdigest())
+        old_composed_manifest, old_composed_files = native._read_artifact(
+            old_archive, old_artifact)
+        # A real two-skill owner composition differs from pristine B1, while
+        # the approved B0→B1 and derived A0→A1 transitions stay helper-only.
+        assert len(overlay_contents) == 2
+        assert native.verify_same_materialization_transition(
+            old_base_manifest, old_base_files, _new_base_manifest, _new_base_files)
+        assert not native.verify_same_materialization_transition(
+            old_composed_manifest, old_composed_files, _new_base_manifest, _new_base_files)
     reconstruction = core._make_adapter_update_reconstruction(
         old_base, new_base, old_archive, overlay_record, overlay_contents, overlay_raw,
         marker, snapshots["resources_record"])
@@ -1698,6 +1723,10 @@ def _adapter_a0_migration_proof_inputs():
         new_base, hashlib.sha256(new_base).hexdigest())
     assert old_helper != new_helper
     assert reconstruction.new_composed_artifact_sha256 != old_artifact
+    new_composed_manifest, new_composed_files, _ = native._read_transition_archive(
+        reconstruction.new_composed_archive, reconstruction.new_composed_artifact_sha256)
+    assert native.verify_same_materialization_transition(
+        old_manifest, old_files, new_composed_manifest, new_composed_files)
     return ({
         "core_source_generation": record["core_source_generation"],
         "journal_raw": journal_raw,

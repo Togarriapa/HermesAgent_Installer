@@ -4967,13 +4967,16 @@ def _make_adapter_update_reconstruction(old_base,new_base,old_archive,overlay,co
  """Derive one active-overlay chain or the exact ordinary no-overlay base pair."""
  from .registry import manual_jarvis_skills as native
  from .registry import resources_skill_overlay as transform
- old_manifest,old_files=native._read_artifact(old_archive,hashlib.sha256(old_archive).hexdigest())
  new_manifest,new_files,new_helper=native._read_transition_archive(new_base,
   hashlib.sha256(new_base).hexdigest())
- if (not native.verify_same_materialization_transition(old_manifest,old_files,new_manifest,new_files)
-     or new_helper!=Path(native.__file__).read_bytes()):
+ if new_helper!=Path(native.__file__).read_bytes():
   raise CoreRuntimeError("candidate Resources artifacts are not the exact helper-only pair")
  if overlay_raw is None:
+  old_manifest,old_files=native._read_artifact(
+   old_archive,hashlib.sha256(old_archive).hexdigest())
+  if not native.verify_same_materialization_transition(
+      old_manifest,old_files,new_manifest,new_files):
+   raise CoreRuntimeError("candidate Resources artifacts are not the exact helper-only pair")
   if overlay is not None or contents or old_base!=old_archive:
    raise CoreRuntimeError("absent owner overlay does not match the exact old base")
   shared_manifest,shared_tree,count=native._same_materialization_digests(new_manifest,new_files)
