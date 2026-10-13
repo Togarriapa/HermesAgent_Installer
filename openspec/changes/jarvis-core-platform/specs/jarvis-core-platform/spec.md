@@ -2551,3 +2551,7 @@ Interrupted Core recovery SHALL acquire the existing adapter-update lock before 
 #### Scenario: Already-held recovery or failed retained proof
 - **WHEN** an updater already holds the lock, or nonroot/changed lock custody/backup/currentness/native receipt prevents recovery
 - **THEN** the private locked path neither nests nor releases its caller's lock; invalid proof denies before effects and retains protected recovery evidence, and an unlocked entrypoint releases only its own acquisition on success/failure. Exact restoration/effect and negative guards require meaningful Pi contracts.
+
+#### Scenario: Exact lock-owning recovery source integration
+- **WHEN** Root integrates reviewed issue#35 Core source b0dbfde1e401027d91564ad94a3468236c493491
+- **THEN** the sole changed native-adapter Core-file pin equals independently verified SHA-256 `0dac9c434b5c9af0a7dc07dbecd1a8e9546951e1fa08a6786a04d49761394af5`; other members stay exact, mismatched bytes deny, and new-source Pi recovery effect/denial qualification remains required without relabelling prior source-bound proofs.
