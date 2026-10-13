@@ -84,6 +84,123 @@ def test_context_feature_assets_are_static_and_avoid_native_rpc_or_markup_interp
     assert "profiles.describe" not in FEATURE_ASSETS.mount_js
 
 
+def test_context_view_binds_deferred_responses_to_the_current_selection_and_mount():
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    from hermes_installer.remote.jarvis_context_assets import FEATURE_ASSETS
+
+    harness = r'''
+const assert = require('node:assert/strict');
+global.document = {createElement:element};
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return {promise, resolve, reject};
+}
+function element() {
+  return {textContent:'', value:'', disabled:false, children:[], attrs:{}, listeners:{},
+    setAttribute(key, value) { this.attrs[key] = value; },
+    replaceChildren(...children) { this.children = children; },
+    append(...children) { this.children.push(...children); },
+    addEventListener(name, callback) { this.listeners[name] = callback; },
+    removeEventListener(name, callback) { if (this.listeners[name] === callback) delete this.listeners[name]; }};
+}
+function makeView() {
+  const selectors = ['[data-conversation]', '[data-refresh]', '[data-status]', '[data-usage]',
+    '[data-categories]', '[data-running]', '[data-created]', '[data-activity]', '[data-tokens]',
+    '[data-persona]', '[data-workspace]'];
+  const nodes = Object.fromEntries(selectors.map(key => [key, element()]));
+  const root = {attrs:{}, querySelector:key => nodes[key],
+    setAttribute(key, value) { this.attrs[key] = value; }};
+  const container = {querySelector:() => root};
+  const calls = [];
+  const api = {get(path) { const pending = deferred(); calls.push({path, ...pending}); return pending.promise; }};
+  const cleanup = mount(container, api);
+  const selector = nodes['[data-conversation]'];
+  const change = id => { selector.value = id; selector.listeners.change(); };
+  return {nodes, root, calls, selector, change, cleanup};
+}
+function observed(used, model) {
+  return {state:'observed', context:{state:'observed', contextUsed:used, contextMax:100,
+    contextPercent:used, estimated:false, model, categories:[]},
+    status:{state:'observed', running:false, created:model, lastActivity:model, tokens:used},
+    primaryPersona:{state:'pending'}, workspace:{state:'pending'}};
+}
+async function flush() { await Promise.resolve(); await Promise.resolve(); }
+async function startView() {
+  const view = makeView();
+  view.calls[0].resolve({conversations:[{id:'A'.repeat(24),title:'A'}, {id:'B'.repeat(24),title:'B'}]});
+  await flush();
+  return view;
+}
+(async() => {
+  // A→B: A must not overwrite B after B has completed.
+  let view = await startView();
+  view.change('A'.repeat(24)); const firstA = view.calls[1];
+  view.change('B'.repeat(24)); const b = view.calls[2];
+  b.resolve(observed(20, 'B')); await flush();
+  firstA.resolve(observed(10, 'A')); await flush();
+  assert.match(view.nodes['[data-status]'].textContent, /observed/);
+  assert.match(view.nodes['[data-usage]'].textContent, /^20 of 100/);
+  assert.equal(view.nodes['[data-created]'].textContent, 'B');
+
+  // A→B→A: the first A response is stale even though A is selected again.
+  view = await startView();
+  view.change('A'.repeat(24)); const oldA = view.calls[1];
+  view.change('B'.repeat(24)); const oldB = view.calls[2];
+  view.change('A'.repeat(24)); const newA = view.calls[3];
+  oldA.resolve(observed(11, 'old-A')); oldB.resolve(observed(22, 'old-B')); await flush();
+  assert.equal(view.nodes['[data-status]'].textContent, 'Loading owned session context…');
+  assert.equal(view.nodes['[data-created]'].textContent, 'Unknown');
+  newA.resolve(observed(12, 'new-A')); await flush();
+  assert.match(view.nodes['[data-usage]'].textContent, /^12 of 100/);
+  assert.equal(view.nodes['[data-created]'].textContent, 'new-A');
+
+  // Clearing immediately removes prior data and makes a late completion inert.
+  view = await startView();
+  view.change('A'.repeat(24)); const clearedA = view.calls[1];
+  view.change('');
+  assert.equal(view.nodes['[data-usage]'].textContent, 'Unknown');
+  assert.equal(view.nodes['[data-created]'].textContent, 'Unknown');
+  assert.equal(view.nodes['[data-categories]'].children.length, 0);
+  assert.equal(view.nodes['[data-status]'].textContent, 'Choose a conversation to inspect its context.');
+  clearedA.resolve(observed(99, 'cleared')); await flush();
+  assert.equal(view.nodes['[data-usage]'].textContent, 'Unknown');
+  assert.equal(view.nodes['[data-status]'].textContent, 'Choose a conversation to inspect its context.');
+
+  // A stale rejection/finally cannot replace B's loading state or enable its refresh.
+  view = await startView();
+  view.change('A'.repeat(24)); const failedA = view.calls[1];
+  view.change('B'.repeat(24)); const pendingB = view.calls[2];
+  failedA.reject(new Error('late A failure')); await flush();
+  assert.equal(view.nodes['[data-status]'].textContent, 'Loading owned session context…');
+  assert.equal(view.nodes['[data-refresh]'].disabled, true);
+  pendingB.resolve(observed(21, 'current-B')); await flush();
+  assert.match(view.nodes['[data-usage]'].textContent, /^21 of 100/);
+  assert.equal(view.nodes['[data-refresh]'].disabled, false);
+  assert.equal(view.root.attrs['aria-busy'], 'false');
+
+  // List results and errors both stop at unmount.
+  view = makeView(); const lateList = view.calls[0];
+  view.cleanup();
+  lateList.resolve({conversations:[{id:'A'.repeat(24),title:'late'}]}); await flush();
+  assert.equal(view.selector.children.length, 0);
+  assert.equal(view.nodes['[data-status]'].textContent, 'Choose a conversation to inspect its context.');
+  view = makeView(); const failedList = view.calls[0];
+  view.cleanup(); failedList.reject(new Error('late list failure')); await flush();
+  assert.equal(view.nodes['[data-status]'].textContent, 'Choose a conversation to inspect its context.');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+'''
+
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "jarvis-context-selection-harness.js"
+        path.write_text(FEATURE_ASSETS.mount_js + "\n" + harness, encoding="utf-8")
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+
+
 def test_context_route_resolves_private_session_only_after_owner_lookup():
     import asyncio
     import time
