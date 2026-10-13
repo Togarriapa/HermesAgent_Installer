@@ -947,3 +947,33 @@ The read-only Android prerequisites check found `javac` and `java` absent and
 three known SDK directories absent. Android issue #42 therefore remains
 Planned; this does not establish Android support or acceptance. Overall M1
 and runtime acceptance remain open.
+
+## Follow-on Pi 139/140 and UI evidence
+
+Pi139 candidate `54bcb60` (archive `0e4b98`) passed both actual A0 fixture
+parameterizations under the correct private `/opt` namespace. The run log
+SHA-256 was
+`7c4b66179b27e51e82692040e6f5ac96d93ee77594be94d7c1d0b889a4614bca`. Its
+first denial-receipt check correctly rejected the receipt but the test failed
+an obsolete zero-calls assertion after 65.46s. Source correction `30b3` passed
+review: it allows only zero or the exact ordered two reads, while retaining
+protected bytes/signatures and no-effects requirements. A separate actual
+read-only target probe passed using the protected Gateway venv. Four live
+units read back active, with the old source still in use. A Core source fix
+`4d1` against `9e70` was separately pinned and passed source review; the
+candidate-139 owner-overlay issue was an actual production-source defect and
+was corrected, not a fixture-only change.
+
+Root candidate 140
+(`4b4a2a8caffcdd0324edba86559f3c37b30d2497`), archive SHA-256
+`a8210874dfdb1ae1b5fae249fc5a334feeeee1349c76029a797eef52b6a1b083`, included
+the fixtures and `31c7` four-artifact touch-44 clarification. It passed
+spec/plan validation and was staged without effects. Its full native runner
+was underway with outcome unknown.
+
+For Feature candidate `1ef`, the synthetic renderer helper reported all flows
+passing except phone and wide control sizing: Extensions search/select had a
+42px target, and the Projects note query/Remove controls measured 38.59375px
+and 38px. A focused CSS correction was in progress. This is not a deployed
+feature result or full UI acceptance. No full M1 acceptance is inferred from
+the A0 probes, active-unit readback, staged candidate or synthetic renderer.
