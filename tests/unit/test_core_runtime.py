@@ -2543,17 +2543,23 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
     token = core.TOKEN.read_bytes()
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
     attempts = {"wait": 0}
-    def fail_first_restart():
+    listener_sources = []
+    def fail_first_restart(*, adapter_source=core.ADAPTER_SOURCE):
         attempts["wait"] += 1
+        listener_sources.append(Path(adapter_source))
         if attempts["wait"] == 1:
+            assert Path(adapter_source) == core.ADAPTER_SOURCE
             attempts["starting_cohort"], _cohort_raw = core._read_adapter_update_cohort()
             raise core.CoreRuntimeError("injected adapter update restart failure")
+        assert Path(adapter_source) == old_source
     monkeypatch.setattr(core, "_wait_for_listener", fail_first_restart)
     update_call_start = len(_calls)
 
     with _bounded_owner_generation_restore_failure():
         with pytest.raises(core.CoreRuntimeError, match="injected adapter update restart failure"):
             core.update_owned_core_adapter()
+
+    assert listener_sources == [core.ADAPTER_SOURCE, old_source]
 
     assert core.JOURNAL.read_bytes() == prior
     assert core.LAUNCHER.read_bytes() == launcher
@@ -2578,6 +2584,19 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
     assert ordered.index(("native-plugin", "install")) < restore_index
     assert any(index > restore_index and call == ("systemctl", "start", core.SERVICE)
                for index, call in enumerate(ordered))
+
+
+def test_wait_for_listener_checks_the_requested_journaled_source(monkeypatch):
+    prior_source = Path("/opt/hermes-installer-core-prior/src")
+    observed = []
+
+    def owned_listener(*, adapter_source=core.ADAPTER_SOURCE):
+        observed.append(Path(adapter_source))
+        return Path(adapter_source) == prior_source
+
+    monkeypatch.setattr(core, "_owned_listener", owned_listener)
+    core._wait_for_listener(adapter_source=prior_source)
+    assert observed == [prior_source]
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")

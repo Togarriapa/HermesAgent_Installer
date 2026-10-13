@@ -5482,7 +5482,8 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
  _atomic_replace(UNIT,contents["unit"],0o644,ROOT_UID,ROOT_UID)
  _run(["systemctl","daemon-reload"])
  if not _owned_unit_loaded(): raise CoreRuntimeError("restored prior adapter unit is not journal-owned")
- _run(["systemctl","start",SERVICE]); _wait_for_listener()
+ _run(["systemctl","start",SERVICE]); _wait_for_listener(
+  adapter_source=Path(prior["adapter_source"]))
  if not _owned_listener_pidfd(adapter_source=prior["adapter_source"]):
   raise CoreRuntimeError("prior journal-owned adapter process did not recover")
  from hermes_installer.remote.native_plugin_bootstrap import verify_native_resources_plugin_selection
@@ -6831,10 +6832,10 @@ def install_or_resume():
          f"{counts['native_skills']} skills with {counts['source_profiles_preserved']} source profiles preserved; "
          f"{prompt_status}; functional use remains unverified")
 
-def _wait_for_listener():
+def _wait_for_listener(*,adapter_source=ADAPTER_SOURCE):
  deadline=time.monotonic()+30
  while time.monotonic()<deadline:
-  if _owned_listener(): return
+  if _owned_listener(adapter_source=adapter_source): return
   time.sleep(1)
  raise CoreRuntimeError("owned service did not prove its isolated loopback listener within 30 seconds")
 
