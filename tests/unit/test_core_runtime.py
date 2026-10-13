@@ -1972,8 +1972,9 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
             raise KeyboardInterrupt()
         return real_run(argv, check)
     monkeypatch.setattr(core, "_run", interrupt_after_starting_recipe)
-    with pytest.raises(KeyboardInterrupt):
-        core.update_owned_core_adapter()
+    with _bounded_cohort_exception_sites():
+        with pytest.raises(KeyboardInterrupt):
+            core.update_owned_core_adapter()
     starting = json.loads(core.JOURNAL.read_bytes())
     assert starting["adapter_update_state"] == "starting"
     assert starting["adapter_source"] == str(core.ADAPTER_SOURCE)
