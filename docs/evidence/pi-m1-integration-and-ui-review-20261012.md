@@ -123,6 +123,42 @@ initial/update/recovery paths and repairs only those fixture hash joins.
 Sol reviewed the exact Core source and one-entry Inspector pin; runtime
 qualification remains separate. No production apply followed these failures.
 
+The v77 candidate `708c0ce2ce11f3815b2b79121bf26426aafb8b63` compiled
+on the Pi and passed strict specs/plan validation. First group156 passed
+in12.94s; expanded Core group4 failed/14 passed in176.79s. Archive SHA-256
+`bd0282467491a029f771ff7277b177f1ffdfc059c2e2be014c3f33ac8f35a07e`.
+The outer update/recovery wrapper hid the inner failure location. A bounded
+test-only probe was added, keeping production failure handling unchanged.
+
+The v78 diagnostic candidate `9fc4661f06d1f71f6aba194f29a421a1416e817a`
+compiled and passed strict specs/plan checks; its one selected positive failed
+in83.05s. Archive SHA-256
+`603d6132d9687ac20a9c12facefc0001a6ca3e060ea18fb8d12cb05a0eaa1194`.
+Routine generator exits obscured the probe's final bounded entries. The v79
+probe filters those events and follows bounded exception-context metadata,
+without messages, locals, arguments or file contents.
+
+The v79 diagnostic candidate `9d6acb46f02f2fbfe8336456f1061ea17f9a1483`
+compiled and passed strict specs/plan checks; one selected positive failed
+in86.41s. Archive SHA-256
+`879e159526ccc2bf137d905335219491f5427d60cf3ff5e18ba2e974d69db399`.
+Its exact context found a second actual updater bug: the initial cohort
+constructor expanded temporary primary-verification fields into a closed
+journal that admits only the primary-record digest. The corrected producer
+keeps temporary data in its existing private state and typed initial
+transition, with the strict writer unchanged. Sol reviewed that finite
+correction and the exact one-entry Core source pin.
+
+The v80 candidate `9fd4e66faf53f328018fa1a853110d59af9a9849` compiled
+and passed strict specs/plan validation. First group156 passed in12.89s;
+expanded Core group4 failed/14 passed in218.27s. Archive SHA-256
+`5b5a929e0986d5dba864185e45a3d0b3615ae0b1948c1e69b2d9fecc21ecdde3`.
+The controlled fixture replaced sys.modules entries but left cached remote
+package attributes pointing to real bootstrap/Inspector modules. The prepare
+step refused before effects. The next fixture correction replaces both
+bindings with the same explicit adapters. Real bootstrap filesystem checks
+remain separate. No target apply or production acceptance followed these runs.
+
 The v69 specification-only candidate
 `6b4621209a11895ce9f7894013ce034e1bdb3b05` compiled on the Pi and passed
 strict specs/plan validation. Archive SHA-256
