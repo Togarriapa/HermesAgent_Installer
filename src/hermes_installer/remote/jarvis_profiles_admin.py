@@ -125,6 +125,9 @@ class JarvisProfileAdminProvider(Protocol):
 class CoreGatewayProfileAdminProvider:
     """Bridge the finite adapter to the approved root profile-inspector RPC."""
 
+    _admin_scopes: dict[tuple[str, str], tuple[int, str]] = {}
+    _admin_scope_lock = threading.RLock()
+
     def __init__(self, config: Any):
         from .core_gateway import CoreGatewayConfig
         if type(config) is not CoreGatewayConfig:
@@ -137,10 +140,55 @@ class CoreGatewayProfileAdminProvider:
               expected_sha256: str | None = None, content: str | None = None,
               idempotency_key: str | None = None, restore_id: str | None = None) -> Any:
         from .core_gateway_inspector import CoreGatewayInspector
-        return CoreGatewayInspector(self._config).owner_profile_admin(access_jwt,
+        key = (hashlib.sha256(accepted_ingress.principal.subject.encode("utf-8", "strict")).hexdigest(),
+               accepted_ingress.core_generation)
+        with self._admin_scope_lock:
+            expected_scope = self._admin_scopes.get(key)
+        response = CoreGatewayInspector(self._config).owner_profile_admin(access_jwt,
             accepted_ingress, action=action, profile_id=profile_key,
             file_kind=file_kind, skill_id=skill_id, expected_sha256=expected_sha256,
-            content=content, idempotency_key=idempotency_key, restore_id=restore_id)
+            content=content, idempotency_key=idempotency_key, restore_id=restore_id,
+            expected_admin_revision=(expected_scope[0] if expected_scope else None),
+            expected_admin_sha256=(expected_scope[1] if expected_scope else None))
+        if (type(response) is not dict or set(response) != {"data", "admin_scope"}
+                or type(response["admin_scope"]) is not dict):
+            raise JarvisChatDenied("Root administrator proof is unavailable")
+        scope = response["admin_scope"]
+        if (set(scope) != {"state", "authorized", "revision", "record_sha256",
+                "owner_subject_sha256", "config_sha256", "core_generation", "purpose",
+                "expires_in_seconds"}
+                or (scope["authorized"] is not True and action != "admin-status")
+                or type(scope["authorized"]) is not bool or type(scope["revision"]) is not int
+                or scope["revision"] < 0 or not _HASH.fullmatch(scope["record_sha256"])
+                or scope["owner_subject_sha256"] != key[0]
+                or scope["config_sha256"] != self._config.config_sha256
+                or scope["core_generation"] != accepted_ingress.core_generation
+                or scope["purpose"] != "profiles-native-skills"
+                or type(scope["expires_in_seconds"]) not in {int, float}
+                or not 0 < scope["expires_in_seconds"] <= 5.0):
+            raise JarvisChatDenied("Root administrator proof is unavailable")
+        if action == "admin-status":
+            return {"data": response["data"], "admin_scope": scope}
+        with self._admin_scope_lock:
+            if key not in self._admin_scopes and len(self._admin_scopes) >= 1024:
+                self._admin_scopes.pop(next(iter(self._admin_scopes)))
+            self._admin_scopes[key] = (scope["revision"], scope["record_sha256"])
+        return response["data"]
+
+    def admin_status(self, *, access_jwt: str, accepted_ingress: Any) -> dict[str, Any]:
+        response = self._call(action="admin-status", access_jwt=access_jwt,
+                              accepted_ingress=accepted_ingress)
+        scope = response["admin_scope"]
+        return {"state": scope["state"], "authorized": scope["authorized"],
+            "revision": scope["revision"], "record_sha256": scope["record_sha256"]}
+
+    def current_admin_scope(self, *, subject: str, core_generation: str) -> tuple[int, str]:
+        key = (hashlib.sha256(subject.encode("utf-8", "strict")).hexdigest(), core_generation)
+        with self._admin_scope_lock:
+            scope = self._admin_scopes.get(key)
+        if scope is None:
+            raise JarvisChatDenied("Root administrator proof is unavailable")
+        return scope
 
     def list_skills(self, *, core_generation: str, access_jwt: str,
                     accepted_ingress: Any) -> tuple[NativeSkillDescriptor, ...]:
@@ -352,6 +400,8 @@ class _PreviewGrant:
     file_kind: str
     base_sha256: str
     content_sha256: str
+    admin_revision: int
+    admin_record_sha256: str
     expires_monotonic: float
 
 
@@ -512,9 +562,15 @@ class JarvisProfileAdmin:
         if len(diff.encode("utf-8")) > MAX_PROFILE_DIFF_BYTES:
             raise JarvisChatDenied("profile change preview exceeds its bound")
         content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        current_admin_scope = getattr(self._provider, "current_admin_scope", None)
+        if not callable(current_admin_scope):
+            raise JarvisChatDenied("Root administrator proof is unavailable")
+        admin_revision, admin_record_sha256 = current_admin_scope(
+            subject=subject, core_generation=core_generation)
         token = secrets.token_urlsafe(32)
         grant = _PreviewGrant(hashlib.sha256(subject.encode()).hexdigest(), core_generation,
             profile.profile_key, file_kind, current.sha256, content_sha256,
+            admin_revision, admin_record_sha256,
             time.monotonic() + PREVIEW_TTL_SECONDS)
         with self._lock:
             now = time.monotonic()
@@ -542,12 +598,19 @@ class JarvisProfileAdmin:
             raise JarvisChatDenied("profile file is unavailable")
         content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
         subject_sha = hashlib.sha256(subject.encode()).hexdigest()
+        current_admin_scope = getattr(self._provider, "current_admin_scope", None)
+        if not callable(current_admin_scope):
+            raise JarvisChatDenied("Root administrator proof is unavailable")
+        admin_revision, admin_record_sha256 = current_admin_scope(
+            subject=subject, core_generation=core_generation)
         with self._lock:
             grant = self._previews.pop(preview_token, None)
         if (grant is None or grant.expires_monotonic <= time.monotonic()
                 or grant.subject_sha256 != subject_sha
                 or grant.core_generation != core_generation
                 or grant.profile_key != profile.profile_key or grant.file_kind != file_kind
+                or grant.admin_revision != admin_revision
+                or not hmac.compare_digest(grant.admin_record_sha256, admin_record_sha256)
                 or not hmac.compare_digest(grant.base_sha256, base_sha256)
                 or not hmac.compare_digest(grant.content_sha256, content_sha256)):
             raise JarvisChatDenied("profile review expired or changed; review the diff again")
@@ -619,11 +682,10 @@ async def _current_owner(request: Any, service: JarvisChatService):
             or accepted.core_generation != principal.core_generation):
         raise web.HTTPServiceUnavailable(text="current Core is unavailable", headers=_secure_headers())
     allowed_emails = launch.config.allowed_emails
-    if (len(allowed_emails) != 1
-            or not isinstance(accepted.principal.email, str)
-            or accepted.principal.email.casefold() != next(iter(allowed_emails), None)):
+    if (not isinstance(accepted.principal.email, str)
+            or accepted.principal.email.casefold() not in allowed_emails):
         raise web.HTTPForbidden(
-            text="Global profile administration is unavailable for household access. Administrator access setup is pending; household chat remains available.",
+            text="Global profile administration is pending original administrator setup; household chat remains available.",
             headers=_secure_headers())
     try:
         observation = await asyncio.wait_for(asyncio.to_thread(

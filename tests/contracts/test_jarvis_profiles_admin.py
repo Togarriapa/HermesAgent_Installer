@@ -23,11 +23,16 @@ class _Provider:
         self.files = {("hermes", "soul"): "Jarvis owner prompt\n",
                       ("dev-peter", "soul"): "Internal profile prompt\n"}
         self.generation = "a" * 64
+        self.admin_revision = 1
+        self.admin_record_sha256 = _sha("original-admin-record-1")
         self.writes = []
         self.profile_rows = (
             ProfileAdminDescriptor("hermes", "Jarvis", "jarvis", self.generation, ("soul",)),
             ProfileAdminDescriptor("dev-peter", "Dev Peter", "expert", self.generation, ("soul",)),
         )
+
+    def current_admin_scope(self, *, subject, core_generation):
+        return self.admin_revision, self.admin_record_sha256
 
     def list_profiles(self, *, subject, core_generation, access_jwt, accepted_ingress):
         return self.profile_rows
@@ -128,6 +133,25 @@ def test_save_requires_fresh_single_use_review_token_and_exact_file_cas():
         admin.save(**auth, profile_id=profile_id, file_kind="soul",
             base_sha256=initial["sha256"], content=proposed,
             preview_token=preview["previewToken"], idempotency_key="idempotency_key_1234567890")
+
+
+def test_preview_is_invalidated_by_admin_revoke_and_reactivation_revision():
+    provider = _Provider()
+    admin = JarvisProfileAdmin(provider)
+    auth = {"subject": "owner-a", "core_generation": "core-a",
+            "access_jwt": "jwt", "accepted_ingress": object()}
+    profile_id = admin.list_profiles(**auth)["profiles"][1]["id"]
+    current = admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
+    proposed = current["content"] + "Reviewed change.\n"
+    preview = admin.preview(**auth, profile_id=profile_id, file_kind="soul",
+        base_sha256=current["sha256"], content=proposed)
+    provider.admin_revision = 3
+    provider.admin_record_sha256 = _sha("reactivated-admin-record-3")
+    with pytest.raises(JarvisChatDenied):
+        admin.save(**auth, profile_id=profile_id, file_kind="soul",
+            base_sha256=current["sha256"], content=proposed,
+            preview_token=preview["previewToken"], idempotency_key="idempotency_key_1234567890")
+    assert provider.writes == []
 
 
 def test_primary_soul_prefix_is_editable_through_the_reviewed_transaction():

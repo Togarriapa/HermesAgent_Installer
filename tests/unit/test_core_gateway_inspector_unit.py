@@ -1,11 +1,13 @@
 """Static and isolated-effect checks for the fixed root Inspector service."""
+import hashlib
 import os
 import shlex
 import stat
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
-from hermes_installer.remote import core_gateway, core_gateway_inspector
+from hermes_installer.remote import core_gateway, core_gateway_inspector, global_admin
 
 import pytest
 
@@ -84,12 +86,20 @@ def test_profile_admin_inspector_denies_non_singleton_allowlist_before_ingress_o
         "nonce": "b" * 64, "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
         "access_jwt": "signed-access-token", "core_generation": "c" * 64,
         "ingress_nonce": "d" * 64, "ingress_proof_sha256": "e" * 64,
+        "expected_admin_revision": 0, "expected_admin_sha256": "0" * 64,
         **fields,
     }
-    with patch.object(core_gateway_inspector, "_consume_ingress_issue",
+    principal = SimpleNamespace(email=(next(iter(allowed_emails)) if allowed_emails else "owner@example.test"),
+        subject="immutable-subject", token_fingerprint=hashlib.sha256(
+            b"signed-access-token").hexdigest())
+    with patch.object(core_gateway_inspector, "_learning_jwks", return_value={}), \
+            patch("hermes_installer.remote.gateway.validate_access_jwt", return_value=principal), \
+            patch.object(global_admin, "locked"), \
+            patch.object(global_admin, "read_locked", return_value=(None, None)), \
+            patch.object(core_gateway_inspector, "_consume_ingress_issue",
                       side_effect=AssertionError("non-singleton admin must stop before ingress consumption")) as consume:
         with pytest.raises(core_gateway_inspector.CoreInspectionDenied,
-                           match="Administrator access setup is pending"):
+                           match="original administrator setup"):
             core_gateway_inspector.observe_profile_admin(
                 config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
                 peer_pid=551, peer_uid=996, peer_gid=981)

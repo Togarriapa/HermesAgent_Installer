@@ -326,13 +326,22 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
         allowed_emails = getattr(launch.config, "allowed_emails", frozenset())
         origins = request.headers.getall("Origin", [])
         if (not isinstance(hostname, str) or not isinstance(allowed_emails, (set, frozenset))
-                or len(allowed_emails) != 1
-                or accepted.principal.email.casefold() != next(iter(allowed_emails)).casefold()
+                or accepted.principal.email.casefold() not in allowed_emails
                 or (origins != [f"https://{hostname}"] if require_origin
                     else origins not in ([], [f"https://{hostname}"]))
                 or request.headers.get("Sec-Fetch-Site") not in (None, "same-origin")):
             raise JarvisChatDenied("single-owner identity or action origin was not verified")
         return principal
+
+    def require_singleton_for_direct_rpc(request: Any, principal: Any) -> None:
+        """Keep CoreRpc plugin/MCP and skill-install mutations singleton-only."""
+        launch = request.app.get("core_gateway_launch")
+        emails = getattr(getattr(launch, "config", None), "allowed_emails", frozenset())
+        accepted = request.get("core_ingress")
+        if (not isinstance(emails, (set, frozenset)) or len(emails) != 1
+                or type(accepted) is not CoreAcceptedIngressObservation
+                or accepted.principal.email.casefold() != next(iter(emails), None)):
+            raise JarvisChatDenied("Managed plugin and MCP changes remain unavailable for household access")
 
     def access_jwt(request: Any) -> str:
         values = request.headers.getall("Cf-Access-Jwt-Assertion", [])
@@ -351,19 +360,21 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             raise JarvisChatDenied("current native skill source adapter is unavailable") from None
 
     async def inventory(request: Any) -> dict[str, Any]:
-        skills, plugins, mcps = await asyncio.gather(
-            service.backend.skills_inventory(), service.backend.list_managed_plugins(),
-            service.backend.list_mcp_servers())
-        accepted = request.get("core_ingress")
         principal = current_owner(request)
-        owner_mcp_revisions = owned_mcp_revisions(principal.subject, principal.core_generation)
-        owner_plugin_revisions = owned_plugin_revisions(principal.subject, principal.core_generation)
+        accepted = request.get("core_ingress")
         provider = skill_provider(request)
         token = access_jwt(request)
+        # Root independently authorizes the native skill source before CoreRpc
+        # plugin/MCP catalogs are read or projected.
         skill_files = provider.list_skills(core_generation=principal.core_generation,
             access_jwt=token, accepted_ingress=accepted)
         archived_skill_files = provider.list_skill_archives(core_generation=principal.core_generation,
             access_jwt=token, accepted_ingress=accepted)
+        skills, plugins, mcps = await asyncio.gather(
+            service.backend.skills_inventory(), service.backend.list_managed_plugins(),
+            service.backend.list_mcp_servers())
+        owner_mcp_revisions = owned_mcp_revisions(principal.subject, principal.core_generation)
+        owner_plugin_revisions = owned_plugin_revisions(principal.subject, principal.core_generation)
         bundle = _verified_bundle_inventory()
         skill_catalog = {_slug(row["name"]) for row in bundle["items"]
                          if row.get("kind") == "skills" and isinstance(row.get("name"), str)}
@@ -530,6 +541,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 name = target["name"]
             if not isinstance(name, str) or not _KEY.fullmatch(name) or ".." in name.split("/"):
                 raise web.HTTPBadRequest(text="invalid request", headers=_secure_headers())
+            if operation not in {"skills:edit", "skills:remove", "skills:restore"}:
+                require_singleton_for_direct_rpc(request, before)
             confirm_words = {"skills:add": "ADD", "skills:edit": "EDIT", "skills:remove": "ARCHIVE (RECOVERABLE)",
                              "plugins:add": "ADD", "plugins:edit": "EDIT",
                              "plugins:toggle": "ENABLE" if body.get("enabled") is True else "DISABLE",
