@@ -1782,17 +1782,46 @@ def test_incoming_adapter_verifies_old_a0_without_relaxing_public_discovery(
     _fake_update_pidfd(monkeypatch, enabled, request)
     _rebind_migrated_fixture_to_prior_generation()
     calls_before = list(calls)
+    enabled_before = enabled["value"]
+    unit_present_before = core.UNIT.exists()
 
     with core._adapter_update_lock():
         inputs, public_state = _adapter_a0_migration_proof_inputs()
         assert public_state == "stale"
+        from hermes_installer.registry import manual_jarvis_skills as native
+        watched_paths = {
+            core.JOURNAL,
+            core.UNIT,
+            core.LAUNCHER,
+            core.RESOURCES_RECORD,
+            core.RESOURCES_CAS / (inputs["old_artifact"] + ".zip"),
+            core.RESOURCES_CAS / (hashlib.sha256(inputs["old_base_archive"]).hexdigest() + ".zip"),
+            core.HERMES_HOME / "skills" / native._GENERATION / native._OWNER_FILE,
+            core.ADAPTER_UPDATE_BACKUPS / "cohort.lock",
+            core.RESOURCES_SKILL_OVERLAYS / "lock",
+        }
+        if inputs["overlay_raw"] is not None:
+            watched_paths.add(core.RESOURCES_SKILL_OVERLAYS / "active.json")
+            watched_paths.update(
+                core.RESOURCES_SKILL_OVERLAYS / (hashlib.sha256(data).hexdigest() + ".bin")
+                for data in inputs["overlay_contents"].values())
+        if inputs["snapshots"]["primary_record"]:
+            watched_paths.add(core.PRIMARY_PROMPT_JOURNAL)
+        bytes_before = {path: path.read_bytes() for path in watched_paths}
         manifest, files, ownership_sha = _verify_adapter_a0_migration_proof(inputs)
         assert manifest == inputs["old_manifest"]
         assert files == inputs["old_files"]
         assert re.fullmatch(r"[0-9a-f]{64}", ownership_sha)
 
-    assert calls == calls_before
-    assert enabled["value"]
+    # The active runtime reader performs two fixed FragmentPath queries. No
+    # service mutation, enablement change, or protected-byte change is allowed.
+    fragment_query = ("systemctl", "show", "--property=FragmentPath", "--value", core.SERVICE)
+    new_calls = calls[len(calls_before):]
+    assert len(new_calls) == 2
+    assert [call[0] for call in new_calls] == [fragment_query, fragment_query]
+    assert all(call[1] is unit_present_before for call in new_calls)
+    assert enabled["value"] is enabled_before
+    assert {path: path.read_bytes() for path in watched_paths} == bytes_before
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update proof requires the real root actor")
