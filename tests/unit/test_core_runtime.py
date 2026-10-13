@@ -2206,8 +2206,43 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
             raise
 
     monkeypatch.setattr(core, "_root_runuser_proc_snapshot", observe_runuser_proc_snapshot)
-    with _bounded_cohort_exception_sites() as importer_outcomes:
-        result = core.update_owned_core_adapter()
+    original_initial_primary_current = core._initial_primary_current
+    initial_primary_early_guard_failures = []
+
+    def observe_initial_primary_current(custody, **kwargs):
+        def failed_early_checks(now):
+            failed = []
+            if type(custody) is not core.InitialPrimaryAdoptionCustody:
+                failed.append("custody_type")
+            elif custody._seal is not core._INITIAL_PRIMARY_ADOPTION_SEAL:
+                failed.append("custody_seal")
+            if os.geteuid() != core.ROOT_UID:
+                failed.append("root_actor")
+            if not core._ADAPTER_UPDATE_LOCK_HELD.get():
+                failed.append("update_lock")
+            if now >= getattr(custody, "expires_monotonic", float("inf")):
+                failed.append("custody_expiry")
+            if now >= getattr(custody, "deadline_monotonic", float("inf")):
+                failed.append("custody_deadline")
+            return tuple(failed)
+
+        before = failed_early_checks(core.time.monotonic())
+        result = original_initial_primary_current(custody, **kwargs)
+        after = failed_early_checks(core.time.monotonic())
+        if result is False:
+            initial_primary_early_guard_failures.append((before, after))
+            if len(initial_primary_early_guard_failures) > 12:
+                del initial_primary_early_guard_failures[0]
+        return result
+
+    monkeypatch.setattr(core, "_initial_primary_current", observe_initial_primary_current)
+    try:
+        with _bounded_cohort_exception_sites() as importer_outcomes:
+            result = core.update_owned_core_adapter()
+    except BaseException:
+        print("bounded initial-primary early custody predicate failures: " +
+              repr(initial_primary_early_guard_failures[-12:]))
+        raise
 
     updated = json.loads(core.JOURNAL.read_text())
     assert "updated to the verified adapter generation" in result
