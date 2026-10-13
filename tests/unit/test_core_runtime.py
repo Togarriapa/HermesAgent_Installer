@@ -161,7 +161,8 @@ def _bounded_cohort_exception_sites():
         kind = filename_kinds.get(frame.f_code.co_filename)
         if (event == "exception" and kind == "core_runtime.py"
                 and frame.f_code.co_name == "_hash_generation_tree"
-                and frame.f_lineno == 1468):
+                and type(arg[1]).__name__ == "CoreRuntimeError"
+                and str(arg[1]) == "owned Resources manifest differs from the pinned bundle"):
             values = frame.f_locals
             artifact = values.get("artifact_sha")
             expected_raw = values.get("expected_owner")
