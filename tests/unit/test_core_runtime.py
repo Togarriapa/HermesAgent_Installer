@@ -1968,7 +1968,7 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     def interrupt_after_starting_recipe(argv, check=True):
         if argv == ["systemctl", "start", core.SERVICE]:
             assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=True,
-                                   runner=guard_runner) == 0
+                                   runner=guard_runner, diagnostic=True) == 0
             raise KeyboardInterrupt()
         return real_run(argv, check)
     monkeypatch.setattr(core, "_run", interrupt_after_starting_recipe)
