@@ -819,9 +819,12 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
                 or record.get("resources_tree") != source.get("git_tree")):
             return {"resources_state": "stale"}
         overlay_record, overlay_contents, overlay_raw = core._resources_skill_overlay_read()
-        effective_archive, effective_sha = core._current_resources_overlay_artifact(
-            native.build_manual_jarvis_skills_artifact(), overlay_record,
-            overlay_contents, overlay_raw)
+        try:
+            effective_archive, effective_sha = core._current_resources_overlay_artifact(
+                native.build_manual_jarvis_skills_artifact(), overlay_record,
+                overlay_contents, overlay_raw)
+        except core.CoreRuntimeError:
+            return {"resources_state": "stale"}
         if effective_sha != record["artifact_sha256"] or effective_archive != archive:
             return {"resources_state": "stale"}
         return {"resources_state": "discovered", "artifact_sha256": record["artifact_sha256"],
@@ -1868,11 +1871,11 @@ def test_incoming_adapter_old_a0_proof_denies_tamper_before_effects(
             overlay_root.mkdir(mode=0o700, parents=True, exist_ok=True)
             changed_identity_path = overlay_root / "active.json"
             changed_identity_bytes = None
-            changed_identity_path.write_bytes(core._canonical_json({
+            core._atomic_replace(changed_identity_path, core._canonical_json({
                 "schema": 1,
                 "base_artifact_sha256": inputs["old_artifact"],
                 "skills": {},
-            }))
+            }), 0o600, core.ROOT_UID, core.ROOT_UID)
         with pytest.raises(core.CoreRuntimeError):
             _verify_adapter_a0_migration_proof(inputs)
         if changed_path is not None and changed_bytes is not None:
