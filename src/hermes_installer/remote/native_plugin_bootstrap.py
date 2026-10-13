@@ -21,6 +21,8 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
 
 
 PLUGIN_KEY = "hermes-installer-resources-delegation"
@@ -61,6 +63,374 @@ class NativePluginSelectionBackup:
     snapshot_json: bytes
     prior_selection_sha256: str
     migrated_selection_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class NativeResourcesPluginTransitionReceipt:
+    """Bounded observation of one Core-owned fixed plugin transition step.
+
+    The receipt is evidence for CoreRuntime's journal only. It is not a grant
+    and cannot be constructed through any public bootstrap operation.
+    """
+
+    schema: int
+    operation: str
+    cohort_transaction_id: str | None
+    old_adapter_generation: str
+    new_adapter_generation: str
+    plugin_selection_sha256: str
+    old_member_sha256: Mapping[str, str]
+    new_member_sha256: Mapping[str, str]
+    installed_member_sha256: Mapping[str, str]
+    installed_member_signatures: Mapping[str, tuple[int, ...]]
+    receipt_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class NativeResourcesPluginMemberSnapshot:
+    """Read-only fixed-path snapshot for CoreRuntime's pre-effect qualification."""
+
+    members: Mapping[str, bytes]
+    signatures: Mapping[str, tuple[int, ...]]
+
+
+_TRANSITION_HASH_RE = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
+
+
+def _transition_stat_signature(info: os.stat_result) -> tuple[int, ...]:
+    """Return the stable file identity tuple shared with CoreRuntime."""
+    return (int(info.st_dev), int(info.st_ino), int(stat.S_IMODE(info.st_mode)),
+            int(info.st_uid), int(info.st_gid), int(info.st_nlink), int(info.st_size),
+            int(info.st_mtime_ns), int(info.st_ctime_ns))
+
+
+def _read_transition_member(directory_fd: int, name: str) -> tuple[bytes, tuple[int, ...]]:
+    """Read one fixed member and prove the opened inode stayed named while read."""
+    if name not in PLUGIN_FILES:
+        raise NativePluginBootstrapUnavailable("transition member name is not fixed")
+    try:
+        fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_CLOEXEC", 0), dir_fd=directory_fd)
+    except OSError:
+        raise NativePluginBootstrapUnavailable("fixed plugin member is unavailable") from None
+    try:
+        before = os.fstat(fd)
+        signature = _transition_stat_signature(before)
+        named = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
+                or stat.S_IMODE(before.st_mode) != 0o444 or before.st_nlink != 1
+                or before.st_size < 1 or before.st_size > 64 * 1024
+                or (before.st_dev, before.st_ino) != (named.st_dev, named.st_ino)
+                or stat.S_ISLNK(named.st_mode)):
+            raise NativePluginBootstrapUnavailable("fixed plugin member custody changed")
+        chunks = bytearray()
+        while len(chunks) < before.st_size:
+            block = os.read(fd, min(8192, before.st_size - len(chunks)))
+            if not block:
+                raise NativePluginBootstrapUnavailable("fixed plugin member changed while read")
+            chunks.extend(block)
+        if os.read(fd, 1):
+            raise NativePluginBootstrapUnavailable("fixed plugin member changed while read")
+        after = os.fstat(fd)
+        named_after = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if (_transition_stat_signature(after) != signature
+                or (named_after.st_dev, named_after.st_ino) != (before.st_dev, before.st_ino)
+                or stat.S_ISLNK(named_after.st_mode)):
+            raise NativePluginBootstrapUnavailable("fixed plugin member changed while read")
+        return bytes(chunks), signature
+    except NativePluginBootstrapUnavailable:
+        raise
+    except OSError:
+        raise NativePluginBootstrapUnavailable("fixed plugin member changed while read") from None
+    finally:
+        os.close(fd)
+
+
+def _transition_context(operation: str):
+    """Read only the exact CoreRuntime-owned, lock-scoped transition context."""
+    if os.name != "posix" or os.geteuid() != 0:
+        raise NativePluginBootstrapUnavailable("native plugin transition requires root custody")
+    try:
+        from hermes_installer import core_runtime
+        context_type = core_runtime._NativeResourcesPluginTransitionContext
+        context = core_runtime._current_native_resources_plugin_transition()
+    except (AttributeError, ImportError, RuntimeError):
+        raise NativePluginBootstrapUnavailable("Core plugin transition context is unavailable") from None
+    if type(context) is not context_type or context.operation != operation:
+        raise NativePluginBootstrapUnavailable("Core plugin transition scope is not current")
+    names = set(PLUGIN_FILES)
+    try:
+        if (type(context.old_members) is not MappingProxyType
+                or type(context.new_members) is not MappingProxyType
+                or set(context.old_members) != names or set(context.new_members) != names
+                or type(context.installed_member_signatures) is not MappingProxyType
+                or set(context.installed_member_signatures) != names):
+            raise ValueError
+        old_members = dict(context.old_members)
+        new_members = dict(context.new_members)
+        signatures = dict(context.installed_member_signatures)
+        for members in (old_members, new_members):
+            if any(type(value) is not bytes or not 1 <= len(value) <= 64 * 1024
+                   for value in members.values()):
+                raise ValueError
+        if (old_members["plugin.yaml"] != new_members["plugin.yaml"]
+                or old_members["__init__.py"] == new_members["__init__.py"]):
+            raise ValueError
+        for value in signatures.values():
+            if (type(value) is not tuple or len(value) != 9
+                    or any(type(part) is not int or part < 0 for part in value)):
+                raise ValueError
+        if (type(context.old_adapter_generation) is not str or not context.old_adapter_generation
+                or len(context.old_adapter_generation) > 256
+                or type(context.new_adapter_generation) is not str or not context.new_adapter_generation
+                or len(context.new_adapter_generation) > 256
+                or type(context.plugin_selection_sha256) is not str
+                or _TRANSITION_HASH_RE.fullmatch(context.plugin_selection_sha256) is None):
+            raise ValueError
+        if operation == "prepare":
+            if (context.cohort_transaction_id is not None or context.transition_row is not None
+                    or context.backup_reference is not None or context.phase is not None):
+                raise ValueError
+        else:
+            if (type(context.cohort_transaction_id) is not str
+                    or not context.cohort_transaction_id or len(context.cohort_transaction_id) > 128
+                    or context.transition_row is None or context.backup_reference is None
+                    or type(context.phase) is not str or not context.phase):
+                raise ValueError
+    except (AttributeError, TypeError, ValueError):
+        raise NativePluginBootstrapUnavailable("Core plugin transition context is malformed") from None
+    return context, old_members, new_members, signatures
+
+
+def _validate_transition_directory_names(directory_fd: int,
+                                        allowed_temporaries: tuple[str, ...] = ()) -> None:
+    allowed = set(PLUGIN_FILES) | set(allowed_temporaries)
+    if (len(allowed) != len(PLUGIN_FILES) + len(allowed_temporaries)
+            or set(os.listdir(directory_fd)) != allowed):
+        raise NativePluginBootstrapUnavailable("fixed plugin directory contains unrelated files")
+
+
+def _transition_plugin_directory_fd() -> int:
+    """Open the existing fixed root-owned plugin directory without creating it."""
+    try:
+        account = pwd.getpwnam("admin")
+        if (Path(account.pw_dir) != Path("/home/admin") or account.pw_uid != 1000
+                or account.pw_gid != 1000):
+            raise NativePluginBootstrapUnavailable("fixed Hermes account identity changed")
+        root_fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                          | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            home_fd = _open_child_directory(root_fd, "home", uid=0, gid=0, create=False)
+        finally:
+            os.close(root_fd)
+        try:
+            admin_fd = _open_child_directory(home_fd, "admin", uid=account.pw_uid,
+                                              gid=account.pw_gid,
+                                              create=False)
+        finally:
+            os.close(home_fd)
+        try:
+            hermes_fd = _open_child_directory(admin_fd, ".hermes", uid=account.pw_uid,
+                                              gid=account.pw_gid,
+                                              create=False, exact_mode=0o700)
+        finally:
+            os.close(admin_fd)
+        try:
+            plugins_fd = _open_child_directory(hermes_fd, "plugins", uid=account.pw_uid,
+                                                gid=account.pw_gid,
+                                                create=False)
+        finally:
+            os.close(hermes_fd)
+        try:
+            plugin_fd = _open_child_directory(plugins_fd, PLUGIN_KEY, uid=0, gid=0,
+                                              create=False, exact_mode=0o555)
+        finally:
+            os.close(plugins_fd)
+        try:
+            _validate_transition_directory_names(plugin_fd)
+        except BaseException:
+            os.close(plugin_fd)
+            raise
+        return plugin_fd
+    except NativePluginBootstrapUnavailable:
+        raise
+    except OSError:
+        raise NativePluginBootstrapUnavailable("fixed plugin path is not safely available") from None
+
+
+def read_installed_native_resources_plugin_members() -> NativeResourcesPluginMemberSnapshot:
+    """Read the installed fixed pair for a root-locked CoreRuntime qualification."""
+    if os.name != "posix" or os.geteuid() != 0:
+        raise NativePluginBootstrapUnavailable("plugin snapshot requires root custody")
+    directory_fd = _transition_plugin_directory_fd()
+    try:
+        members, signatures = _transition_observe(directory_fd)
+        return NativeResourcesPluginMemberSnapshot(
+            members=MappingProxyType(members),
+            signatures=MappingProxyType(signatures),
+        )
+    finally:
+        os.close(directory_fd)
+
+
+def _transition_member_sha256(members: Mapping[str, bytes]) -> dict[str, str]:
+    if set(members) != set(PLUGIN_FILES):
+        raise NativePluginBootstrapUnavailable("transition member set differs")
+    return {name: hashlib.sha256(members[name]).hexdigest() for name in PLUGIN_FILES}
+
+
+def _transition_receipt(context, operation: str, old_members: Mapping[str, bytes],
+                         new_members: Mapping[str, bytes], installed: Mapping[str, bytes],
+                         signatures: Mapping[str, tuple[int, ...]]) -> NativeResourcesPluginTransitionReceipt:
+    old_hashes = _transition_member_sha256(old_members)
+    new_hashes = _transition_member_sha256(new_members)
+    installed_hashes = _transition_member_sha256(installed)
+    stable_signatures = {name: tuple(signatures[name]) for name in PLUGIN_FILES}
+    metadata = {
+        "schema": 1,
+        "operation": operation,
+        "cohort_transaction_id": context.cohort_transaction_id,
+        "old_adapter_generation": context.old_adapter_generation,
+        "new_adapter_generation": context.new_adapter_generation,
+        "plugin_selection_sha256": context.plugin_selection_sha256,
+        "old_member_sha256": old_hashes,
+        "new_member_sha256": new_hashes,
+        "installed_member_sha256": installed_hashes,
+        "installed_member_signatures": {name: list(stable_signatures[name]) for name in PLUGIN_FILES},
+    }
+    digest = hashlib.sha256(json.dumps(metadata, sort_keys=True, separators=(",", ":"),
+                                       ensure_ascii=True).encode("ascii")).hexdigest()
+    return NativeResourcesPluginTransitionReceipt(
+        schema=1, operation=operation, cohort_transaction_id=context.cohort_transaction_id,
+        old_adapter_generation=context.old_adapter_generation,
+        new_adapter_generation=context.new_adapter_generation,
+        plugin_selection_sha256=context.plugin_selection_sha256,
+        old_member_sha256=MappingProxyType(old_hashes),
+        new_member_sha256=MappingProxyType(new_hashes),
+        installed_member_sha256=MappingProxyType(installed_hashes),
+        installed_member_signatures=MappingProxyType(stable_signatures),
+        receipt_sha256=digest,
+    )
+
+
+def _replace_transition_member(directory_fd: int, name: str, data: bytes,
+                               expected_bytes: bytes, expected_signature: tuple[int, ...]) -> tuple[bytes, tuple[int, ...]]:
+    """CAS one fixed member, then durably replace it with root:root0444 bytes."""
+    current, signature = _read_transition_member(directory_fd, name)
+    if current != expected_bytes or signature != expected_signature:
+        raise NativePluginBootstrapUnavailable("plugin transition member CAS changed")
+    temporary = f".{name}.{secrets.token_hex(12)}.transition"
+    flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+             | getattr(os, "O_CLOEXEC", 0))
+    fd = os.open(temporary, flags, 0o600, dir_fd=directory_fd)
+    try:
+        os.fchown(fd, 0, 0)
+        view = memoryview(data)
+        while view:
+            count = os.write(fd, view)
+            if count <= 0:
+                raise OSError("short write replacing native plugin member")
+            view = view[count:]
+        os.fchmod(fd, 0o444)
+        os.fsync(fd)
+    except BaseException:
+        os.close(fd)
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except OSError:
+            pass
+        raise
+    os.close(fd)
+    try:
+        before_replace, before_signature = _read_transition_member(directory_fd, name)
+        if before_replace != expected_bytes or before_signature != expected_signature:
+            raise NativePluginBootstrapUnavailable("plugin transition member CAS changed")
+    except BaseException:
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except OSError:
+            pass
+        raise
+    try:
+        os.replace(temporary, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        os.fsync(directory_fd)
+    except BaseException:
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except OSError:
+            pass
+        raise
+    return _read_transition_member(directory_fd, name)
+
+
+def _transition_observe(directory_fd: int) -> tuple[dict[str, bytes], dict[str, tuple[int, ...]]]:
+    members: dict[str, bytes] = {}
+    signatures: dict[str, tuple[int, ...]] = {}
+    for name in PLUGIN_FILES:
+        members[name], signatures[name] = _read_transition_member(directory_fd, name)
+    return members, signatures
+
+
+def prepare_native_resources_plugin_transition() -> NativeResourcesPluginTransitionReceipt:
+    """Verify the old installed pair and report hashes without changing files."""
+    context, old_members, new_members, expected_signatures = _transition_context("prepare")
+    directory_fd = _transition_plugin_directory_fd()
+    try:
+        installed, signatures = _transition_observe(directory_fd)
+        if installed != old_members or signatures != expected_signatures:
+            raise NativePluginBootstrapUnavailable("installed plugin does not match the captured old bundle")
+        return _transition_receipt(context, "prepare", old_members, new_members,
+                                   installed, signatures)
+    finally:
+        os.close(directory_fd)
+
+
+def install_native_resources_plugin_transition() -> NativeResourcesPluginTransitionReceipt:
+    """Replace only the two stopped-Core plugin members after an exact old-pair CAS."""
+    context, old_members, new_members, expected_signatures = _transition_context("install")
+    directory_fd = _transition_plugin_directory_fd()
+    try:
+        installed, signatures = _transition_observe(directory_fd)
+        if installed != old_members or signatures != expected_signatures:
+            raise NativePluginBootstrapUnavailable("installed plugin changed before transition")
+        # The old/new manifest is commonly byte-identical; retain its inode
+        # and replace only members that actually differ in the reviewed bundle.
+        for name in PLUGIN_FILES:
+            if new_members[name] != old_members[name]:
+                _replace_transition_member(directory_fd, name, new_members[name],
+                                           old_members[name], expected_signatures[name])
+        installed, signatures = _transition_observe(directory_fd)
+        if installed != new_members:
+            raise NativePluginBootstrapUnavailable("incoming plugin pair failed readback")
+        return _transition_receipt(context, "install", old_members, new_members,
+                                   installed, signatures)
+    finally:
+        os.close(directory_fd)
+
+
+def restore_native_resources_plugin_transition() -> NativeResourcesPluginTransitionReceipt:
+    """Restore backed-up old bytes from only an exact old/new per-member mixture."""
+    context, old_members, new_members, expected_signatures = _transition_context("restore")
+    directory_fd = _transition_plugin_directory_fd()
+    try:
+        installed, signatures = _transition_observe(directory_fd)
+        for name in PLUGIN_FILES:
+            if installed[name] not in (old_members[name], new_members[name]):
+                raise NativePluginBootstrapUnavailable("installed plugin member is outside transition closure")
+            if signatures[name] != expected_signatures[name]:
+                raise NativePluginBootstrapUnavailable("installed plugin member custody changed")
+        for name in PLUGIN_FILES:
+            if installed[name] == new_members[name]:
+                if installed[name] != old_members[name]:
+                    installed[name], signatures[name] = _replace_transition_member(
+                        directory_fd, name, old_members[name], installed[name], signatures[name])
+        installed, signatures = _transition_observe(directory_fd)
+        if installed != old_members:
+            raise NativePluginBootstrapUnavailable("old plugin pair failed restore readback")
+        return _transition_receipt(context, "restore", old_members, new_members,
+                                   installed, signatures)
+    finally:
+        os.close(directory_fd)
 
 
 def _fixed_bundle_bytes() -> dict[str, bytes]:
@@ -741,6 +1111,10 @@ def restore_native_resources_plugin_selection(snapshot_json: bytes, *,
 __all__ = [
     "NativePluginBootstrapUnavailable", "NativePluginSelectionReceipt", "PLUGIN_KEY",
     "StagedNativeResourcesPlugin", "stage_native_resources_plugin",
+    "NativeResourcesPluginMemberSnapshot", "NativeResourcesPluginTransitionReceipt",
+    "read_installed_native_resources_plugin_members",
+    "prepare_native_resources_plugin_transition", "install_native_resources_plugin_transition",
+    "restore_native_resources_plugin_transition",
     "NativePluginSelectionBackup", "enable_native_resources_plugin",
     "verify_native_resources_plugin_selection", "capture_native_resources_plugin_selection",
     "restore_native_resources_plugin_selection",
