@@ -304,3 +304,10 @@ Issue#21 prepared802/e02 source review is blocked on one-use multi-call/pre-stat
 - [ ] Sol reviews Core/hash and separate literal pin; Root qualifies exact source before one actual observed apply/readback or strict rollback. Source-level parser proof, historical fixture effects and actual acceptance remain separate; all original scope stays OPEN.
 
 All four encoding-correction checkboxes above are bounded leaves of existing R0055/R0201, RT-T266.3 and VD-T266.5 (#35), preserving219/62/18/eight groups and all prior obligations.
+
+### Existing R0201/#35 measured systemd credential projection
+
+- [ ] Root Pi strict-validates all four artifacts and independently confirms the dummy projection's exact read-only admin ACL; retain159 starting `backup_ok` denial and restored old0cb/all-four-active evidence separately. No new apply or custody waiver.
+- [ ] Existing Luna native owner adds only the explicit fresh-cohort Root0:0/0440/exact-five-entry ACL projection mode and fourth finite unit variant. Both plugin flags use it; historical/default generator bytes and semantics, double-hash selection, source backup custody/content joins and saved recovery history remain unchanged.
+- [ ] Pi contracts model real credential projection and execute actual manager-decoded allow/deny effects, exact ACL/type/link/mode/ownership and original manifest/hash/generation/empty-member denials, privacy/fidelity and all four known recipe admission/forgery cases. Retain meaningful genuine update/restart/prior-restoration checks and original deadlines.
+- [ ] Sol reviews source/hash and separate literal Core pin; Root qualifies exact candidate before one observed actual apply/readback or strict rollback. Projection evidence, historical fixture evidence and live acceptance stay separate; all scope remains OPEN.

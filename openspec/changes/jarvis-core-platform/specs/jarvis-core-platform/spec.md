@@ -2687,3 +2687,18 @@ The installer SHALL encode fresh new-cohort guard commands so installed systemd 
 - **AND** meaningful parser/fidelity/privacy/CAS and update/recovery Pi qualification plus reviewed Core pin precede an actual attempt. Candidate156 parser failure is source-level proof; historical attempt attribution and all unaccepted capabilities remain distinct.
 
 These scenarios refine existing R0055/R0201 and RT-T266.3/VD-T266.5 (#35); all original219 requirements,62 components,18 acceptance criteria and eight OPEN groups remain preserved.
+
+### Requirement: Fresh cohorts verify the actual read-only credential projection
+The installer SHALL admit projected backup credentials only through an explicit exact fresh-cohort recipe requiring Root ownership and a closed read-only admin ACL, preserving source custody, content joins and historical recipes.
+
+#### Scenario: Installed systemd supplies the measured projection
+- **WHEN** a fresh plugin or non-plugin cohort uses the new explicit projection recipe
+- **THEN** every projected backup manifest/member is regular, single-link, Root0:0, mode0440 and nonwritable, with POSIX ACL version2 containing exactly owner-read, user1000-read, group-object-none, mask-read and other-none entries.
+- **AND** missing/malformed ACL, extra entries/principals, write/execute permission, admin ownership or another mode denies. Stable no-follow identity and all original bounded size, hash, canonical manifest, exact-member, generation/path and optional-empty checks remain mandatory; protected source backups retain original custody unchanged.
+
+#### Scenario: New projection semantics cannot rewrite a historical recipe
+- **WHEN** the new projection mode adds a fourth finite cohort unit variant
+- **THEN** it requires cohort gate, diagnostics and whole encoding, and admission matches both exact protected unit and source-recipe hashes. Ordinary/default, legacy, inline-diagnostic and159 encoded recipes keep their original bytes and semantics; prior backup/history restoration remains exact and foreign or modified recipes deny.
+- **AND** meaningful Pi evidence proves actual dummy projection ACL, installed-manager argument fidelity and private success/denial effects for both plugin flags, followed by genuine update/recovery qualification and reviewed Core pin before one observed actual adoption. Source-only review or fixture custody does not establish deployment acceptance.
+
+This projection clarification remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and every original obligation.
