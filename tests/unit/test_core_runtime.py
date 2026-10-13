@@ -312,6 +312,87 @@ def _bounded_cohort_exception_sites():
         sys.settrace(previous)
 
 
+@contextlib.contextmanager
+def _bounded_owner_generation_restore_failure():
+    """Capture fixed metadata only when the protected owner restore rejects."""
+    previous = sys.gettrace()
+    code = core._restore_adapter_update_owner_generation.__code__
+    observed = []
+    refusal_codes = {
+        b"manual Jarvis skill stage refused: helper-only transition requires the fixed root runuser and inherited root pipe\n": "origin_refused",
+        b"manual Jarvis skill stage refused: restore pair is not the exact reviewed helper-only transition\n": "transition_pair_refused",
+        b"manual Jarvis skill stage refused: restore home is not the fixed Jarvis home\n": "home_path_refused",
+        b"manual Jarvis skill stage refused: restore home custody differs\n": "home_custody_refused",
+        b"manual Jarvis skill stage refused: restore backup identity is invalid\n": "backup_name_refused",
+        b"manual Jarvis skill stage refused: existing skill generation root permissions differ\n": "generation_root_permissions_refused",
+        b"manual Jarvis skill stage refused: existing skill generation is unowned or its ownership journal changed\n": "generation_journal_refused",
+        b"manual Jarvis skill stage refused: existing generation directory permissions differ\n": "generation_permissions_refused",
+        b"manual Jarvis skill stage refused: owned Resources generation contains missing or untracked files\n": "generation_inventory_refused",
+        b"manual Jarvis skill stage refused: owned Resources generation member changed\n": "generation_member_refused",
+    }
+
+    def trace(frame, event, arg):
+        if event == "call":
+            return trace if frame.f_code is code else None
+        if (event == "exception" and frame.f_code is code
+                and type(arg[1]).__name__ == "CoreRuntimeError"
+                and str(arg[1]) == "owner generation rollback operation failed"):
+            values = frame.f_locals
+            process = values.get("process")
+            stdout = values.get("stdout")
+            stderr = values.get("stderr")
+            writer = values.get("writer")
+            errors = values.get("write_error")
+            old_sha = values.get("old_sha")
+            new_sha = values.get("new_sha")
+            target = values.get("target")
+            name = values.get("name")
+            receipt = None
+            if type(stdout) is bytes and len(stdout) <= 8192:
+                try:
+                    parsed = json.loads(stdout)
+                except (ValueError, TypeError):
+                    parsed = None
+                expected = {"state", "artifact_sha256", "generation_path",
+                            "retained_generation_backup", "retained_artifact_sha256"}
+                if type(parsed) is dict:
+                    receipt = {
+                        "keys_exact": set(parsed) == expected,
+                        "restored": parsed.get("state") == "restored",
+                        "prior_artifact": parsed.get("artifact_sha256") == old_sha,
+                        "target_path": parsed.get("generation_path") == str(target),
+                        "new_artifact_retained": parsed.get("retained_artifact_sha256") == new_sha,
+                        "backup_path": parsed.get("retained_generation_backup") == str(HERMES_HOME / name),
+                    }
+            observed.append({
+                "process_present": process is not None,
+                "returncode": process.returncode if process is not None else None,
+                "stdout_bytes": len(stdout) if type(stdout) is bytes else None,
+                "stderr_bytes": len(stderr) if type(stderr) is bytes else None,
+                "stdout_within_bound": type(stdout) is bytes and len(stdout) <= 8192,
+                "stderr_within_bound": type(stderr) is bytes and len(stderr) <= 8192,
+                "dispatch_revalidated": True,
+                "writer_alive": writer.is_alive() if writer is not None else None,
+                "write_error_present": bool(errors),
+                "write_error_type": type(errors[0]).__name__ if errors else None,
+                "stderr_refusal": refusal_codes.get(stderr, "unclassified")
+                    if type(stderr) is bytes else "unavailable",
+                "receipt": receipt,
+            })
+        return trace
+
+    sys.settrace(trace)
+    try:
+        yield
+    except BaseException:
+        sys.settrace(previous)
+        if observed:
+            print("bounded owner-generation restore failure metadata: " + repr(observed[-1]))
+        raise
+    finally:
+        sys.settrace(previous)
+
+
 def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None,
                     runner=None, diagnostic=False, service_sources=None):
     """Run the untouched generated guard as admin in a private mount view."""
@@ -2468,7 +2549,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
     monkeypatch.setattr(core, "_wait_for_listener", fail_first_restart)
     update_call_start = len(_calls)
 
-    with _bounded_cohort_exception_sites():
+    with _bounded_owner_generation_restore_failure():
         with pytest.raises(core.CoreRuntimeError, match="injected adapter update restart failure"):
             core.update_owned_core_adapter()
 
