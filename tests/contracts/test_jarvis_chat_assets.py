@@ -146,11 +146,15 @@ class JarvisChatAssetTests(unittest.TestCase):
                 self.assertEqual(primary_nav.count(f'data-view="{destination}"'), 1)
         self.assertEqual(primary_nav.count('<button type="button" class="nav-item'),
                          len(expected_destinations))
-        self.assertEqual(primary_nav.count('class="nav-group'), 3)
-        for group in ("work", "resources", "system"):
-            self.assertIn(f'data-nav-group="{group}"', primary_nav)
-        resources_menu = primary_nav.split('data-nav-group="resources"', 1)[1].split("</details>", 1)[0]
-        system_menu = primary_nav.split('data-nav-group="system"', 1)[1].split("</details>", 1)[0]
+        self.assertEqual(primary_nav.count('class="nav-group'), 1)
+        self.assertIn('class="nav-group manage-group" data-nav-group="manage"', primary_nav)
+        self.assertIn('<summary aria-expanded="false">Manage</summary>', primary_nav)
+        self.assertLess(primary_nav.index('id="manage-work-heading"'), primary_nav.index('id="manage-resources-heading"'))
+        self.assertLess(primary_nav.index('id="manage-resources-heading"'), primary_nav.index('id="manage-system-heading"'))
+        work_menu = primary_nav.split('aria-labelledby="manage-work-heading"', 1)[1].split("</section>", 1)[0]
+        resources_menu = primary_nav.split('aria-labelledby="manage-resources-heading"', 1)[1].split("</section>", 1)[0]
+        system_menu = primary_nav.split('aria-labelledby="manage-system-heading"', 1)[1].split("</section>", 1)[0]
+        self.assertIn('data-view="missions"', work_menu)
         self.assertIn('data-view="capabilities"', resources_menu)
         self.assertIn('data-view="settings"', system_menu)
         self.assertEqual(system_menu.count('data-view="calendar"'), 1)
@@ -173,11 +177,11 @@ class JarvisChatAssetTests(unittest.TestCase):
             with self.subTest(destination=destination):
                 self.assertIn(f'data-view="{destination}"', primary_nav)
                 self.assertIn(label, primary_nav)
-        resources_menu = primary_nav.split('data-nav-group="resources"', 1)[1].split("</details>", 1)[0]
+        resources_menu = primary_nav.split('aria-labelledby="manage-resources-heading"', 1)[1].split("</section>", 1)[0]
         self.assertEqual(resources_menu.count('data-view="second-brain"'), 1)
         self.assertEqual(resources_menu.count(">Second brain</button>"), 1)
         for label in ("Work", "Resources", "System"):
-            self.assertIn(f"<summary aria-expanded=\"false\">{label}</summary>", primary_nav)
+            self.assertIn(f">{label}</h2>", primary_nav)
         self.assertIn('id="voice-entry" type="button" aria-label="Open voice controls"', source)
 
 
@@ -215,10 +219,16 @@ class JarvisChatAssetTests(unittest.TestCase):
         _content_type, app_script = reviewed_chat_asset("/chat/assets/app.js")
         client = app_script.decode("utf-8")
 
-        self.assertEqual(primary_nav.count('class="nav-group'), 3)
-        self.assertIn('data-nav-group="work"', primary_nav)
-        self.assertIn('data-nav-group="resources"', primary_nav)
-        self.assertIn('data-nav-group="system"', primary_nav)
+        self.assertEqual(primary_nav.count('class="nav-group'), 1)
+        self.assertIn('data-nav-group="manage"', primary_nav)
+        self.assertIn('id="manage-work-heading"', primary_nav)
+        self.assertIn('id="manage-resources-heading"', primary_nav)
+        self.assertIn('id="manage-system-heading"', primary_nav)
+        self.assertIn('event.key !== "Escape"', client)
+        self.assertIn('summary.focus();', client)
+        self.assertIn('if (!manageMenu?.open || manageMenu.contains(event.target)) return;', client)
+        self.assertIn('const restoreFocus = manageMenu.contains(document.activeElement);', client)
+        self.assertIn('if (restoreFocus) manageMenu.querySelector("summary")?.focus();', client)
         self.assertIn('byId("voice-entry").addEventListener("click", () => { void openVoiceControls(); });', client)
 
         _registry_type, registry = reviewed_chat_asset("/chat/assets/features.js")
@@ -235,6 +245,7 @@ class JarvisChatAssetTests(unittest.TestCase):
                       for path in ("/chat/assets/app.css", *FEATURE_CSS_CHUNK_PATHS)]
         css = "\n".join(css_assets)
         self.assertIn('.primary-nav>.nav-item,.primary-nav>.nav-group{flex:1 1 0;min-width:0}', css)
+        self.assertIn('grid-template-columns:repeat(3,minmax(0,1fr))', css)
         overview_features = [feature for feature in FEATURE_ASSETS if feature.feature_id == "overview"]
         self.assertEqual(len(overview_features), 1)
         overview = overview_features[0]
@@ -372,7 +383,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("conversations.filter((entry)", history)
         self.assertIn("loadConversation(entry.id)", history)
         self.assertIn('ui.sessionCount.textContent', history)
-        self.assertIn('ui.speechStop.hidden = !synthesisSupported', client)
+        self.assertIn('ui.speechStop.hidden = true', client)
         self.assertIn('ui.speechStop.disabled = true', client)
         self.assertIn('ui.speechStop.disabled = false', client)
 
@@ -450,19 +461,42 @@ class JarvisChatAssetTests(unittest.TestCase):
         reconcile = "async function reconcileCompletedTurn(" + client.split(
             "async function reconcileCompletedTurn(", 1)[1].split(
                 "\n  function startHeartbeat(", 1)[0]
+        speak = "function speakCompletedReply(text) {" + client.split(
+            "function speakCompletedReply(text) {", 1)[1].split(
+                "\n  function readLatestReplyAloud()", 1)[0]
         harness = r'''const assert = require("node:assert/strict");
 const API = "/chat/api";
 let request, activeTurnId = "old-success", conversationId = "conversation";
-let heartbeatNonce = "unchanged", closed = 0, errors = 0, connections = [], recoveredSpeech = [];
+let heartbeatNonce = "unchanged", closed = 0, errors = 0, connections = [], completedReply = null;
+let readAloudEnabled = false, speechUtterance = null;
+const utterances = [];
+class FakeUtterance { constructor(text) { this.text = text; } }
+const ui = {speechStop:{hidden:true, disabled:true}};
+const uiPreferences = {voiceURI:""};
+const window = {SpeechSynthesisUtterance:FakeUtterance, speechSynthesis:{
+  cancel(){}, getVoices(){return [];}, speak(utterance){utterances.push(utterance);}
+}};
+const synthesisSupported = true;
+function byId(id) {
+  if (id === "speech-output") return {checked:readAloudEnabled};
+  if (id === "speech-rate") return {value:"1"};
+  if (id === "speech-pitch") return {value:"1"};
+  throw new Error(`unexpected element ${id}`);
+}
 function closeStream() { closed += 1; activeTurnId = null; }
 function showError(message) { errors += 1; }
+function showVoiceStatus() {}
+function setAssistantState() {}
+function renderVoiceDock() {}
+function stopSpeech() { speechUtterance = null; ui.speechStop.hidden = true; ui.speechStop.disabled = true; }
 function setConnection(state, label) { connections.push([state, label]); }
-function speakCompletedReply(text) { recoveredSpeech.push(text); }
+function rememberCompletedReply(id, text) { completedReply = id && text ? {id, text} : null; }
 function refreshConversations() { return Promise.resolve(); }
 const assistantBody = {textContent: "partial reply"};
 const waiting = {removed: false, remove() { this.removed = true; }};
 RENEW
 RECONCILE
+SPEAK
 (async () => {
   let resolveOld;
   request = () => new Promise((resolve) => { resolveOld = resolve; });
@@ -508,16 +542,40 @@ RECONCILE
   assert.equal(waiting.removed, true);
   assert.equal(closed, 2);
   assert.deepEqual(connections.at(-1), ["ready", "Secure connection"]);
-  assert.deepEqual(recoveredSpeech, ["Jarvis"]);
+  assert.equal(utterances.length, 0, "the default-off preference keeps recovered replies silent");
+  assert.deepEqual(completedReply, {id:"conversation", text:"Jarvis"}, "the explicit dock action can use the recovered reply");
+
+  readAloudEnabled = true;
+  activeTurnId = "completed-turn-opted-in";
+  conversationId = "conversation";
+  assistantBody.textContent = "partial reply";
+  waiting.removed = false;
+  request = async () => ({messages: [
+    {role: "user", content: "say this when opted in"},
+    {role: "assistant", content: "Jarvis with consent"}
+  ]});
+  await reconcileCompletedTurn("completed-turn-opted-in", "conversation", "say this when opted in", assistantBody, waiting);
+  assert.deepEqual(utterances.map((utterance) => utterance.text), ["Jarvis with consent"],
+    "the saved opt-in reads a current completed reply after secure readback");
+  assert.equal(ui.speechStop.hidden, false, "Stop audio is shown during playback");
+  utterances[0].onend();
+  assert.equal(ui.speechStop.hidden, true, "Stop audio hides when playback ends");
+  const beforeStale = utterances.length;
+  activeTurnId = "stale-turn";
+  conversationId = "another-conversation";
+  await reconcileCompletedTurn("stale-turn", "conversation", "say this when opted in", assistantBody, waiting);
+  assert.equal(utterances.length, beforeStale, "a completion from another conversation never starts playback");
+  console.log("JARVIS_VOICE_TURN_LIFECYCLE_OK");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
-'''.replace("RENEW", renew).replace("RECONCILE", reconcile)
+'''.replace("RENEW", renew).replace("RECONCILE", reconcile).replace("SPEAK", speak)
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "heartbeat-harness.js"
             path.write_text(harness, encoding="utf-8")
             result = subprocess.run(
-                ["node", str(path)], capture_output=True, text=True, check=False,
+                ["node", str(path)], capture_output=True, text=True, check=False, timeout=10,
             )
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("JARVIS_VOICE_TURN_LIFECYCLE_OK", result.stdout)
 
     def test_sse_retries_transient_disconnect_and_recovers_saved_completion(self):
         _content_type, script = reviewed_client_bundle()
@@ -640,6 +698,7 @@ function currentTurnChoice() {
 function clearError() {}
 function stopRecognition() {}
 function stopSpeech() {}
+function rememberCompletedReply() {}
 function setAssistantState() {}
 function appendMessage() { return assistantBody; }
 function renderTurnModelControls() {}
@@ -810,7 +869,9 @@ FEATURE_API
         self.assertIn("window.SpeechRecognition || window.webkitSpeechRecognition", source)
         self.assertIn("current.interimResults = false", source)
         self.assertIn("Transcript added to your message. Review it before sending.", source)
-        self.assertIn("speakCompletedReply(finalText)", source)
+        self.assertIn("speakCompletedReply(lastCompletedReply.text)", source)
+        self.assertIn("speakCompletedReply(finalText)", source, "the saved read-aloud opt-in is honored for current completed turns")
+        self.assertIn('Object.freeze({readAloud: false', source, "read-aloud defaults off")
         self.assertIn("utterance.onend", source)
         self.assertIn("stopRecognition(); stopSpeech();", source)
         self.assertGreaterEqual(source.count("if (recognition !== current) return;"), 3)
@@ -821,6 +882,81 @@ FEATURE_API
         self.assertIn('byId("voice-handsfree-send").checked && !existingDraft', source)
         self.assertIn("ui.form.requestSubmit()", source)
         self.assertIn("Foreground wake listening ended", source)
+
+    def test_voice_dock_is_composer_adjacent_and_read_aloud_is_explicit_and_conversation_bound(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        markup = page.decode("utf-8")
+        composer = markup.split('id="composer"', 1)[1].split("</form>", 1)[0]
+        self.assertIn('class="voice-dock" aria-labelledby="voice-dock-title"', composer)
+        self.assertIn('class="voice-dock-disclosure"', composer)
+        disclosure = composer.split('class="voice-dock-disclosure">', 1)[1].split("</p>", 1)[0]
+        self.assertIn("outside Jarvis", disclosure)
+        self.assertIn("You can type instead", disclosure)
+        self.assertIn("not sent until you submit", disclosure)
+        self.assertIn('id="voice-read-aloud" type="button" disabled', composer)
+        self.assertIn('id="speech-stop" type="button" aria-label="Stop reply audio" hidden disabled', composer)
+        self.assertIn("@media(max-width:390px){.voice-dock-opt-ins{grid-template-columns:1fr}", markup)
+
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        dock_start = client.index("  function renderVoiceDock() {")
+        dock_end = client.index("\n  function stopRecognition(", dock_start)
+        dock_source = client[dock_start:dock_end]
+        read_start = client.index("  function readLatestReplyAloud() {")
+        read_end = client.index("\n  function configureVoice()", read_start)
+        read_source = client[read_start:read_end]
+        harness = r'''const assert = require("node:assert/strict");
+const elements = new Map();
+function byId(id) {
+  if (!elements.has(id)) elements.set(id, {checked:false, disabled:false, textContent:"", focused:false, focus(){this.focused=true;}});
+  return elements.get(id);
+}
+const ui = {voiceRead:byId("voice-read-aloud"), voiceInput:byId("voice-input"),
+  voiceWake:byId("voice-wake-toggle"), connection:{dataset:{state:"ready"}}};
+let voiceSupported = true, synthesisSupported = true, activeTurnId = null, conversationId = "A";
+let lastCompletedReply = null, spoken = [];
+function pushToTalkEnabled() { return byId("speech-consent").checked; }
+function showVoiceStatus(message) { byId("voice-status").textContent = message; }
+function speakCompletedReply(text) { spoken.push(text); }
+DOCK
+READ
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, true, "read-aloud starts disabled before a completed reply and opt-in");
+rememberCompletedReply("A", "A completed answer");
+assert.equal(ui.voiceRead.disabled, true, "a reply alone does not enable audio without output opt-in");
+byId("speech-output").checked = true;
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, false);
+readLatestReplyAloud();
+assert.deepEqual(spoken, ["A completed answer"], "audio starts only after the explicit button action");
+conversationId = "B";
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, true, "the previous conversation reply cannot be read in B");
+readLatestReplyAloud();
+assert.deepEqual(spoken, ["A completed answer"], "stale reply is not spoken after a conversation switch");
+rememberCompletedReply("B", "B answer");
+activeTurnId = "turn-B";
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, true, "an active turn prevents read-aloud");
+readLatestReplyAloud();
+assert.deepEqual(spoken, ["A completed answer"], "active turn guard prevents playback");
+activeTurnId = null;
+byId("speech-output").checked = false;
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, true, "revoking output opt-in disables the action");
+byId("speech-output").checked = true;
+ui.connection.dataset.state = "error";
+renderVoiceDock();
+assert.equal(ui.voiceRead.disabled, true, "stale session access cannot start another read-aloud");
+assert.equal(ui.voiceInput.disabled, true, "voice capture is unavailable while secure access is down");
+'''.replace("DOCK", dock_source).replace("READ", read_source)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "voice-dock-read-aloud-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                ["node", str(path)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_chat_explains_voice_unavailability_in_the_composer(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
