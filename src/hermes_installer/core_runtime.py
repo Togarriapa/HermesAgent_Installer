@@ -3287,7 +3287,6 @@ def _initial_primary_rollback_current(custody):
   archive=_projection_file(RESOURCES_CAS/(custody.artifact_a1_sha256+".zip"),
    owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
   manifest,files,_helper=native._read_transition_archive(archive,custody.artifact_a1_sha256)
-  native._verify_owned_generation(generation,files,custody.artifact_a1_sha256)
   installed_raw=_projection_file(generation/native._OWNER_FILE,owner=1000,group=1000,
    mode=0o600,maximum=2*1024*1024)
   tree_sha=_hash_generation_tree(HERMES_HOME,manifest,files,custody.artifact_a1_sha256)
@@ -3393,7 +3392,7 @@ def _issue_initial_primary_rollback_custody(*,reference,prior,contents,cohort,co
   owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
  manifest,files,_helper=native._read_transition_archive(
   archive,cohort["new_artifact_sha256"])
- native._verify_owned_generation(generation,files,cohort["new_artifact_sha256"])
+ _hash_generation_tree(HERMES_HOME,manifest,files,cohort["new_artifact_sha256"])
  installed_raw=_projection_file(generation/native._OWNER_FILE,owner=1000,group=1000,
   mode=0o600,maximum=2*1024*1024)
  values=dict(schema=1,purpose="initial-primary-offline-rollback",
@@ -4560,11 +4559,12 @@ def _run_same_materialization_import(prepared,next_archive,old_archive,backup_na
        or set(result)!={"state","materialized","discovered","artifact_sha256",
         "generation_path","skills","profiles_preserved_internal","next_step",
         "previous_generation_backup","previous_artifact_sha256"}
-       or backup.parent!=generation.parent or backup==generation or backup.is_symlink()
+       or backup.parent!=HERMES_HOME or backup==generation or backup.is_symlink()
        or backup.name!=backup_name):
     raise ValueError
-   native._verify_owned_generation(generation,new_files,prepared.new_artifact_sha256)
-   native._verify_owned_generation(backup,old_files,prepared.old_artifact_sha256)
+   _hash_generation_tree(HERMES_HOME,new_manifest,new_files,prepared.new_artifact_sha256)
+   _hash_generation_tree(HERMES_HOME,old_manifest,old_files,prepared.old_artifact_sha256,
+                         target_path=backup)
   except (TypeError,ValueError,UnicodeDecodeError):
    raise CoreRuntimeError("helper-only importer result is malformed") from None
   return result
@@ -4747,11 +4747,11 @@ def _restore_adapter_update_owner_generation(cohort):
  new_manifest,new_files,_new_helper=native._read_transition_archive(new_archive,new_sha)
  target_ok=False
  try:
-  native._verify_owned_generation(target,old_files,old_sha); target_ok=True
- except Exception: pass
+  _hash_generation_tree(HERMES_HOME,old_manifest,old_files,old_sha); target_ok=True
+ except CoreRuntimeError: pass
  if target_ok:
   return
- native._verify_owned_generation(target,new_files,new_sha)
+ _hash_generation_tree(HERMES_HOME,new_manifest,new_files,new_sha)
  _verify_root_import_dispatch_source(cohort["new_adapter_generation"],
   cohort["new_core_source_generation"])
  name=cohort["owner_generation_backup_name"]
@@ -4811,7 +4811,7 @@ def _restore_adapter_update_owner_generation(cohort):
       or set(result)!={"state","artifact_sha256","generation_path",
        "retained_generation_backup","retained_artifact_sha256"}):
    raise CoreRuntimeError("owner generation rollback receipt does not bind the prior bytes")
-  native._verify_owned_generation(target,old_files,old_sha)
+  _hash_generation_tree(HERMES_HOME,old_manifest,old_files,old_sha)
   return result
  finally:
   if process is not None and process.poll() is None:
@@ -5101,7 +5101,7 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
   old_manifest,old_files,_old_helper=native._read_transition_archive(
    old_archive,cohort["old_artifact_sha256"])
   try:
-   native._verify_owned_generation(target,old_files,cohort["old_artifact_sha256"])
+   _hash_generation_tree(HERMES_HOME,old_manifest,old_files,cohort["old_artifact_sha256"])
   except CoreRuntimeError:
    _restore_adapter_update_owner_generation(cohort)
   _atomic_replace(RESOURCES_RECORD,contents["resources-record.json"],0o600,ROOT_UID,ROOT_UID)
@@ -5988,7 +5988,7 @@ def _update_owned_core_adapter_locked():
   installed_path=HERMES_HOME/"skills"/native._GENERATION
   new_installed_journal=_projection_file(installed_path/native._OWNER_FILE,owner=1000,
    group=1000,mode=0o600,maximum=2*1024*1024)
-  native._verify_owned_generation(installed_path,new_generation_files,new_artifact)
+  _hash_generation_tree(HERMES_HOME,new_manifest,new_generation_files,new_artifact)
   if import_result.get("artifact_sha256")!=new_artifact:
    raise CoreRuntimeError("native helper-only importer returned a different generation")
   with _guarded_old_read_scope(old_read,purpose="resources-readback"):

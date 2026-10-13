@@ -440,7 +440,7 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="act
     monkeypatch.setattr(core, "ADAPTER_MIGRATION_BACKUP",
                         core.JOURNAL.parent / "adapter-migration-backup")
     monkeypatch.setattr(core, "_core_source_generation", lambda: "c" * 64)
-    monkeypatch.setattr(core, "_identity", lambda: {
+    monkeypatch.setattr(core, "_identity", lambda **_kwargs: {
         "commit": core.COMMIT, "lock_sha256": core.LOCK_SHA256,
         "python_sha256": "a" * 64, "python_link": "pinned-link",
         "python_uid": 1000, "python_gid": 1000, "python_mode": 0o755,
@@ -818,6 +818,12 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
         core.RESOURCES_RECORD,
         (json.dumps(current_record, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"),
         0o600, core.ROOT_UID, core.ROOT_UID)
+    if os.geteuid() != account.pw_uid:
+        # The importer verifier is intentionally bound to its current admin
+        # process. Root must use Core's explicit UID-1000 descriptor verifier.
+        with pytest.raises(native.ManualJarvisSkillsError, match="not owned by this Hermes user"):
+            native._verify_owned_generation(home / "skills" / native._GENERATION,
+                                            files, old_sha)
     assert core._hash_generation_tree(home, manifest, files, old_sha)
     assert core.read_current_resources_discovery(
         core_source_generation=current_record["core_source_generation"]
