@@ -416,7 +416,7 @@ _MOUNT = r"""function mount(container, api, state) {
     const links = edges.filter(edge => positions.has(edge.fromNoteId) && positions.has(edge.toNoteId)
       && edge.fromNoteId !== edge.toNoteId);
     const spacing = Math.min(108, Math.max(48, 720 / Math.sqrt(Math.max(nodes.length, 1))));
-    for (let iteration = 0; iteration < 52; iteration++) {
+    for (let iteration = 0; iteration < 58; iteration++) {
       forces.clear();
       for (const node of nodes) forces.set(node.noteId, {x: 0, y: 0});
       for (let left = 0; left < nodes.length; left++) {
