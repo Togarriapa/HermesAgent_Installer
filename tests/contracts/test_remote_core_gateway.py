@@ -1366,7 +1366,7 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(all(response.status == 403 for response in responses),
                                     [response.status for response in responses])
                     messages = [await response.text() for response in responses]
-                    self.assertTrue(all("pending original-admin issue #21" in message
+                    self.assertTrue(all("Administrator access setup is pending" in message
                                         for message in messages))
                     overview.assert_not_called()
                     self.assertEqual(denied_provider.calls, [])
@@ -1422,7 +1422,7 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                                   side_effect=AssertionError("caller mismatch must deny before Core overview")):
                     response = await client.get("/chat/api/profiles", headers=headers)
                 self.assertEqual(response.status, 403)
-                self.assertIn("pending original-admin issue #21", await response.text())
+                self.assertIn("Administrator access setup is pending", await response.text())
                 self.assertEqual(mismatch_provider.calls, [])
             finally:
                 await client.close()
