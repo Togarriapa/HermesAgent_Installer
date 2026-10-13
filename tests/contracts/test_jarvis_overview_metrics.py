@@ -196,8 +196,11 @@ def test_overview_reactor_has_authored_static_iris_and_measured_flank_cards():
                   "reactor-core", "reactor-lens", "reactor-aperture"):
         assert layer in parser.classes
     assert ".reactor-segment{fill:none;stroke:" in css
-    iris_rule = css[css.index(".reactor-iris-blade{"):css.index(".reactor-core{")]
-    assert "stroke:" in iris_rule and "animation:" not in iris_rule
+    iris_rules = [rule for rule in css.split("}") if ".reactor-iris-blade" in rule]
+    assert iris_rules, "compiled Overview CSS must retain a selector for the authored iris"
+    iris_declarations = " ".join(rule.split("{", 1)[1] for rule in iris_rules if "{" in rule)
+    assert "fill:" in iris_declarations and "stroke:" in iris_declarations
+    assert "animation:" not in iris_declarations
     for metric in ("total", "completed", "active", "failed"):
         assert f'data-metric="{metric}">Unknown' in html
     assert 'data-conversation-count>Unknown' in html
