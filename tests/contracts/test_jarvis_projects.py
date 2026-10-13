@@ -170,7 +170,18 @@ def test_projects_assets_describe_the_verified_turn_context_boundary():
     assert "data-notes" in html and "data-project-loading" in html and "data-project-error" in html
     assert "data-project-empty" in html and 'aria-busy="true"' in html
     assert "data-project-retry" in html and "data-notes-retry" in html
-    assert "/chat/api/second-brain/notes?limit=50" in js
+    assert "data-note-search" in html and "data-note-results" in html and "data-note-preview" in html
+    assert "data-note-selected" in html and "data-note-more" in html
+    assert "noteSearchButton.addEventListener('click', searchNotes" in js and "noteBrowse.addEventListener" in js
+    assert "loadNotePage('recent', '', null, false)" in js
+    assert "'/chat/api/second-brain/notes?'" in js and "'/chat/api/second-brain/search?'" in js
+    assert "'/chat/api/second-brain/notes/' + encodeURIComponent(noteId)" in js
+    assert "noteReadRevision" in js and "capturedProjectRevision === projectRevision" in js
+    assert "previewRevision" in js and "expectedDigest !== note.contentSha256" in js
+    assert "Plain text preview. Markdown is not rendered and external content is not fetched." in js
+    assert "Array.from(selectedNoteIds)" in js and "snapshot.payload" in js
+    assert "uncertainSave = snapshot" in js and "Resolve this exact request" in js
+    assert "obsidianNoteIds:selectedNoteIds" not in js
     assert "verified Codex Responses turns" in html
     assert "another transport handles the message, Jarvis leaves it out" in html
     assert "Project notes guide replies; they do not grant access." in html
@@ -181,15 +192,13 @@ def test_projects_assets_describe_the_verified_turn_context_boundary():
     assert "Moving a chat here changes its project link; it does not combine chat histories." in html
     assert "Move chat to project" in html and "Remove from project" in js
     assert "data-project-loading" in js and "aria-busy" in js and "Projects refreshed." in js
-    assert "retry before changing them" in js and "loadVaultNotes" in js
-    assert "control.disabled = vaultNotesState !== 'ready'" in js
+    assert "Saved links stay unchanged; retry before adding links." in js
     assert "projectsLoaded ? 'Refreshing projects…' : 'Loading your projects…'" in js
-    assert "const submittedRevision = selectionRevision" in js
-    assert "if (selectionRevision === submittedRevision) selectProject(result.project)" in js
+    assert "revision:selectionRevision" in js
     assert "function render()" in js and "else selectProject(null)" in js
     assert "render(); conversationSelect.replaceChildren" in js
     assert "if (chats.some(chat => chat.id === priorConversation)) conversationSelect.value = priorConversation" in js
-    assert "selectProject(selected);" not in js
+    assert "Changes discarded." in js
     assert "const targetProjectId = selected.id, submittedRevision = selectionRevision" in js
     assert "if (selectionRevision === submittedRevision) conversationSelect.value = ''" in js
     assert "Chat removed from this project. It remains available in Chats." in js
@@ -202,7 +211,7 @@ def test_projects_refresh_completes_after_render_for_nonempty_and_empty_results(
     source = FEATURE_ASSETS.mount_js
     refresh = "async function refresh() {" + source.split(
         "async function refresh() {", 1
-    )[1].split("\n  async function loadVaultNotes()", 1)[0]
+    )[1].split("\n  function notePagePath", 1)[0]
     harness = r'''
 function node() { return {hidden:true, disabled:false, textContent:'', value:'',
   setAttribute(){}, replaceChildren(){}, add(){}}; }
@@ -236,14 +245,63 @@ global.Option = function(label, value){ this.text=label; this.value=value; };
 const originalNode = node;
 node = function(){ const value=originalNode(); value.attributes={};
   value.setAttribute=(key,entry)=>{value.attributes[key]=entry;}; return value; };
-(async()=>{ await exercise([{id:'p1',title:'One',chats:[]}]); await exercise([]); })()
+(async()=>{ await exercise([{id:'p1',title:'One',chats:[]}]); await exercise([]); console.log('PROJECTS_REFRESH_HARNESS_COMPLETE'); })()
   .catch(error=>{ console.error(error); process.exitCode=1; });
 '''
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "projects-refresh-harness.js"
         path.write_text(harness, encoding="utf-8")
-        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=15)
     assert result.returncode == 0, result.stderr
+    assert "PROJECTS_REFRESH_HARNESS_COMPLETE" in result.stdout
+
+
+def test_project_note_page_reads_ignore_aba_success_and_error_and_keep_get_targets():
+    source = FEATURE_ASSETS.mount_js
+    page_path = "function notePagePath(" + source.split(
+        "function notePagePath(", 1
+    )[1].split("\n  async function loadNotePage", 1)[0]
+    loader = page_path + "\nasync function loadNotePage(" + source.split(
+        "async function loadNotePage(", 1
+    )[1].split("\n  async function previewNote", 1)[0]
+    harness = r'''
+const assert = require('node:assert/strict');
+let selected={id:'A'}, projectRevision=1, selectionRevision=1, noteReadRevision=0;
+let savePending=false, uncertainSave=null, stopped=false, noteMode='recent', noteSearchText='';
+let noteRows=[], noteCursor=null, vaultNotesState='loading';
+const targets=[], pending=[];
+const isCurrent=()=>!stopped, retryNotes={hidden:true}, noteMore={disabled:false};
+const noteEmpty={hidden:false};
+const $=()=>({textContent:''});
+const renderNoteRows=()=>{}, renderSelectedNotes=()=>{};
+const call=path=>{targets.push(path); return new Promise((resolve,reject)=>pending.push({resolve,reject}));};
+''' + loader + r'''
+(async()=>{
+  const oldA=loadNotePage('recent','',null,false);
+  selected={id:'B'}; projectRevision++;
+  const staleB=loadNotePage('search','secret',null,false);
+  selected={id:'A'}; projectRevision++;
+  const currentA=loadNotePage('recent','',null,false);
+  assert.deepEqual(targets,['/chat/api/second-brain/notes?limit=20','/chat/api/second-brain/search?limit=20&query=secret','/chat/api/second-brain/notes?limit=20']);
+  pending[2].resolve({notes:[{noteId:'owner-note',title:'Current'}],nextCursor:'v1:20'});
+  assert.equal(await currentA,true);
+  pending[0].reject(new Error('obsolete denial')); assert.equal(await oldA,false);
+  pending[1].resolve({notes:[{noteId:'foreign-result',title:'Stale'}],nextCursor:null}); assert.equal(await staleB,false);
+  assert.deepEqual(noteRows.map(note=>note.noteId),['owner-note']);
+  assert.equal(noteCursor,'v1:20');
+  const page=loadNotePage('recent','',noteCursor,true);
+  assert.equal(targets[3],'/chat/api/second-brain/notes?limit=20&cursor=v1%3A20');
+  pending[3].resolve({notes:[{noteId:'next-note',title:'Next'}],nextCursor:null});
+  assert.equal(await page,true); assert.deepEqual(noteRows.map(note=>note.noteId),['owner-note','next-note']);
+  console.log('PROJECT_NOTE_READ_HARNESS_COMPLETE');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "project-note-read-harness.js"
+        path.write_text(harness, encoding="utf-8")
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "PROJECT_NOTE_READ_HARNESS_COMPLETE" in result.stdout
 
 
 def test_trashing_chat_conflicts_with_active_turn_and_versions_survive_restore(tmp_path):
