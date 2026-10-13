@@ -1089,3 +1089,31 @@ effects. Root's phone visual review compared the same nine asset bytes used in
 the Sol comparisons. This render supports source/render binding only. Candidate
 148's four-artifact refinement passed strict spec/plan validation. Live source
 remained `0cb`; no candidate-146 live claim is made.
+
+## Candidate 149 qualification and recovery evidence
+
+The integrated Feature 147 result remains 95 Pi contracts passed in 2.01s,
+strict spec/plan passed, and Chromium `failed_checks=[]` in a synthetic UI
+fixture. Candidate 148 passed strict spec validation. Candidate 149's
+qualification-tool tests passed in 0.11s and its spec validation passed.
+
+Candidate 149 actual activation failed with CLI exit 4. The validated report
+showed Core 6746, suppressed recovery, a subsequent `CoreRuntimeError`, a null
+cohort, empty stdout and 48 bytes of stderr; no timeout is inferred. Its
+explicit rollback failed while Core was activating under automatic restart.
+A corrected read-only probe then verified the rolling-back phase, protected
+backup, old tuple and currentness, but found three null ingress joins; fixed
+ingress hashes/history matched. The direct strict Core API failed with an
+ambiguous activating state at line 5063.
+
+Only the verified owned Core unit was stopped (inactive, MainPID 0). The
+strict API restored all old files but its wait failed between lines 5485 and
+6839 because default current-source checking ran after the old service start;
+source review confirmed this as a real bug that prior tests had stubbed. An
+independent retry through the existing adopter's `--rollback` succeeded,
+verifying the exact old tuple and currentness; all four services were active
+again. Live source remains `0cb`; neither candidate 149 nor the Feature is
+active. Sol's four-artifact refinement `76aaa` was pending Pi spec validation
+to preserve the exact prior wait, 30-second bound, custody and PIDFD. Its
+source fix/test awaited review. No new optimization, source deployment,
+authority or native-event claim is made.
