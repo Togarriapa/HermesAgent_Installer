@@ -1193,3 +1193,25 @@ Candidate 156 actual apply had just started; no adoption or runtime acceptance
 was yet available. The prior state remained four active services on old source
 `0cb`. Feature 147's 95 contracts and synthetic render remain source-level
 history; no live Feature claim is made.
+
+### Candidate 156 actual apply and recovery outcome
+
+Candidate 156 actual apply failed before a new listener. The validated original
+failure frames were Core update 6098 -> updater 6526 -> `_run` 893, where fixed
+`systemctl start` failed. Automatic restore's stop at 5063 refused while the
+unit was in an activating restart state. Root stopped only the fixed Core
+unit, verified inactive/MainPID 0, then used the protected adopter
+`--rollback`. It restored old source
+`0cbf9b819a6be41b3ff34d623374355cb64c3834`; all four services were active,
+with Core PID 3207678, `Result=success` and `NRestarts=0`. The existing public
+Jarvis browser reloaded to Secure connection/Ready. Candidate 156 was not
+adopted.
+
+A read-only V2 probe verified SHA-256 `031b…` and an aggregate control result
+of 28 exits, status 1/FAILURE, with a valid guard, zero rejected cases and no
+type classifications. Its candidate and phase are unknown. StandardOutput
+journal and inherited StandardError were verified. These aggregate facts do
+not establish a guard denial, timeout, or candidate-156 startup cause. A V3
+headerless type classifier was running; its outcome was not available. The
+candidate's qualification groups remain passed, while actual acceptance is
+pending.
