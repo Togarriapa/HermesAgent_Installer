@@ -2207,7 +2207,57 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
 
     monkeypatch.setattr(core, "_root_runuser_proc_snapshot", observe_runuser_proc_snapshot)
     original_initial_primary_current = core._initial_primary_current
+    original_issue_initial_primary_custody = core._issue_initial_primary_adoption_custody
+    original_run_same_materialization_import = core._run_same_materialization_import
+    original_require_bounded_import_output = core._require_bounded_helper_import_output
     initial_primary_early_guard_failures = []
+    initial_primary_custody_issued = {}
+    initial_primary_stage_seconds = {"import": []}
+    importer_outcomes = []
+    from hermes_installer import primary_prompt_manager as primary_manager
+    original_primary_adoption = primary_manager.adopt_primary_prompt_for_starting_cohort
+
+    def observe_primary_adoption(custody):
+        started = core.time.monotonic()
+        try:
+            return original_primary_adoption(custody)
+        finally:
+            initial_primary_stage_seconds.setdefault("primary_adoption", []).append(
+                round(max(0.0, core.time.monotonic() - started), 2))
+
+    def observe_same_materialization_import(*args, **kwargs):
+        started = core.time.monotonic()
+        try:
+            return original_run_same_materialization_import(*args, **kwargs)
+        finally:
+            initial_primary_stage_seconds["import"].append(
+                round(max(0.0, core.time.monotonic() - started), 2))
+
+    def observe_initial_primary_custody_issue(*args, **kwargs):
+        custody = original_issue_initial_primary_custody(*args, **kwargs)
+        initial_primary_custody_issued[id(custody)] = core.time.monotonic()
+        return custody
+
+    def observe_bounded_import_output(returncode, stdout, stderr):
+        # Keep the production validator first and unchanged. Retain the genuine
+        # bounded receipt only in this private fixture for its existing size
+        # and oversize-refusal assertions; diagnostics never print its bytes.
+        result = original_require_bounded_import_output(returncode, stdout, stderr)
+        importer_outcomes.append({
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr_bytes": len(stderr) if isinstance(stderr, bytes) else -1,
+        })
+        return result
+
+    monkeypatch.setattr(core, "_run_same_materialization_import",
+                        observe_same_materialization_import)
+    monkeypatch.setattr(core, "_issue_initial_primary_adoption_custody",
+                        observe_initial_primary_custody_issue)
+    monkeypatch.setattr(core, "_require_bounded_helper_import_output",
+                        observe_bounded_import_output)
+    monkeypatch.setattr(primary_manager, "adopt_primary_prompt_for_starting_cohort",
+                        observe_primary_adoption)
 
     def observe_initial_primary_current(custody, **kwargs):
         def failed_early_checks(now):
@@ -2228,20 +2278,31 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
 
         before = failed_early_checks(core.time.monotonic())
         result = original_initial_primary_current(custody, **kwargs)
-        after = failed_early_checks(core.time.monotonic())
+        checked_at = core.time.monotonic()
+        after = failed_early_checks(checked_at)
         if result is False:
-            initial_primary_early_guard_failures.append((before, after))
+            issued_at = initial_primary_custody_issued.get(id(custody))
+            elapsed = (round(max(0.0, checked_at - issued_at), 2)
+                       if issued_at is not None else None)
+            initial_primary_early_guard_failures.append({
+                "before": before, "after": after,
+                "seconds_since_issue": elapsed,
+            })
             if len(initial_primary_early_guard_failures) > 12:
                 del initial_primary_early_guard_failures[0]
         return result
 
     monkeypatch.setattr(core, "_initial_primary_current", observe_initial_primary_current)
     try:
-        with _bounded_cohort_exception_sites() as importer_outcomes:
-            result = core.update_owned_core_adapter()
+        # This real effect path has a fixed 110-second primary-adoption
+        # custody. Avoid sys.settrace here so instrumentation cannot distort
+        # that deadline; other failure-oriented tests retain the full tracer.
+        result = core.update_owned_core_adapter()
     except BaseException:
         print("bounded initial-primary early custody predicate failures: " +
               repr(initial_primary_early_guard_failures[-12:]))
+        print("bounded untraced update stage seconds: " +
+              repr({name: values[-4:] for name, values in initial_primary_stage_seconds.items()}))
         raise
 
     updated = json.loads(core.JOURNAL.read_text())
@@ -2320,6 +2381,7 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     assert importer["stderr_bytes"] <= core._HELPER_IMPORT_STDERR_LIMIT
     _assert_registered_obsidian_fixture_preserved(obsidian_fixture)
     receipt = importer["stdout"]
+    assert type(receipt) is bytes
     assert 16 * 1024 < len(receipt) <= core._HELPER_IMPORT_STDOUT_LIMIT
     before_oversize_check = (core.JOURNAL.read_bytes(),
                              (backup / "manifest.json").read_bytes(),
