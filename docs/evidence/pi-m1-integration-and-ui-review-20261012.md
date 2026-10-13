@@ -1283,3 +1283,26 @@ previously recorded hashes. Thus all candidate 159 qualification groups passed.
 The protected adopter's `--apply` with union stdin launched as PID 3219476;
 `p/candidate159-actual-adoption.log` was pending, so no adoption acceptance is
 claimed.
+
+### Candidate 159 actual apply failure and recovery
+
+The protected candidate-159 adopter exited 4. Source-validated frames show
+Core 6602 calling fixed `systemctl start` through `_run` 893 before a listener
+was available; automatic recovery's stop at 5138 was refused while the unit
+was activating. Root stopped only the fixed Core unit and verified inactive /
+MainPID 0, then used protected `--rollback`. It restored exact old source
+`0cb`; all four services were active, with Core PID 3221475,
+`Result=success`, and `NRestarts=0`. This is recovery, not M1 acceptance.
+
+V3 aggregate evidence remains candidate/phase unknown (`rollingback`, multiple
+`False` observations; 8 rejected, no type tokens). Separately, actual verified
+V5 evidence (SHA-256
+`f7750fbe65dfaf0f5a356383becacf46508fafac44e0a031875c5b0fe67dd0d5`) records
+one `starting=True` observation with only `backup_ok=False` and `ok=False`,
+`active_update_ok=NULL`, and all other applicable flags true. Seven later
+`starting=False` observations had false rollback joins. This exact source trace
+does not identify the aggregate V3 candidate or phase. Diagnosis comparing
+protected backup contents with actual service `LoadCredential` metadata was
+pending; no waiver or apply followed. Read-only host token metadata showed
+admin ownership/mode 0400, which does not establish the service's private
+view. Root `1e9ba70` still had source 226 unchanged.
