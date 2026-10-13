@@ -565,15 +565,17 @@ SPEAK
   conversationId = "another-conversation";
   await reconcileCompletedTurn("stale-turn", "conversation", "say this when opted in", assistantBody, waiting);
   assert.equal(utterances.length, beforeStale, "a completion from another conversation never starts playback");
+  console.log("JARVIS_VOICE_TURN_LIFECYCLE_OK");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 '''.replace("RENEW", renew).replace("RECONCILE", reconcile).replace("SPEAK", speak)
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "heartbeat-harness.js"
             path.write_text(harness, encoding="utf-8")
             result = subprocess.run(
-                ["node", str(path)], capture_output=True, text=True, check=False,
+                ["node", str(path)], capture_output=True, text=True, check=False, timeout=10,
             )
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("JARVIS_VOICE_TURN_LIFECYCLE_OK", result.stdout)
 
     def test_sse_retries_transient_disconnect_and_recovers_saved_completion(self):
         _content_type, script = reviewed_client_bundle()
