@@ -46,7 +46,7 @@ _VIEW = """<section class=\"second-brain-page\" aria-labelledby=\"second-brain-t
       <section class=\"brain-graph-browse\" aria-label=\"Knowledge map lists\">
         <aside class=\"brain-graph-detail\" data-graph-detail aria-label=\"Selected note detail\" aria-live=\"polite\">
           <h3>Selected note</h3><div data-graph-detail-content><p>Select a note in the map or list to inspect its current vault details.</p></div>
-          <div class=\"brain-graph-detail-actions\"><button type=\"button\" data-graph-focus disabled>Focus neighborhood</button>
+          <div class=\"brain-graph-detail-actions\"><button type=\"button\" data-graph-read aria-label=\"Read selected note in the existing Markdown reader\" disabled>Read current Markdown</button><button type=\"button\" data-graph-focus disabled>Focus neighborhood</button>
             <button type=\"button\" data-graph-reset>Show full map</button><button type=\"button\" data-graph-back disabled>Back</button></div>
         </aside>
         <h3 data-graph-notes-title>Notes in this map</h3><ol data-graph-notes aria-label=\"All visible notes\"></ol>
@@ -164,6 +164,7 @@ _MOUNT = r"""function mount(container, api, state) {
   const graphNotes = $('[data-graph-notes]');
   const graphNotesTitle = $('[data-graph-notes-title]');
   const graphDetail = $('[data-graph-detail-content]');
+  const graphReadButton = $('[data-graph-read]');
   const graphFocusButton = $('[data-graph-focus]');
   const graphResetButton = $('[data-graph-reset]');
   const graphBackButton = $('[data-graph-back]');
@@ -467,7 +468,7 @@ _MOUNT = r"""function mount(container, api, state) {
     graphDetail.replaceChildren();
     if (!currentNoteId) {
       addText(graphDetail, 'p', 'Select a note in the map or list to inspect its current vault details.');
-      graphFocusButton.disabled = true; graphBackButton.disabled = noteHistory.length === 0;
+      graphReadButton.disabled = true; graphFocusButton.disabled = true; graphBackButton.disabled = noteHistory.length === 0;
       return;
     }
     const indexed = graphData && Array.isArray(graphData.nodes)
@@ -511,6 +512,7 @@ _MOUNT = r"""function mount(container, api, state) {
       if (unresolved.length) addText(graphDetail, 'p', 'Unresolved: ' + unresolved.slice(0, 4).map(link => link.label).join(' · ')
         + (unresolved.length > 4 ? ` · ${unresolved.length - 4} more in the note reader` : ''));
     }
+    graphReadButton.disabled = !currentNoteDetail || typeof currentNoteDetail.markdown !== 'string';
     graphFocusButton.disabled = !indexed;
     graphBackButton.disabled = noteHistory.length === 0;
   }
@@ -660,6 +662,11 @@ _MOUNT = r"""function mount(container, api, state) {
   function onGraphFocus() { focusNeighborhood(); }
   function onGraphReset() { showFullGraph(); }
   function onGraphBack() { void goBackNote(); }
+  function onGraphRead() {
+    if (!currentNoteDetail || typeof currentNoteDetail.markdown !== 'string') return;
+    body.focus({preventScroll: true});
+    $('.brain-reader').scrollIntoView({block: 'start', behavior: 'auto'});
+  }
   function onGraphPointerDown(event) {
     if (event.target.closest('.brain-node')) return;
     drag = {pointerId: event.pointerId, x: event.clientX, y: event.clientY};
@@ -704,6 +711,7 @@ _MOUNT = r"""function mount(container, api, state) {
   graphFocusButton.addEventListener('click', onGraphFocus);
   graphResetButton.addEventListener('click', onGraphReset);
   graphBackButton.addEventListener('click', onGraphBack);
+  graphReadButton.addEventListener('click', onGraphRead);
   function onSearch(event) {
     event.preventDefault();
     if (!queryInput.value.trim()) { mode = 'recent'; cursor = null; refreshNotes(); return; }
@@ -734,6 +742,7 @@ _MOUNT = r"""function mount(container, api, state) {
     graphFocusButton.removeEventListener('click', onGraphFocus);
     graphResetButton.removeEventListener('click', onGraphReset);
     graphBackButton.removeEventListener('click', onGraphBack);
+    graphReadButton.removeEventListener('click', onGraphRead);
   };
 }"""
 
