@@ -155,6 +155,11 @@ def test_overview_reactor_uses_observed_activity_and_keeps_controls_accessible()
     js = FEATURE_ASSETS.mount_js
 
     assert 'class="overview-stage" data-activity="unknown"' in html
+    assert '<section class="command-centre-shell" aria-label="Jarvis command centre">' in html
+    assert html.index('class="overview-stage"') < html.index('class="command-panel"') < html.index('class="ecosystem-card"')
+    assert 'id="jarvis-ecosystem-feature-host" data-feature-host="ecosystem-fleet"' in html
+    assert "command-centre-shell:before" in css and "command-centre-shell:after" in css
+    assert "#jarvis-ecosystem-feature-host" in css
     assert 'data-reactor-state role="status" aria-live="polite"' in html
     assert 'data-core-status role="status" aria-live="polite"' in html
     assert 'data-command-form' in html and 'data-new-conversation' in html
@@ -169,6 +174,46 @@ def test_overview_reactor_uses_observed_activity_and_keeps_controls_accessible()
     assert "await api.command(text)" in js
     assert "await api.newConversation()" in js
     assert "commandInput.value = button.dataset.commandPrompt" in js
+
+
+def test_overview_command_submission_preserves_text_on_denial_and_recovers():
+    js = FEATURE_ASSETS.mount_js
+    start = js.index("  async function submitCommand(event) {")
+    end = js.index("\n  const newConversation", start)
+    submit = js[start:end]
+    harness = r'''const assert = require('node:assert/strict');
+let stopped = false, failCommand = false;
+const sent = [], observation = {textContent:''}, button = {disabled:false};
+const commandInput = {value:'', disabled:false};
+const commandForm = {querySelector:() => button};
+const api = {command:async text => {sent.push(text); if(failCommand) throw new Error('denied'); return true;}};
+const $ = selector => selector === '[data-observation]' ? observation : null;
+''' + submit + r'''
+const submitEvent = {prevented:false,preventDefault(){this.prevented=true;}};
+(async()=>{
+ commandInput.value='  Review my current tasks  ';
+ await submitCommand(submitEvent);
+ assert.equal(submitEvent.prevented,true);
+ assert.deepEqual(sent,['Review my current tasks'],'the existing command bridge receives the exact owner text');
+ assert.equal(commandInput.value,'','accepted send clears the composer');
+ failCommand=true; commandInput.value='Keep this draft';
+ await submitCommand({preventDefault(){}});
+ assert.equal(sent.length,2);
+ assert.equal(commandInput.value,'Keep this draft','a denied send preserves the typed text');
+ assert.match(observation.textContent,/text remains here/i);
+ const before=sent.length; button.disabled=true; commandInput.value='Do not duplicate';
+ await submitCommand({preventDefault(){}});
+ assert.equal(sent.length,before,'a pending send is not replayed');
+ console.log('OVERVIEW_COMMAND_HARNESS_COMPLETE');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "overview-command-harness.js"
+        path.write_text(harness, encoding="utf-8")
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False,
+                                timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "OVERVIEW_COMMAND_HARNESS_COMPLETE" in result.stdout
 
 
 def test_overview_presence_is_gated_by_fresh_core_witness():
