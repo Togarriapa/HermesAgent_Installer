@@ -325,15 +325,20 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  assert.equal(profile.options.length,209,'208 real rows, including one Jarvis, render with the placeholder');
  assert.match(count.textContent,/208 matching profiles · 208 existing editable native file records/,'visible count reflects actual file records');
  fullUnmount();
- inventory=[profileRow,...Array.from({length:208},(_,index)=>({id:(index+1).toString(16).padStart(64,'0'),name:`Expert ${index}`,kind:'expert',sourceGeneration:'generation-1',files:[]}))];
+ profile.replaceChildren(new Option('Loading profiles…',''));
+ inventory=[profileRow,...Array.from({length:208},(_,index)=>({id:(index+1).toString(16).padStart(64,'0'),name:`Expert ${index}`,kind:'expert',sourceGeneration:'generation-1',files:[{kind:'soul',name:'SOUL.md',editable:true}]}))];
  mount(root,api); await flush();
- assert.equal(profile.options.length,1,'209 profile rows are denied before rendering');
+ assert.equal(profile.options.length,1,'209 profile rows are denied and leave only the initial loading placeholder');
+ assert.equal(profile.options[0].text,'Loading profiles…');
  assert.match(status.textContent,/unavailable/i);
+ console.log('PROFILE_HARNESS_COMPLETE');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "profiles-admin-mount-harness.js"
         path.write_text("const assert = require('node:assert/strict');\n" + feature.mount_js + "\n" + harness,
                        encoding="utf-8")
-        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False,
+                                timeout=15)
     assert result.returncode == 0, result.stderr
+    assert "PROFILE_HARNESS_COMPLETE" in result.stdout
