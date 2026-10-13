@@ -1626,6 +1626,56 @@ def test_unwritten_initial_primary_rollback_is_closed_and_partial_without_backup
         core._read_adapter_update_cohort()
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="cohort rollback custody requires the enrolled Pi root actor")
+def test_unwritten_initial_primary_rollback_requires_original_soul_inode_and_signature(
+        tmp_path, monkeypatch, request):
+    _unit, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request)
+    signature = (1, 2, stat.S_IFREG | 0o600, 1000, 1000, 1, 42, 1, 1)
+    soul = b"original owner SOUL\n"
+    transition = {
+        "schema": 1, "purpose": "initial-primary-adoption", "state": "rolling-back",
+        "prior_record_state": "absent", "prior_soul_sha256": hashlib.sha256(soul).hexdigest(),
+        "prior_soul_signature": list(signature), "source_prompt_sha256": "b" * 64,
+        "managed_block_sha256": "c" * 64, "desired_soul_sha256": "d" * 64,
+        "owner_separator_hex": "0a", "owner_backup_sha256": None,
+        "preparing_record_sha256": None, "writing_record_sha256": None,
+        "adopted_record_sha256": None,
+        "before_resources_record_sha256": cohort["old_resources_record_sha256"],
+        "after_resources_record_sha256": None,
+    }
+    cohort["phase"] = "rolling-back"
+    cohort["initial_primary_transition"] = transition
+    reconstruction = dict(cohort["reconstruction"])
+    reconstruction["phase"] = "rolling-back"
+    cohort["reconstruction"] = reconstruction
+    cohort["reconstruction_sha256"] = hashlib.sha256(
+        core._canonical_json(reconstruction)).hexdigest()
+    current_raw = core._projection_file(
+        core.ADAPTER_UPDATE_COHORT, owner=core.ROOT_UID, group=core.ROOT_UID,
+        mode=0o400, maximum=128 * 1024)
+    core._write_adapter_update_cohort(cohort, expected_raw=current_raw)
+    cohort, _ = core._read_adapter_update_cohort()
+
+    prior = {"adapter_source": cohort["old_source"]}
+    contents = {
+        "journal.json": b"prior-journal\n", "resources-record.json": b"prior-resources\n",
+        "overlay-record.json": b"", "obsidian-registration.json": b"",
+        "unit": core._unit(adapter_source=Path(cohort["old_source"]), cohort_gate=True,
+                            backup_generation=cohort["old_adapter_generation"]),
+        "launcher": core._launcher(adapter_source=Path(cohort["old_source"])),
+        "primary-record.json": b"",
+    }
+    from hermes_installer import primary_prompt_manager as primary
+    monkeypatch.setattr(primary, "_read_soul", lambda _core: (soul, signature))
+    core._check_adapter_cohort_rollback_currentness(cohort, prior, contents)
+
+    replacement_signature = (1, 3, *signature[2:])
+    monkeypatch.setattr(primary, "_read_soul", lambda _core: (soul, replacement_signature))
+    with pytest.raises(core.CoreRuntimeError, match="original owner SOUL"):
+        core._check_adapter_cohort_rollback_currentness(cohort, prior, contents)
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
 def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resources(
         tmp_path, monkeypatch, request):

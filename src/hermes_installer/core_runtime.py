@@ -4903,8 +4903,7 @@ def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
     from . import primary_prompt_manager as primary
     soul,signature=primary._read_soul(sys.modules[__name__])
     if (hashlib.sha256(soul).hexdigest()!=initial.get("prior_soul_sha256")
-        or not _restored_soul_signature_matches(
-         signature,initial.get("prior_soul_signature",()))):
+        or tuple(signature)!=tuple(initial.get("prior_soul_signature",()))):
      raise CoreRuntimeError("unwritten initial-primary rollback lost original owner SOUL")
    elif initial.get("state") in {"pending","preparing"} and initial.get("preparing_record_sha256") is None:
     if initial.get("state")=="pending" and current_primary is not None:
