@@ -56,6 +56,7 @@ def _bounded_cohort_exception_sites():
     sites = []
     first_substantive = []
     importer_outcomes = []
+    custody_false_returns = []
     routine = {"GeneratorExit", "StopIteration", "StopAsyncIteration"}
     allowed = {"core_runtime.py", "manual_jarvis_skills.py",
                "resources_skill_overlay.py", "primary_prompt_manager.py"}
@@ -74,6 +75,12 @@ def _bounded_cohort_exception_sites():
         if event == "call":
             return trace if filename_kind(frame.f_code.co_filename) in allowed else None
         kind = filename_kinds.get(frame.f_code.co_filename)
+        if (event == "return" and kind == "core_runtime.py"
+                and frame.f_code.co_name in {"_initial_primary_current", "_validate_guarded_new_read"}
+                and arg is False):
+            custody_false_returns.append((kind, frame.f_code.co_name, frame.f_lineno))
+            if len(custody_false_returns) > 12:
+                del custody_false_returns[0]
         if (event == "return" and kind == "core_runtime.py"
                 and frame.f_code.co_name == "_run_same_materialization_import"):
             values = frame.f_locals
@@ -122,6 +129,7 @@ def _bounded_cohort_exception_sites():
         print("bounded exception context chain: " + repr(contexts))
         print("first substantive non-CoreRuntimeError site: " + repr(first_substantive[:1]))
         print("bounded cohort exception sites: " + repr(sites[:30] + sites[-30:]))
+        print("bounded custody false-return sites: " + repr(custody_false_returns[-12:]))
         # Read only outcome metadata from the genuine fixed importer frame.
         # Never print child stdout or stderr; the sole textual diagnostic is
         # an exact constant message reviewed in manual_jarvis_skills.py.
