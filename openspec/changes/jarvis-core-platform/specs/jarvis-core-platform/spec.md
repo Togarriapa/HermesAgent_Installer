@@ -2659,3 +2659,16 @@ The installer SHALL retain sanitized bounded cause/context source frames for fix
 #### Scenario: Meaningful context fidelity precedes another actual retry
 - **WHEN** bounded context projection is added after candidate149 restored-old-state recovery
 - **THEN** Pi contracts exercise actual suppressed nested failure locations, private-value omission, cycle/depth bounds, successful-origin removal and unchanged main-only callback behavior before Root uses the exact tool for a new apply. Original update cause and actual adoption remain unaccepted until returned evidence.
+
+### Requirement: Denied startup guards emit closed predicate metadata
+The installer SHALL emit bounded failure-only bool-or-null startup predicate metadata without changing guarded authorization, custody, deadlines, exact unit identity or successful-start silence.
+
+#### Scenario: A new cohort guard denies startup
+- **WHEN** the original guard decision denies a qualified new cohort startup with diagnostics enabled
+- **THEN** it retains exit1 and emits at most one4096-byte stderr line with the fixed versioned prefix/schema and exact reviewed predicate names, strictly bool or null; no values, paths, digests, credentials, environment, argv or exception text are exposed.
+- **AND** diagnostics cannot alter `ok`, original predicate semantics or authorization; successful guards stay silent, and unavailable/malformed metadata does not establish a failure cause.
+
+#### Scenario: Diagnostic units preserve exact prior recipes
+- **WHEN** a new diagnostic guard changes the generated unit recipe during an adapter update or recovery
+- **THEN** existing protected legacy units remain eligible only through their exact no-diagnostic recipe and original source/cohort/journal joins; new diagnostic units require equally exact generated joins, and foreign or modified recipes still deny.
+- **AND** saved prior bytes restore unchanged. Meaningful Pi generated allow/deny/privacy and prior-recipe/recovery contracts plus reviewed Core pin precede one actual observed retry; original153 startup cause stays pending until returned metadata identifies it.

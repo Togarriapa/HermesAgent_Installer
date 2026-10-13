@@ -243,3 +243,7 @@ Actual candidate149 recovery restored prior files and started the old adapter, t
 ### R0201/#35 bounded suppressed failure context
 
 Candidate149's valid CLI report retained the outer Core recovery error but not the suppressed underlying failure locations. Before another actual apply, refine existing entry-only diagnostics to inspect the exception's bounded cause/context chain and retain sanitized source frames. Keep the existing origin schema and report validator, no exception values or raw output, no broader execution tracing, and no timing/authority change. This supplies diagnostic evidence only; actual149's original update cause remains unknown until observed.
+
+### R0201/#35 denied startup guard metadata
+
+Actual candidate153 reached fixed Core start, which failed before listener verification; historical control-process failures contain no usable exception. Exact rollback restored old0cb and all four units. Within existing guarded lifecycle/recovery obligations, add failure-only structured predicate metadata to the new cohort startup guard, with unchanged checks, deadlines and exit1. Root can then inspect one qualified attempt rather than infer an unobserved startup cause. Preserve old unit recipe bytes and closed compatibility; no blind retry, authority expansion or successful-start logging.
