@@ -925,3 +925,25 @@ reported Python3.13.5 and PyYAML6.0.2. The existing hardcoded qualification
 subprocess behavior was unchanged. None of these checks establishes a live
 Core code activation, configuration union, or completion of the pending
 runner/adoption. Overall M1 acceptance remains open.
+
+## Follow-on Pi 137/138 qualification evidence
+
+Candidate 137's first A0 positive attempt failed after 86.39s only on the
+expected read-call order: `FragmentPath` followed by `DropInPaths`; both were
+read-only. Test correction `003de28` passed Sol review. Candidate 137 later
+passed spec and plan validation using the already-pinned 134 tool binary. Its
+initial command exited 127 because that tool was not on `PATH`; the corrected
+invocation passed without changing the plan.
+
+Root candidate 138 (`db2e0739a2e20b8ba9f29d6d592d8112c29177d2`), archive
+SHA-256 `f9000edeb1660dd12068e84c7cd1af3ab770fc4d504dc133fe9b8c8fd4b88091`,
+was staged at the protected `/opt` path without changing services. Its bounded
+runner SHA-256 is
+`b2d3833699807239cd5d6dd176fa95318808de691210cec4b0003cbf1d007a72` and
+passed Sol source review; tests had not started at this evidence point. No
+runner result or adoption outcome is inferred.
+
+The read-only Android prerequisites check found `javac` and `java` absent and
+three known SDK directories absent. Android issue #42 therefore remains
+Planned; this does not establish Android support or acceptance. Overall M1
+and runtime acceptance remain open.
