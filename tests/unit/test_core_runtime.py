@@ -842,6 +842,7 @@ def test_install_resume_and_rollback_use_only_fixed_owned_paths(tmp_path, monkey
 
 def test_interrupted_recovery_reuses_an_already_held_lock(tmp_path, monkeypatch):
     _fake_runtime(tmp_path, monkeypatch)
+    _prepare_adapter_lock_state_fixture()
     def fail_if_nested_lock():
         raise AssertionError("held recovery attempted a nested adapter lock")
 
@@ -863,6 +864,7 @@ def test_interrupted_recovery_reuses_an_already_held_lock(tmp_path, monkeypatch)
 def test_interrupted_recovery_locks_before_cohort_read_and_releases_on_failure(
         tmp_path, monkeypatch):
     _fake_runtime(tmp_path, monkeypatch)
+    _prepare_adapter_lock_state_fixture()
     events = []
     original_lock = core._adapter_update_lock
 
@@ -889,6 +891,14 @@ def test_interrupted_recovery_locks_before_cohort_read_and_releases_on_failure(
         core._recover_interrupted_adapter_update()
     assert events == ["lock-enter", "cohort-read", "lock-exit"]
     assert not core._ADAPTER_UPDATE_LOCK_HELD.get()
+
+
+def _prepare_adapter_lock_state_fixture():
+    """Create the pre-existing protected state parent expected by real lock setup."""
+    for state_dir in (core.VAR_LIB_INSTALLER, core.JOURNAL.parent):
+        state_dir.mkdir(mode=0o700)
+        os.chown(state_dir, core.ROOT_UID, core.ROOT_UID)
+        os.chmod(state_dir, 0o700)
 
 
 def test_interrupted_recovery_rejects_non_root_before_lock_or_reads(monkeypatch):
