@@ -18,7 +18,18 @@ import re
 import stat
 import sys
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
+
+_NATIVE_PLUGIN_MEMBER_NAMES = ("plugin.yaml", "__init__.py")
+_NATIVE_PLUGIN_BACKUP_NAMES = {
+    "plugin.yaml": "native-plugin-plugin.yaml",
+    "__init__.py": "native-plugin-__init__.py",
+}
+_ADAPTER_BACKUP_BASE_MEMBERS = frozenset({
+    "journal.json", "unit", "launcher", "plugin-selection.json", "resources-record.json",
+    "overlay-record.json", "primary-record.json", "obsidian-registration.json", "cohort.json",
+})
 
 
 def _candidate_source(commit: str) -> Path:
@@ -202,6 +213,30 @@ class _DigestSink(io.TextIOBase):
         return self._hash.hexdigest()
 
 
+def _native_plugin_transition_valid(value: object) -> bool:
+    fields = {"schema", "purpose", "old_adapter_generation", "new_adapter_generation",
+              "plugin_selection_sha256", "old_members", "new_members"}
+    if type(value) is not dict or set(value) != fields:
+        return False
+    def member_map(row: object) -> bool:
+        return (type(row) is dict and set(row) == {"plugin.yaml", "__init__.py"}
+                and all(isinstance(row[name], str)
+                        and re.fullmatch(r"[0-9a-f]{64}", row[name]) is not None
+                        for name in ("plugin.yaml", "__init__.py")))
+    return (type(value["schema"]) is int and value["schema"] == 1
+            and value["purpose"] == "fixed-native-resources-plugin"
+            and isinstance(value["old_adapter_generation"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", value["old_adapter_generation"]) is not None
+            and isinstance(value["new_adapter_generation"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", value["new_adapter_generation"]) is not None
+            and value["old_adapter_generation"] != value["new_adapter_generation"]
+            and isinstance(value["plugin_selection_sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", value["plugin_selection_sha256"]) is not None
+            and member_map(value["old_members"]) and member_map(value["new_members"])
+            and value["old_members"]["plugin.yaml"] == value["new_members"]["plugin.yaml"]
+            and value["old_members"]["__init__.py"] != value["new_members"]["__init__.py"])
+
+
 def _snapshot(runtime: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     """Ask CoreRuntime's real protected readers to validate active state."""
     record, raw_journal, files = runtime._read_active_adapter_runtime()
@@ -213,6 +248,37 @@ def _snapshot(runtime: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     selection_sha = getattr(selection, "selection_sha256", None)
     if not isinstance(selection_sha, str) or re.fullmatch(r"[0-9a-f]{64}", selection_sha) is None:
         raise RuntimeError("selected native plugin receipt is unavailable")
+    plugin_snapshot = runtime._read_installed_native_resources_plugin_members()
+    plugin_members = getattr(plugin_snapshot, "members", None)
+    plugin_signatures = getattr(plugin_snapshot, "signatures", None)
+    plugin_names = {"plugin.yaml", "__init__.py"}
+    if (type(plugin_members) not in {dict, MappingProxyType}
+            or set(plugin_members) != plugin_names
+            or type(plugin_signatures) not in {dict, MappingProxyType}
+            or set(plugin_signatures) != plugin_names):
+        raise RuntimeError("fixed native plugin member snapshot is not closed")
+    plugin_members = dict(plugin_members)
+    plugin_signatures = dict(plugin_signatures)
+    for name, data in plugin_members.items():
+        signature = plugin_signatures[name]
+        if (type(data) is not bytes
+                or type(signature) is not tuple or len(signature) != 9
+                or any(type(item) is not int for item in signature)
+                or any(item < 0 for item in signature)
+                or signature[2] != 0o444 or signature[3] != 0 or signature[4] != 0
+                or signature[5] != 1 or signature[6] != len(data)
+                or not 1 <= len(data) <= 64 * 1024):
+            raise RuntimeError("fixed native plugin member custody is invalid")
+    plugin_member_sha = {name: _digest(plugin_members[name]) for name in sorted(plugin_names)}
+    cohort, _cohort_raw = runtime._read_adapter_update_cohort(allow_absent=True)
+    plugin_transition = cohort.get("native_plugin_transition") if cohort is not None else None
+    if plugin_transition is not None:
+        if (not _native_plugin_transition_valid(plugin_transition)
+                or plugin_transition.get("purpose") != "fixed-native-resources-plugin"
+                or plugin_transition.get("new_adapter_generation") != record.get("adapter_generation")
+                or plugin_transition.get("plugin_selection_sha256") != selection_sha
+                or plugin_transition.get("new_members") != plugin_member_sha):
+            raise RuntimeError("fixed native plugin transition is not bound to installed members")
     primary = _primary_prompt_state(runtime)
     public = {
         "journal_sha256": _digest(raw_journal),
@@ -224,6 +290,8 @@ def _snapshot(runtime: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         "adapter_generation": record["adapter_generation"],
         "core_source_generation": record["core_source_generation"],
         "plugin_selection_sha256": selection_sha,
+        "native_plugin_members_sha256": plugin_member_sha,
+        "native_plugin_transition": plugin_transition,
         "resources_record_sha256": bindings["resources_record_sha256"],
         "overlay_record_sha256": bindings["overlay_record_sha256"],
         "overlay_content_count": len(overlay_contents),
@@ -256,7 +324,13 @@ def _snapshot(runtime: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         "primary_record": bindings.get("primary_record"),
         "obsidian_registration": bindings.get("obsidian_registration"),
         "prior_cohort": bindings.get("prior_cohort"),
+        "adapter_generation": record["adapter_generation"],
         "plugin_selection_sha256": selection_sha,
+        "native_plugin_members_sha256": plugin_member_sha,
+        "native_plugin_members": plugin_members,
+        "native_plugin_signatures": plugin_signatures,
+        "native_plugin_transition": plugin_transition,
+        "adapter_update_backup": record.get("adapter_update_backup"),
         "primary": primary,
     }
     return public, retained
@@ -318,6 +392,30 @@ def _backup_matches_before(runtime: Any, before: dict[str, Any], after: dict[str
         selection = json.loads(contents["plugin-selection.json"])
     except Exception:
         return False
+    transition = after.get("native_plugin_transition")
+    expected_members = set(_ADAPTER_BACKUP_BASE_MEMBERS)
+    if transition is not None:
+        if (not _native_plugin_transition_valid(transition)
+                or transition["old_adapter_generation"] != before.get("adapter_generation")
+                or transition["new_adapter_generation"] != after.get("adapter_generation")
+                or transition["plugin_selection_sha256"] != before.get("plugin_selection_sha256")
+                or transition["plugin_selection_sha256"] != after.get("plugin_selection_sha256")
+                or transition["old_members"] != before.get("native_plugin_members_sha256")
+                or transition["new_members"] != after.get("native_plugin_members_sha256")):
+            return False
+        expected_members.update(_NATIVE_PLUGIN_BACKUP_NAMES.values())
+    elif (before.get("native_plugin_members_sha256")
+          != after.get("native_plugin_members_sha256")):
+        return False
+    files = reference.get("files") if type(reference) is dict else None
+    if (type(files) is not dict or set(files) != expected_members
+            or set(contents) != expected_members
+            or any(not isinstance(files[name], str)
+                   or re.fullmatch(r"[0-9a-f]{64}", files[name]) is None
+                   or not isinstance(contents[name], bytes)
+                   or hashlib.sha256(contents[name]).hexdigest() != files[name]
+                   for name in expected_members)):
+        return False
     exact = (
         ("journal.json", "journal"), ("unit", "unit"), ("launcher", "launcher"),
         ("resources-record.json", "resources_record"),
@@ -329,6 +427,11 @@ def _backup_matches_before(runtime: Any, before: dict[str, Any], after: dict[str
     if not all(type(before.get(field)) is bytes and contents.get(name) == before[field]
                for name, field in exact):
         return False
+    if transition is not None:
+        if any(contents.get(_NATIVE_PLUGIN_BACKUP_NAMES[name])
+               != before.get("native_plugin_members", {}).get(name)
+               for name in _NATIVE_PLUGIN_MEMBER_NAMES):
+            return False
     if (saved_journal != json.loads(before["journal"])
             or prior.get("adapter_generation") != saved_journal.get("adapter_generation")
             or selection != {"schema": 1,
@@ -361,6 +464,22 @@ def _primary_prompt_matches_before(before: dict[str, Any], after: dict[str, Any]
 def _success_checks(before: dict[str, Any], after: dict[str, Any], candidate_src: str,
                     *, cohort_phase: str, listener_current: bool) -> dict[str, bool]:
     """Check only outcomes established by the protected runtime's live readbacks."""
+    transition = after.get("native_plugin_transition")
+    if transition is None:
+        plugin_transition_proven = (
+            before.get("native_plugin_members_sha256")
+            == after.get("native_plugin_members_sha256")
+        )
+    else:
+        plugin_transition_proven = (
+            _native_plugin_transition_valid(transition)
+            and transition["old_adapter_generation"] == before.get("adapter_generation")
+            and transition["new_adapter_generation"] == after.get("adapter_generation")
+            and transition["plugin_selection_sha256"] == before.get("plugin_selection_sha256")
+            and transition["plugin_selection_sha256"] == after.get("plugin_selection_sha256")
+            and transition["old_members"] == before.get("native_plugin_members_sha256")
+            and transition["new_members"] == after.get("native_plugin_members_sha256")
+        )
     return {
         "candidate_adapter_is_active": after.get("adapter_source") == candidate_src,
         "adapter_generation_changed": (
@@ -376,6 +495,7 @@ def _success_checks(before: dict[str, Any], after: dict[str, Any], candidate_src
         "selected_plugin_preserved": (
             after.get("plugin_selection_sha256") == before.get("plugin_selection_sha256")
         ),
+        "native_plugin_transition_proven": plugin_transition_proven,
         "overlay_skill_bytes_preserved": (
             after.get("overlay_content_count") == before.get("overlay_content_count")
             and after.get("overlay_contents_sha256") == before.get("overlay_contents_sha256")

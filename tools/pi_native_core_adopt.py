@@ -51,7 +51,8 @@ _SOURCE_PATH = re.compile(rb"/opt/hermes-installer-core-[0-9a-f]{9,64}/src\Z")
 _APPROVED_EMAIL_UNION_MAX_BYTES = 16 * 1024
 _QUALIFICATION_CHECKS = frozenset({
     "candidate_adapter_is_active", "adapter_generation_changed", "prior_source_bound",
-    "Core_generation_preserved", "selected_plugin_preserved", "overlay_skill_bytes_preserved",
+    "Core_generation_preserved", "selected_plugin_preserved", "native_plugin_transition_proven",
+    "overlay_skill_bytes_preserved",
     "Obsidian_registration_and_vault_preserved", "committed_update_cohort",
     "protected_prior_backup_bound", "candidate_listener_current",
     "protected_prior_backup_matches_exact_bytes", "runtime_token_digest_preserved",
@@ -66,7 +67,21 @@ _QUALIFICATION_SNAPSHOT_KEYS = frozenset({
     "obsidian_vault_tree_sha256", "adapter_update_state", "adapter_update_previous_source",
     "adapter_update_backup_source_generation", "primary_prompt_soul_sha256",
     "primary_prompt_state", "primary_owner_prefix_sha256", "primary_owner_prefix_length",
-    "primary_immutable_backup_sha256",
+    "primary_immutable_backup_sha256", "native_plugin_members_sha256",
+    "native_plugin_transition",
+})
+_NATIVE_PLUGIN_MEMBER_NAMES = ("plugin.yaml", "__init__.py")
+_NATIVE_PLUGIN_BACKUP_NAMES = {
+    "plugin.yaml": "native-plugin-plugin.yaml",
+    "__init__.py": "native-plugin-__init__.py",
+}
+_ADAPTER_BACKUP_BASE_MEMBERS = frozenset({
+    "journal.json", "unit", "launcher", "plugin-selection.json", "resources-record.json",
+    "overlay-record.json", "primary-record.json", "obsidian-registration.json", "cohort.json",
+})
+_NATIVE_PLUGIN_TRANSITION_FIELDS = frozenset({
+    "schema", "purpose", "old_adapter_generation", "new_adapter_generation",
+    "plugin_selection_sha256", "old_members", "new_members",
 })
 
 
@@ -562,6 +577,12 @@ def _valid_qualification_snapshot(value: object) -> bool:
         elif key == "primary_prompt_state":
             if value[key] not in {"adopted", "unmanaged"}:
                 return False
+        elif key == "native_plugin_members_sha256":
+            if not _valid_native_plugin_member_digests(value[key]):
+                return False
+        elif key == "native_plugin_transition":
+            if value[key] is not None and not _valid_native_plugin_transition(value[key]):
+                return False
     # Core uses the literal sentinel only for the four optional protected
     # files/trees below.  Bind each one to the independent state/count fields
     # so an arbitrary caller cannot turn a required digest into "absent".
@@ -573,6 +594,12 @@ def _valid_qualification_snapshot(value: object) -> bool:
     if (value["primary_record_sha256"] == "absent") != primary_unmanaged:
         return False
     if value["overlay_record_sha256"] == "absent" and value["overlay_content_count"] != 0:
+        return False
+    transition = value["native_plugin_transition"]
+    if transition is not None and (
+            transition["new_adapter_generation"] != value["adapter_generation"]
+            or transition["plugin_selection_sha256"] != value["plugin_selection_sha256"]
+            or transition["new_members"] != value["native_plugin_members_sha256"]):
         return False
     return True
 
@@ -619,6 +646,27 @@ def _validated_qualification_report(raw: bytes, candidate_sha: str,
                             or any(type(value) is not bool for value in checks.values())))
             or (not checks and after is not None)):
         raise ValueError
+    if after is not None:
+        after_transition = after["native_plugin_transition"]
+        if after_transition is None:
+            if before["native_plugin_members_sha256"] != after["native_plugin_members_sha256"]:
+                raise ValueError
+        elif after_transition["new_adapter_generation"] == before["adapter_generation"]:
+            # The unchanged old committed cohort can still name the transition
+            # that produced the currently installed predecessor generation.
+            if (after["adapter_generation"] != before["adapter_generation"]
+                    or after_transition["plugin_selection_sha256"]
+                       != before["plugin_selection_sha256"]
+                    or after["native_plugin_members_sha256"]
+                       != before["native_plugin_members_sha256"]):
+                raise ValueError
+        elif (after_transition["old_adapter_generation"] != before["adapter_generation"]
+              or after_transition["new_adapter_generation"] != after["adapter_generation"]
+              or after_transition["plugin_selection_sha256"] != before["plugin_selection_sha256"]
+              or after_transition["plugin_selection_sha256"] != after["plugin_selection_sha256"]
+              or after_transition["old_members"] != before["native_plugin_members_sha256"]
+              or after_transition["new_members"] != after["native_plugin_members_sha256"]):
+            raise ValueError
     for key in ("after_readback_error_type",):
         value = report[key]
         if value is not None and (not isinstance(value, str)
@@ -892,6 +940,31 @@ def _recover_adapter_refresh_core_for_resume(core_runtime, candidate_sha: str,
     snapshots = core_runtime._snapshot_adapter_update_bindings(
         core_source_generation=row["old_core_source_generation"])
     return record, raw, files, snapshots
+
+
+def _valid_native_plugin_member_digests(value: object) -> bool:
+    return (type(value) is dict and set(value) == set(_NATIVE_PLUGIN_MEMBER_NAMES)
+            and all(isinstance(value[name], str)
+                    and re.fullmatch(r"[0-9a-f]{64}", value[name]) is not None
+                    for name in _NATIVE_PLUGIN_MEMBER_NAMES))
+
+
+def _valid_native_plugin_transition(value: object) -> bool:
+    if type(value) is not dict or set(value) != _NATIVE_PLUGIN_TRANSITION_FIELDS:
+        return False
+    return (type(value["schema"]) is int and value["schema"] == 1
+            and value["purpose"] == "fixed-native-resources-plugin"
+            and isinstance(value["old_adapter_generation"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", value["old_adapter_generation"]) is not None
+            and isinstance(value["new_adapter_generation"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", value["new_adapter_generation"]) is not None
+            and value["old_adapter_generation"] != value["new_adapter_generation"]
+            and isinstance(value["plugin_selection_sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", value["plugin_selection_sha256"]) is not None
+            and _valid_native_plugin_member_digests(value["old_members"])
+            and _valid_native_plugin_member_digests(value["new_members"])
+            and value["old_members"]["plugin.yaml"] == value["new_members"]["plugin.yaml"]
+            and value["old_members"]["__init__.py"] != value["new_members"]["__init__.py"])
 
 
 def _finish_adapter_refresh_ingress(candidate_sha: str, expected_source: Path,

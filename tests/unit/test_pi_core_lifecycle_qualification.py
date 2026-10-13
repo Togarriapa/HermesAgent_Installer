@@ -6,6 +6,8 @@ live source update, protected backup, native process, or Pi acceptance result.
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -20,11 +22,21 @@ SPEC.loader.exec_module(qualification)
 
 
 def _snapshots():
+    old_members = {"plugin.yaml": "8" * 64, "__init__.py": "1" * 64}
+    new_members = {"plugin.yaml": "8" * 64, "__init__.py": "2" * 64}
+    transition = {
+        "schema": 1, "purpose": "fixed-native-resources-plugin",
+        "old_adapter_generation": "a" * 64, "new_adapter_generation": "9" * 64,
+        "plugin_selection_sha256": "c" * 64,
+        "old_members": old_members, "new_members": new_members,
+    }
     before = {
         "adapter_source": "/opt/hermes-installer-core-aaaaaaaaa/src",
         "adapter_generation": "a" * 64,
         "core_source_generation": "b" * 64,
         "plugin_selection_sha256": "c" * 64,
+        "native_plugin_members_sha256": old_members,
+        "native_plugin_transition": None,
         "overlay_content_count": 2,
         "overlay_contents_sha256": "d" * 64,
         "obsidian_registration_state": "registered",
@@ -35,6 +47,8 @@ def _snapshots():
         **before,
         "adapter_source": "/opt/hermes-installer-core-bbbbbbbbb/src",
         "adapter_generation": "9" * 64,
+        "native_plugin_members_sha256": new_members,
+        "native_plugin_transition": transition,
         "adapter_update_state": "active",
         "adapter_update_previous_source": before["adapter_source"],
         "adapter_update_backup_source_generation": before["adapter_generation"],
@@ -63,6 +77,46 @@ def test_only_current_candidate_commit_and_preserved_bindings_qualify():
         cohort_phase="committed", listener_current=True)
     assert checks["candidate_adapter_is_active"] is True
     assert checks["selected_plugin_preserved"] is False
+    assert checks["native_plugin_transition_proven"] is False
+
+
+def test_plugin_change_requires_exact_cohort_transition_and_unchanged_selection():
+    before, after = _snapshots()
+    checks = qualification._success_checks(
+        before, after, "/opt/hermes-installer-core-bbbbbbbbb/src",
+        cohort_phase="committed", listener_current=True)
+    assert checks["native_plugin_transition_proven"] is True
+
+    changed = dict(after)
+    changed["native_plugin_members_sha256"] = {
+        **after["native_plugin_members_sha256"], "__init__.py": "f" * 64}
+    checks = qualification._success_checks(
+        before, changed, "/opt/hermes-installer-core-bbbbbbbbb/src",
+        cohort_phase="committed", listener_current=True)
+    assert checks["native_plugin_transition_proven"] is False
+
+    no_transition = dict(after, native_plugin_transition=None,
+                         native_plugin_members_sha256=before["native_plugin_members_sha256"])
+    checks = qualification._success_checks(
+        before, no_transition, "/opt/hermes-installer-core-bbbbbbbbb/src",
+        cohort_phase="committed", listener_current=True)
+    assert checks["native_plugin_transition_proven"] is True
+
+    changed_without_row = dict(after, native_plugin_transition=None)
+    checks = qualification._success_checks(
+        before, changed_without_row, "/opt/hermes-installer-core-bbbbbbbbb/src",
+        cohort_phase="committed", listener_current=True)
+    assert checks["native_plugin_transition_proven"] is False
+
+    changed_manifest = dict(after)
+    changed_manifest["native_plugin_transition"] = {
+        **after["native_plugin_transition"],
+        "new_members": {**after["native_plugin_transition"]["new_members"],
+                        "plugin.yaml": "f" * 64},
+    }
+    assert qualification._success_checks(
+        before, changed_manifest, "/opt/hermes-installer-core-bbbbbbbbb/src",
+        cohort_phase="committed", listener_current=True)["native_plugin_transition_proven"] is False
 
 
 @pytest.mark.parametrize("mutation,phase,listener", [
@@ -122,6 +176,7 @@ def _backup_fixture():
     journal = b'{"adapter_generation":"' + b"a" * 64 + b'"}'
     raw = {
         "journal": journal,
+        "adapter_generation": "a" * 64,
         "unit": b"prior-unit-bytes",
         "launcher": b"prior-launcher-bytes",
         "resources_record": b"prior-resources-binding",
@@ -147,8 +202,19 @@ def _backup_fixture():
         "cohort.json": raw["prior_cohort"],
         "plugin-selection.json": b'{"schema":1,"selection_sha256":"' + b"c" * 64 + b'"}',
     }
-    after_journal = b'{"adapter_update_backup":{"path":"fixed","source_generation":"' + b"a" * 64 + b'"}}'
+    backup_files = {name: hashlib.sha256(value).hexdigest() for name, value in contents.items()}
+    old_plugin_members = {"plugin.yaml": b"prior plugin manifest", "__init__.py": b"prior plugin module"}
+    raw["native_plugin_members"] = old_plugin_members
+    raw["native_plugin_members_sha256"] = {
+        name: hashlib.sha256(value).hexdigest() for name, value in old_plugin_members.items()}
+    after_journal = (b'{"adapter_update_backup":{"files":' +
+                     json.dumps(backup_files, sort_keys=True).encode() +
+                     b',"path":"fixed","source_generation":"' + b"a" * 64 + b'"}}')
     after = {"journal": after_journal, "token_sha256": raw["token_sha256"],
+             "adapter_generation": "b" * 64,
+             "native_plugin_members": old_plugin_members,
+             "native_plugin_members_sha256": raw["native_plugin_members_sha256"],
+             "native_plugin_transition": None,
              "primary": {"state": "adopted", "owner_prefix": b"edited owner bytes",
                          "backup": b"original immutable owner bytes",
                          "soul": b"edited owner bytes\n<managed block>",
@@ -160,7 +226,9 @@ def _backup_fixture():
     class Runtime:
         @staticmethod
         def _read_adapter_update_backup(reference):
-            assert reference == {"path": "fixed", "source_generation": "a" * 64}
+            assert reference == {"files": {
+                name: hashlib.sha256(value).hexdigest() for name, value in contents.items()},
+                "path": "fixed", "source_generation": "a" * 64}
             return prior, contents
 
     return Runtime(), raw, after, contents
@@ -169,6 +237,65 @@ def _backup_fixture():
 def test_protected_backup_requires_exact_old_journal_unit_launcher_and_bindings():
     runtime, before, after, _contents = _backup_fixture()
     assert qualification._backup_matches_before(runtime, before, after) is True
+
+
+def test_native_plugin_transition_backup_retains_old_member_bytes_and_exact_manifest(tmp_path):
+    runtime, before, after, contents = _backup_fixture()
+    old_members = before["native_plugin_members"]
+    new_members = {"plugin.yaml": old_members["plugin.yaml"],
+                   "__init__.py": b"new verified plugin module"}
+    row = {
+        "schema": 1, "purpose": "fixed-native-resources-plugin",
+        "old_adapter_generation": "a" * 64, "new_adapter_generation": "b" * 64,
+        "plugin_selection_sha256": before["plugin_selection_sha256"],
+        "old_members": {name: hashlib.sha256(data).hexdigest()
+                        for name, data in old_members.items()},
+        "new_members": {name: hashlib.sha256(data).hexdigest()
+                        for name, data in new_members.items()},
+    }
+    after["native_plugin_members"] = new_members
+    after["native_plugin_members_sha256"] = row["new_members"]
+    after["native_plugin_transition"] = row
+    for name, backup_name in qualification._NATIVE_PLUGIN_BACKUP_NAMES.items():
+        contents[backup_name] = old_members[name]
+    files = {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()}
+    backup = tmp_path / "adapter-backup"
+    backup.mkdir()
+    for name, data in contents.items():
+        (backup / name).write_bytes(data)
+    after["journal"] = (json.dumps({"adapter_update_backup": {
+        "files": files, "path": "fixed", "source_generation": "a" * 64}},
+        sort_keys=True, separators=(",", ":"))).encode()
+
+    class FilesystemRuntime:
+        @staticmethod
+        def _read_adapter_update_backup(reference):
+            assert reference["path"] == "fixed"
+            found = {path.name: path.read_bytes() for path in backup.iterdir()}
+            assert reference["files"] == {
+                name: hashlib.sha256(data).hexdigest() for name, data in found.items()}
+            return {"adapter_generation": "a" * 64}, found
+
+    assert qualification._backup_matches_before(FilesystemRuntime(), before, after) is True
+
+    member = backup / "native-plugin-__init__.py"
+    member.write_bytes(member.read_bytes() + b" changed")
+    assert qualification._backup_matches_before(FilesystemRuntime(), before, after) is False
+
+    member.write_bytes(contents["native-plugin-__init__.py"])
+    (backup / "unowned-extra.py").write_bytes(b"unowned")
+    assert qualification._backup_matches_before(FilesystemRuntime(), before, after) is False
+
+
+def test_legacy_nine_member_backup_cannot_smuggle_plugin_transition_files():
+    runtime, before, after, contents = _backup_fixture()
+    contents["native-plugin-__init__.py"] = b"unbound transition member"
+    reference = json.loads(after["journal"])["adapter_update_backup"]
+    reference["files"] = {
+        name: hashlib.sha256(value).hexdigest() for name, value in contents.items()}
+    after["journal"] = (json.dumps({"adapter_update_backup": reference},
+                                   sort_keys=True, separators=(",", ":"))).encode()
+    assert qualification._backup_matches_before(runtime, before, after) is False
 
 
 @pytest.mark.parametrize("field", [

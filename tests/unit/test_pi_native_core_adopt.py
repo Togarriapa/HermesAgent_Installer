@@ -1311,7 +1311,14 @@ def _completed_ingress_handoff_fixture(tmp_path, monkeypatch):
 
 
 def _qualification_report_fixture(candidate="b" * 40, archive="c" * 64):
-    def snapshot(source, generation):
+    transition = {
+        "schema": 1, "purpose": "fixed-native-resources-plugin",
+        "old_adapter_generation": "d" * 64, "new_adapter_generation": "e" * 64,
+        "plugin_selection_sha256": "6" * 64,
+        "old_members": {"plugin.yaml": "8" * 64, "__init__.py": "1" * 64},
+        "new_members": {"plugin.yaml": "8" * 64, "__init__.py": "2" * 64},
+    }
+    def snapshot(source, generation, members, plugin_transition=None):
         result = {
             "journal_sha256": "1" * 64, "unit_sha256": "2" * 64,
             "launcher_sha256": "3" * 64, "token_custody_verified": True,
@@ -1328,6 +1335,8 @@ def _qualification_report_fixture(candidate="b" * 40, archive="c" * 64):
             "primary_prompt_soul_sha256": "a" * 64, "primary_prompt_state": "unmanaged",
             "primary_owner_prefix_sha256": "b" * 64, "primary_owner_prefix_length": 12,
             "primary_immutable_backup_sha256": None,
+            "native_plugin_members_sha256": members,
+            "native_plugin_transition": plugin_transition,
         }
         return result
     return {
@@ -1341,8 +1350,10 @@ def _qualification_report_fixture(candidate="b" * 40, archive="c" * 64):
              "function": "_replace_launcher", "line": 1234}]},
         "cli_output": {"stdout_bytes": 0, "stdout_sha256": "0" * 64,
                        "stderr_bytes": 0, "stderr_sha256": "0" * 64},
-        "before": snapshot("/opt/hermes-installer-core-aaaaaaaaa/src", "d" * 64),
-        "after": snapshot("/opt/hermes-installer-core-bbbbbbbbb/src", "e" * 64),
+        "before": snapshot("/opt/hermes-installer-core-aaaaaaaaa/src", "d" * 64,
+                           transition["old_members"]),
+        "after": snapshot("/opt/hermes-installer-core-bbbbbbbbb/src", "e" * 64,
+                          transition["new_members"], transition),
         "after_readback_error_type": None, "cohort_phase": "source-starting",
         "checks": {name: False for name in adopt._QUALIFICATION_CHECKS},
         "outcome": "pending_or_failed", "rollback_qualification": "not_run",
@@ -1387,11 +1398,17 @@ def test_nonzero_qualification_persists_only_validated_sanitized_report(tmp_path
         assert snapshot["obsidian_registration_state"] == "absent"
         assert snapshot["obsidian_registration_sha256"] == "absent"
         assert snapshot["obsidian_vault_tree_sha256"] == "absent"
+    assert persisted["before"]["native_plugin_members_sha256"] == (
+        persisted["after"]["native_plugin_transition"]["old_members"])
+    assert persisted["after"]["native_plugin_members_sha256"] == (
+        persisted["after"]["native_plugin_transition"]["new_members"])
 
 
 @pytest.mark.parametrize("report_kind", [
     "malformed", "foreign-candidate", "unsafe-origin", "forged-absent-digest",
-    "inconsistent-registration-sentinel",
+    "inconsistent-registration-sentinel", "plugin-map-extra-member",
+    "plugin-transition-member-tamper", "plugin-transition-extra-member",
+    "plugin-transition-manifest-tamper",
 ])
 @pytest.mark.skipif(os.geteuid() != 0, reason="protected failure report fixture requires root")
 def test_untrusted_qualification_failure_report_cannot_replace_last_failure(
@@ -1415,8 +1432,16 @@ def test_untrusted_qualification_failure_report_cannot_replace_last_failure(
             report["cli_failure_origin"]["frames"][0]["source_relative_path"] = "/etc/shadow"
         elif report_kind == "forged-absent-digest":
             report["before"]["resources_record_sha256"] = "absent"
-        else:
+        elif report_kind == "inconsistent-registration-sentinel":
             report["before"]["obsidian_registration_state"] = "registered"
+        elif report_kind == "plugin-map-extra-member":
+            report["before"]["native_plugin_members_sha256"]["other.py"] = "a" * 64
+        elif report_kind == "plugin-transition-member-tamper":
+            report["after"]["native_plugin_transition"]["new_members"]["__init__.py"] = "f" * 64
+        elif report_kind == "plugin-transition-extra-member":
+            report["after"]["native_plugin_transition"]["new_members"]["other.py"] = "f" * 64
+        else:
+            report["after"]["native_plugin_transition"]["new_members"]["plugin.yaml"] = "f" * 64
         raw = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()
     tool = Path(adopt.__file__)
     tool_info = tool.lstat()
