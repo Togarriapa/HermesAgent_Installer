@@ -382,7 +382,7 @@ def _descriptor(value: Any) -> ProfileAdminDescriptor:
             or any(ord(char) < 0x20 for char in value.display_name)
             or value.kind not in {"jarvis", "expert"}
             or not _valid_generation(value.source_generation)
-            or type(value.file_kinds) is not tuple or len(value.file_kinds) > len(FILE_NAMES)
+            or type(value.file_kinds) is not tuple or not 1 <= len(value.file_kinds) <= len(FILE_NAMES)
             or len(set(value.file_kinds)) != len(value.file_kinds)
             or any(not _profile_kind(item) for item in value.file_kinds)):
         raise JarvisChatDenied("current native profile inventory is invalid")
@@ -764,7 +764,11 @@ _VIEW = '''<section class="profile-admin" aria-labelledby="profile-admin-title">
     <p>Review and edit existing Jarvis and internal Expert profile files. Experts remain internal workers; every conversation stays with Jarvis.</p></header>
   <p data-profile-status role="status" aria-live="polite">Checking the current Core profile source…</p>
   <div class="profile-admin-layout">
-    <aside aria-label="Profiles and files"><label for="profile-admin-select">Profile</label>
+    <aside aria-label="Profiles and files"><label for="profile-search">Find a profile</label>
+      <input data-profile-search id="profile-search" type="search" maxlength="96" autocomplete="off" aria-controls="profile-admin-select" placeholder="Search up to 208 profiles">
+      <p data-profile-count class="profile-admin-note" aria-live="polite">Checking editable native file records…</p>
+      <p data-profile-empty class="profile-admin-note" role="status" hidden>No profiles match this search.</p>
+      <label for="profile-admin-select">Profile</label>
       <select data-profile-select id="profile-admin-select"><option value="">Loading profiles…</option></select>
       <label for="profile-file-select">Existing file</label>
       <select data-file-select id="profile-file-select" disabled><option value="">Choose a profile first</option></select>
@@ -790,10 +794,12 @@ _VIEW = '''<section class="profile-admin" aria-labelledby="profile-admin-title">
 
 _CSS = '''.profile-admin{max-width:1180px;margin:0 auto;color:var(--text,#edf5f6)}.profile-admin header{max-width:760px;margin-bottom:20px}.profile-admin h1{margin:0;font-size:clamp(25px,4vw,38px);letter-spacing:-.03em}.profile-admin header>p:last-child,.profile-admin-note,.profile-admin-generation{color:#9ab0b4;line-height:1.55}.profile-admin-kicker{margin:0 0 7px;color:#62dbe1;font-size:10px;letter-spacing:.13em}.profile-admin-layout{display:grid;grid-template-columns:minmax(210px,270px) minmax(0,1fr);gap:18px}.profile-admin-layout aside,.profile-admin-layout main{min-width:0;border:1px solid var(--line);background:rgba(10,27,33,.74);padding:16px;border-radius:10px}.profile-admin label{display:block;color:#a6bdc0;font-size:12px;margin:0 0 7px}.profile-admin select,.profile-admin textarea{width:100%;border:1px solid #315058;border-radius:6px;background:#08171c;color:#e4f3f3;font:inherit}.profile-admin select{min-height:42px;padding:8px;margin-bottom:18px}.profile-admin code{overflow-wrap:anywhere;color:#bdebee}.profile-admin-note{font-size:12px}.profile-editor-toolbar,.profile-diff>div{display:flex;align-items:center;justify-content:space-between;gap:12px}.profile-editor-toolbar h2,.profile-diff h3{margin:0;font-size:15px}.profile-editor-toolbar p{margin:5px 0 12px;color:#93aaae;font-size:12px}.profile-admin button{min-height:42px;padding:8px 13px;border:1px solid #3c858b;border-radius:6px;background:#12464c;color:#e3ffff;cursor:pointer}.profile-admin button:disabled{opacity:.5;cursor:not-allowed}.profile-editor-label{margin-top:6px!important}.profile-admin textarea{display:block;min-height:360px;padding:13px;resize:vertical;line-height:1.55;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}.profile-diff{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}.profile-diff pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;padding:12px;border:1px solid var(--line);border-radius:6px;background:#061115;color:#cce1e3;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.profile-admin [role=status]{min-height:1.5em;color:#9eb7ba;font-size:12px}@media(max-width:760px){.profile-admin-layout{grid-template-columns:1fr}.profile-admin-layout aside{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}.profile-admin-layout aside>label{grid-column:span 2}.profile-admin-generation,.profile-admin-note{grid-column:span 2}.profile-admin-layout main{padding:12px}.profile-admin textarea{min-height:300px}.profile-editor-toolbar{align-items:flex-start;flex-direction:column}}@media(prefers-reduced-motion:reduce){.profile-admin *{scroll-behavior:auto!important;transition:none!important}}'''
 
+_CSS += ".profile-admin input{width:100%;min-height:42px;padding:8px;margin:0 0 12px;border:1px solid #315058;border-radius:6px;background:#08171c;color:#e4f3f3;font:inherit}"
+
 _MOUNT_JS = r'''function mount(root, api) {
   let active = true, profiles = [], selected = null, file = null, baseSha = null, previewToken = null;
   let contextEpoch = 0, previewEpoch = 0, reviewed = null;
-  const q = (s) => root.querySelector(s), status = q("[data-profile-status]"), profileSelect = q("[data-profile-select]"), fileSelect = q("[data-file-select]"), editor = q("[data-profile-editor]"), review = q("[data-profile-review]"), save = q("[data-profile-save]"), diff = q("[data-profile-diff]"), protectedSection=q("[data-protected-section]"), protectedContent=q("[data-protected-content]");
+  const q = (s) => root.querySelector(s), status = q("[data-profile-status]"), profileSelect = q("[data-profile-select]"), profileSearch=q("[data-profile-search]"), profileCount=q("[data-profile-count]"), profileEmpty=q("[data-profile-empty]"), fileSelect = q("[data-file-select]"), editor = q("[data-profile-editor]"), review = q("[data-profile-review]"), save = q("[data-profile-save]"), diff = q("[data-profile-diff]"), protectedSection=q("[data-protected-section]"), protectedContent=q("[data-protected-content]");
   const text = (s, v) => { const n=q(s); if(n)n.textContent=v; };
   const token = () => { const b=new Uint8Array(24);crypto.getRandomValues(b);return Array.from(b,x=>x.toString(16).padStart(2,"0")).join(""); };
   const safeId = (v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
@@ -803,6 +809,22 @@ _MOUNT_JS = r'''function mount(root, api) {
     selected&&selected.id===snapshot.profileId&&file===snapshot.file&&baseSha===snapshot.baseSha&&
     editor.value===snapshot.content;
   const changed = () => { invalidateReview();review.disabled=!(file&&file.editable===true&&baseSha&&editor.value!==file.content); };
+  function renderProfiles() {
+    if(!active)return;
+    const retained=profileSelect.value||selected&&selected.id||"", query=profileSearch.value.trim().slice(0,96).toLocaleLowerCase();
+    const matches=profiles.filter(row=>`${row.name} ${row.kind}`.toLocaleLowerCase().includes(query));
+    const visible=new Set(matches.map(row=>row.id));
+    profileSelect.replaceChildren(new Option("Choose a profile", ""));
+    for(const row of matches)profileSelect.add(new Option(`${row.name} · ${row.kind==="jarvis"?"Jarvis master":"internal Expert"}`,row.id));
+    if(retained&&!visible.has(retained)){
+      const row=profiles.find(item=>item.id===retained);
+      if(row){const option=new Option(`${row.name} · current selection (outside search)`,row.id);profileSelect.add(option);}
+    }
+    profileSelect.value=retained;
+    profileSelect.disabled=!profiles.length;
+    profileCount.textContent=`${matches.length} matching profiles · ${matches.reduce((total,row)=>total+row.files.length,0)} existing editable native file records`;
+    profileEmpty.hidden=matches.length!==0;
+  }
   async function loadFile() {
     const epoch=++contextEpoch;invalidateReview();file=null;baseSha=null;editor.value="";editor.disabled=true;review.disabled=true;save.disabled=true;protectedSection.hidden=true;protectedContent.textContent="";
     const row=profiles.find((item)=>item.id===profileSelect.value), kind=fileSelect.value;
@@ -826,16 +848,15 @@ _MOUNT_JS = r'''function mount(root, api) {
       if(!active||!data||!Array.isArray(data.profiles)||data.profiles.length>208||
         !data.profiles.every(x=>x&&safeId(x.id)&&typeof x.name==="string"&&x.name.length>0&&x.name.length<=96&&
           ["jarvis","expert"].includes(x.kind)&&typeof x.sourceGeneration==="string"&&x.sourceGeneration.length>0&&
-          Array.isArray(x.files)&&x.files.length<=3&&x.files.every((f,i)=>f&&["soul","description","instructions"].includes(f.kind)&&
+          Array.isArray(x.files)&&x.files.length>=1&&x.files.length<=3&&x.files.every((f,i)=>f&&["soul","description","instructions"].includes(f.kind)&&
             f.name==={soul:"SOUL.md",description:"description.md",instructions:"instructions.md"}[f.kind]&&f.editable===true&&
             x.files.findIndex(other=>other&&other.kind===f.kind)===i))||
         new Set(data.profiles.map(x=>x.id)).size!==data.profiles.length||
         data.profiles.filter(x=>x.kind==="jarvis").length!==1)throw Error();
-      profiles=data.profiles;profileSelect.replaceChildren(new Option("Choose a profile", ""));
-      for(const row of profiles){const option=new Option(`${row.name} · ${row.kind==="jarvis"?"Jarvis master":"internal Expert"}`,row.id);profileSelect.add(option);}
-      profileSelect.disabled=!profiles.length;status.textContent=profiles.length?"Select Jarvis or an internal Expert profile to inspect its existing files.":"No editable native profile files are available.";
+      profiles=data.profiles;renderProfiles();status.textContent="Select Jarvis or an internal Expert profile to inspect its existing files.";
     } catch(_){if(active)status.textContent="Current native profiles are unavailable.";}
   }
+  profileSearch.addEventListener("input",renderProfiles);
   profileSelect.addEventListener("change",()=>{
     selected=profiles.find(x=>x.id===profileSelect.value)||null;fileSelect.replaceChildren(new Option(selected?"Choose a file":"Choose a profile first",""));
     if(selected)for(const item of selected.files){if(item&&["soul","description","instructions"].includes(item.kind)&&typeof item.name==="string")fileSelect.add(new Option(item.name,item.kind));}
@@ -869,7 +890,7 @@ _MOUNT_JS = r'''function mount(root, api) {
     } catch(_){if(current(snapshot)&&previewToken===reviewedToken){invalidateReview();status.textContent="Save was not confirmed. Inspect current source status before retrying.";}}
   });
   loadProfiles();
-  return () => { active=false;contextEpoch++;invalidateReview();profileSelect.replaceChildren();fileSelect.replaceChildren();editor.value="";diff.textContent=""; };
+  return () => { active=false;contextEpoch++;invalidateReview();profileSearch.value="";profileCount.textContent="";profileEmpty.hidden=true;profileSelect.replaceChildren();fileSelect.replaceChildren();editor.value="";diff.textContent=""; };
 }'''
 
 PROFILE_ADMIN_FEATURE = JarvisFeatureAssets(
