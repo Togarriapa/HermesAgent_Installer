@@ -295,7 +295,18 @@ class JarvisChatAssetTests(unittest.TestCase):
         overview_features = [feature for feature in FEATURE_ASSETS if feature.feature_id == "overview"]
         self.assertEqual(len(overview_features), 1)
         overview = overview_features[0]
-        self.assertEqual(markup.count(overview.view_html), 1)
+        self.assertEqual(markup.count('id="overview-view"'), 1)
+        self.assertEqual(markup.count('data-feature-root="overview"'), 1)
+        self.assertEqual(markup.count('id="jarvis-ecosystem-feature-host"'), 1)
+        composed_experts_entry = (
+            '<div id="jarvis-ecosystem-feature-host" data-feature-host="ecosystem-fleet">'
+            '<div class="ecosystem-heading"><button type="button" data-view="ecosystem">'
+            'Explore Experts</button></div></div>'
+        )
+        self.assertEqual(markup.count(composed_experts_entry), 1)
+        self.assertEqual(markup.count("Explore Experts</button>"), 1)
+        self.assertEqual(markup.count(">Experts</button>"), 1)
+        self.assertIn('class="reactor-dial"', markup)
         self.assertEqual(source.count(overview.mount_js), 1)
         self.assertIn('class="reactor-dial"', overview.view_html)
         self.assertIn('class="reactor-orbit reactor-orbit-inner"', overview.view_html)
