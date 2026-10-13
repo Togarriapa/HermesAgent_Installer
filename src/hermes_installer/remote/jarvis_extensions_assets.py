@@ -46,20 +46,63 @@ _MOUNT = r'''function mount(container, api) {
   const list = root.querySelector('[data-extension-list]'), status = root.querySelector('[data-extension-status]');
   const refresh = root.querySelector('[data-extension-refresh]');
   const lifecycle = new AbortController(), signal = lifecycle.signal, editors = new Set();
-  let active = true, snapshot = null, busy = false;
-  const text = (parent, tag, value) => { const node = document.createElement(tag); node.textContent = String(value ?? 'Unknown'); parent.append(node); return node; };
+  const controls = new Set(), renderedControls = new Set();
+  const forms = ['[data-add-skill]','[data-add-plugin]','[data-add-mcp]'].map(selector => root.querySelector(selector));
+  let active = true, snapshot = null, busy = false, inventoryLoading = false, pendingSkillReads = 0;
+  let recoveryRequired = false, inventoryReadRevision = 0;
+  const actionsBlocked = () => busy || inventoryLoading || pendingSkillReads > 0 || recoveryRequired || !snapshot;
+  function syncControls() {
+    const disabled = actionsBlocked();
+    for (const control of controls) control.disabled = disabled;
+    refresh.disabled = busy || inventoryLoading;
+  }
+  const text = (parent, tag, value) => {
+    const node = document.createElement(tag); node.textContent = String(value ?? 'Unknown');
+    if (tag === 'button') { controls.add(node); renderedControls.add(node); node.disabled = actionsBlocked(); }
+    parent.append(node); return node;
+  };
+  for (const form of forms) {
+    const input = form.querySelector('input'), button = form.querySelector('button');
+    if (input) controls.add(input); if (button) controls.add(button);
+  }
   const makeKey = () => { const bytes = new Uint8Array(24); crypto.getRandomValues(bytes); return btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,''); };
   function exactConfirm(phrase) { return window.prompt(`Type ${phrase} to confirm this owner action.`) === phrase; }
-  async function mutate(path, body, phrase) {
-    if (!exactConfirm(phrase)) return;
-    busy = true; status.textContent = 'Applying the confirmed owner action…';
-    try { const result = await api.post(path, {...body, confirmation:phrase, idempotency_key:makeKey(), revision:snapshot.revision});
-      if (!active) return;
-      status.textContent = result && result.status === 'applied' ? (result.result && result.result.recoveryId ? `${result.result.action==='restore'?'Restored':'Archived'} skill version ${result.result.recoveryId}; refreshing native state.` : 'Owner action applied; refreshing observed state.') : 'The action may still be pending. Refresh to check current state.';
-    } catch (_) { if (active) status.textContent = 'The action was not confirmed. Refresh to see the current native state.'; }
-    finally { if (active) { busy = false; await load(); } }
+  function sourceStillCurrent(item, sourceRevision) {
+    return !!snapshot && snapshot.revision === sourceRevision && snapshot.items.some(candidate =>
+      candidate && candidate.id === item.id && candidate.kind === item.kind
+        && candidate.source === item.source && candidate.editable === item.editable);
   }
-  function card(item) {
+  async function mutate(path, body, phrase, sourceRevision) {
+    if (!active || actionsBlocked()) return;
+    if (typeof sourceRevision !== 'string' || sourceRevision !== snapshot.revision) {
+      recoveryRequired = true; status.textContent = 'The extension source changed. Refresh the inventory before another owner action.'; syncControls(); return;
+    }
+    if (!exactConfirm(phrase)) return;
+    if (!active || actionsBlocked() || sourceRevision !== snapshot.revision) return;
+    busy = true; status.textContent = 'Applying the confirmed owner action…'; syncControls();
+    let appliedMessage = null;
+    try { const result = await api.post(path, {...body, confirmation:phrase, idempotency_key:makeKey(), revision:sourceRevision});
+      if (!active) return;
+      if (result && result.status === 'applied') {
+        appliedMessage = result.result && result.result.recoveryId
+          ? `${result.result.action==='restore'?'Restored':'Archived'} skill version ${result.result.recoveryId}`
+          : 'Owner action reported applied';
+        recoveryRequired = true;
+        status.textContent = `${appliedMessage}; reading current inventory.`;
+      } else {
+        recoveryRequired = true;
+        status.textContent = 'The action outcome is unknown and may still be pending. Refresh current inventory before another owner action; do not repeat it yet.';
+      }
+    } catch (_) {
+      if (active) { recoveryRequired = true; status.textContent = 'The action outcome is unknown and may still be pending. Refresh current inventory before another owner action; do not repeat it yet.'; }
+    } finally {
+      if (active) {
+        busy = false; syncControls();
+        if (appliedMessage) await load({afterApplied: appliedMessage});
+      }
+    }
+  }
+  function card(item, sourceRevision) {
     const box = document.createElement('article'); box.className='extension-card';
     text(box,'h3',item.label); text(box,'p',`${item.kind} · ${item.kind==='skills'?(item.originLabel||item.source):item.source}`);
     const detail = item.kind === 'plugins' ? `${item.state || 'status unknown'} · ${item.version || 'version unknown'}`
@@ -69,23 +112,40 @@ _MOUNT = r'''function mount(container, api) {
     const actions = document.createElement('div'); actions.className='extension-actions';
     if (item.kind === 'skills' && ['useradded','bundledResources'].includes(item.source) && item.editable) {
       const edit=text(actions,'button','Edit skill'); edit.type='button'; edit.addEventListener('click',async()=>{
+        if (!active || actionsBlocked()) return;
+        pendingSkillReads += 1; status.textContent='Reading current skill source…'; syncControls();
         try {
-          const file=await api.post('/chat/api/extensions/skills/read',{item_id:item.id,revision:snapshot.revision});
+          const file=await api.post('/chat/api/extensions/skills/read',{item_id:item.id,revision:sourceRevision});
           if (!active) return;
+          if (!sourceStillCurrent(item, sourceRevision)) {
+            status.textContent='The inventory changed while the skill was loading. Reopen the current skill before editing.';
+            return;
+          }
           const dialog=document.createElement('dialog'); dialog.setAttribute('aria-labelledby','extension-skill-edit-title');
           const form=document.createElement('form'); form.method='dialog';
           const heading=text(form,'h3',`Edit ${item.label}`); heading.id='extension-skill-edit-title';
-          const area=document.createElement('textarea'); area.value=file.content; area.maxLength=65536; area.rows=22; area.setAttribute('aria-label','Skill instructions');
-          const save=document.createElement('button'); save.type='button'; save.textContent='Save skill';
-          const cancel=document.createElement('button'); cancel.type='button'; cancel.textContent='Cancel';
+          const area=document.createElement('textarea'); area.value=file.content; area.maxLength=65536; area.rows=22; area.setAttribute('aria-label','Skill instructions'); controls.add(area);
+          const save=document.createElement('button'); save.type='button'; save.textContent='Save skill'; controls.add(save);
+          const cancel=document.createElement('button'); cancel.type='button'; cancel.textContent='Cancel'; controls.add(cancel);
           form.append(area,save,cancel); dialog.append(form); root.append(dialog);
           cancel.addEventListener('click',()=>dialog.close(),{signal});
-          save.addEventListener('click',async()=>{ if (!active) return; const content=area.value; dialog.close(); dialog.remove(); editors.delete(dialog);
-            await mutate('/chat/api/extensions/skills/edit',{item_id:item.id,content},`EDIT ${item.label}`);
+          save.addEventListener('click',async()=>{
+            if (!active || actionsBlocked()) return;
+            if (!sourceStillCurrent(item, sourceRevision)) {
+              status.textContent='The inventory changed while this editor was open. Close it and reopen the current skill to review the current source before saving.';
+              dialog.close(); dialog.remove(); editors.delete(dialog); return;
+            }
+            const content=area.value; dialog.close(); dialog.remove(); editors.delete(dialog);
+            await mutate('/chat/api/extensions/skills/edit',{item_id:item.id,content},`EDIT ${item.label}`,sourceRevision);
           },{signal});
-          dialog.addEventListener('close',()=>{dialog.remove();editors.delete(dialog);},{once:true,signal});
-          editors.add(dialog); dialog.showModal(); area.focus();
-        } catch (_) { if (active) status.textContent='Current skill source is unavailable; refresh and retry.'; }
+          dialog.addEventListener('close',()=>{
+            dialog.remove(); editors.delete(dialog); controls.delete(area); controls.delete(save); controls.delete(cancel);
+          },{once:true,signal});
+          editors.add(dialog); status.textContent='Current skill source is loaded for review.'; syncControls(); dialog.showModal(); area.focus();
+        } catch (_) {
+          if (active && snapshot && snapshot.revision === sourceRevision && !busy && !inventoryLoading)
+            status.textContent='Current skill source is unavailable; refresh and retry.';
+        } finally { if (active) { pendingSkillReads = Math.max(0, pendingSkillReads - 1); syncControls(); } }
       },{signal});
       if (item.removable) { const archive=text(actions,'button',item.source==='bundledResources'?'Archive overlay':'Archive skill'); archive.type='button'; archive.addEventListener('click',()=>{
         const resource = item.source==='bundledResources';
@@ -93,7 +153,7 @@ _MOUNT = r'''function mount(container, api) {
           ? `Archive the owner overlay for ${item.label}? Hermes will use the pinned Bundled Resources base again. The previous overlay is retained for recovery.`
           : `Archive ${item.label}? Its owner-added SKILL.md entrypoint is moved out of discovery. A root-private recovery backup is retained.`;
         if (!window.confirm(warning)) return;
-        void mutate('/chat/api/extensions/skills/remove',{item_id:item.id},`${resource?'ARCHIVE OVERLAY':'ARCHIVE (RECOVERABLE)'} ${item.label}`);
+        void mutate('/chat/api/extensions/skills/remove',{item_id:item.id},`${resource?'ARCHIVE OVERLAY':'ARCHIVE (RECOVERABLE)'} ${item.label}`,sourceRevision);
       },{signal}); }
     }
     if (item.kind==='skills' && Array.isArray(item.archivedVersions) && item.archivedVersions.length
@@ -104,7 +164,7 @@ _MOUNT = r'''function mount(container, api) {
         const selected=Number(window.prompt(`Choose the archived version to restore for ${item.label}:\n${choices}`, '1'));
         if (!Number.isInteger(selected)||selected<1||selected>versions.length) return;
         const version=versions[selected-1];
-        await mutate('/chat/api/extensions/skills/restore',{item_id:item.id,restore_id:version.restoreId,restore_sha256:version.sha256},`RESTORE ${item.label} ${version.restoreId}`);
+        await mutate('/chat/api/extensions/skills/restore',{item_id:item.id,restore_id:version.restoreId,restore_sha256:version.sha256},`RESTORE ${item.label} ${version.restoreId}`,sourceRevision);
       },{signal});
     }
     if (item.kind === 'plugins' && item.editable && Array.isArray(item.settings) && item.settings.some((field)=>['string','number','boolean','enum'].includes(field.type))) {
@@ -117,42 +177,70 @@ _MOUNT = r'''function mount(container, api) {
           else if (field.type==='number') { const number=Number(entered); if (!Number.isFinite(number)) { status.textContent='Enter a valid number.'; return; } values[field.key]=number; }
           else values[field.key]=entered;
         }
-        if (Object.keys(values).length) await mutate('/chat/api/extensions/plugins/edit',{item_id:item.id,values},`EDIT ${item.label}`);
+        if (Object.keys(values).length) await mutate('/chat/api/extensions/plugins/edit',{item_id:item.id,values},`EDIT ${item.label}`,sourceRevision);
       },{signal});
       if (item.source==='useradded') { const toggle = text(actions,'button',item.state==='enabled'?'Disable':'Enable'); toggle.type='button'; toggle.addEventListener('click',()=>{
         const enabled = item.state!=='enabled'; const phrase=`${enabled?'ENABLE':'DISABLE'} ${item.label}`;
-        void mutate('/chat/api/extensions/plugins/toggle',{item_id:item.id,enabled},phrase);
+        void mutate('/chat/api/extensions/plugins/toggle',{item_id:item.id,enabled},phrase,sourceRevision);
       },{signal}); }
     }
     if (item.kind==='plugins' && item.removable && item.source==='useradded') {
       const remove=text(actions,'button','Remove permanently'); remove.type='button'; remove.addEventListener('click',()=>{
         const warning=`Permanently remove ${item.label} from this Hermes profile? This deletes its plugin package and registration and cannot be undone from this dashboard. It does not target your Obsidian vault.`;
         if (!window.confirm(warning)) return;
-        void mutate('/chat/api/extensions/plugins/remove',{item_id:item.id},`DELETE PERMANENTLY ${item.label}`);
+        void mutate('/chat/api/extensions/plugins/remove',{item_id:item.id},`DELETE PERMANENTLY ${item.label}`,sourceRevision);
       },{signal});
     }
     if (item.kind==='mcps' && item.removable) { const remove=text(actions,'button','Remove server'); remove.type='button'; remove.addEventListener('click',()=>{
-      const kind=item.kind; void mutate(`/chat/api/extensions/${kind}/remove`,{item_id:item.id},`DELETE ${item.label}`);
+      const kind=item.kind; void mutate(`/chat/api/extensions/${kind}/remove`,{item_id:item.id},`DELETE ${item.label}`,sourceRevision);
     },{signal}); }
     box.append(actions); return box;
   }
-  function render() { list.replaceChildren(); if (!snapshot || !Array.isArray(snapshot.items)) return;
-    for (const item of snapshot.items) list.append(card(item));
+  function render() {
+    for (const control of renderedControls) controls.delete(control);
+    renderedControls.clear(); list.replaceChildren();
+    if (!snapshot || !Array.isArray(snapshot.items)) { syncControls(); return; }
+    const sourceRevision=snapshot.revision;
+    for (const item of snapshot.items) list.append(card(item,sourceRevision));
+    syncControls();
   }
-  async function load() { if (!active || busy) return; refresh.disabled=true; status.textContent='Reading current Hermes inventory…';
-    try { const data=await api.get('/chat/api/extensions'); if (!active) return; if (!data || data.schema!==1 || !Array.isArray(data.items) || typeof data.revision!=='string') throw Error();
-      snapshot=data; render(); status.textContent=`${data.items.length} current extension records · ${data.readiness}.`;
-    } catch (_) { if (active) { snapshot=null; list.replaceChildren(); status.textContent='Current extension inventory is unavailable.'; } }
-    finally { if(active) refresh.disabled=false; }
+  async function load(options = {}) {
+    if (!active || busy) return;
+    const readRevision=++inventoryReadRevision, hadRecovery=recoveryRequired;
+    inventoryLoading=true; status.textContent='Reading current Hermes inventory…'; syncControls();
+    try {
+      const data=await api.get('/chat/api/extensions');
+      if (!active || readRevision !== inventoryReadRevision) return;
+      if (!data || data.schema!==1 || !Array.isArray(data.items) || typeof data.revision!=='string') throw Error();
+      snapshot=data;
+      if (options.explicit === true || options.afterApplied) recoveryRequired=false;
+      render();
+      const observed=`${data.items.length} current extension records · ${data.readiness}.`;
+      status.textContent=options.afterApplied
+        ? `${observed} ${options.afterApplied}; current inventory readback completed.`
+        : options.explicit === true && hadRecovery
+          ? `${observed} Inventory refreshed; review the observed source before another owner action.`
+          : observed;
+    } catch (_) {
+      if (active && readRevision === inventoryReadRevision) {
+        snapshot=null; recoveryRequired=true; list.replaceChildren();
+        status.textContent=options.afterApplied
+          ? `${options.afterApplied}, but current inventory readback is unavailable. Refresh before another owner action.`
+          : 'Current extension inventory is unavailable.';
+      }
+    } finally {
+      if (active && readRevision === inventoryReadRevision) { inventoryLoading=false; syncControls(); }
+    }
   }
   function bind(formSelector, path, key, endpoint, verb) { const form=root.querySelector(formSelector); form.addEventListener('submit',async(event)=>{
-    event.preventDefault(); if(!snapshot||busy)return; const value=new FormData(form).get(key); if(typeof value!=='string'||!value.trim())return;
-    const phrase=`${verb} ${value.trim()}`; const body={[key]:value.trim()}; await mutate(path,body,phrase); if (active) form.reset();
+    event.preventDefault(); if(!snapshot||actionsBlocked())return; const sourceRevision=snapshot.revision;
+    const value=new FormData(form).get(key); if(typeof value!=='string'||!value.trim())return;
+    const phrase=`${verb} ${value.trim()}`; const body={[key]:value.trim()}; await mutate(path,body,phrase,sourceRevision); if (active) form.reset();
   },{signal}); }
   bind('[data-add-skill]','/chat/api/extensions/skills/add','identifier','identifier','ADD');
   bind('[data-add-plugin]','/chat/api/extensions/plugins/add','catalog_name','catalog_name','ADD');
   bind('[data-add-mcp]','/chat/api/extensions/mcps/add','catalog_name','catalog_name','ADD');
-  refresh.addEventListener('click',load,{signal}); void load();
+  refresh.addEventListener('click',()=>load({explicit:true}),{signal}); void load();
   return ()=>{active=false;lifecycle.abort();for(const dialog of editors){if(dialog.open)dialog.close();dialog.remove();}editors.clear();list.replaceChildren();};
 }'''
 
