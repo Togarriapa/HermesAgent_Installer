@@ -1225,3 +1225,22 @@ or paths were collected. The old service remained active and unchanged. Native
 and Sol are investigating the difference between systemd-decoded generated
 Python and the fixture parser. Cause remains unresolved; no apply outcome is
 inferred from V3.
+
+### Candidate 156 generated-unit parser probe
+
+A protected Pi probe (SHA-256
+`960ebe0e6ffbd38f7a22c9484aac22ec1cda1efcc354a14ec4c324e288b828d5`) compared
+the candidate-156/Core-969 generated unit data with systemd's decoded value.
+The generated new-cohort/plugin/diagnostic directive was 21,675 bytes. Shell
+`shlex` decoding produced 21,530 bytes (SHA-256
+`ae2d2ac7929ee6ae2e11ed6e9ced65e8102eaf305484a3b9b8e8070ea3abafec`) and
+compiled successfully. Actual installed systemd typed D-Bus decoding produced
+21,529 bytes (SHA-256
+`99af8953626081f569b07665e1ac30f9926d559db7fa2b1d2deba2dab0090f42`), which
+did not compile (`SyntaxError` at line 1); the values were not equal. Temporary
+no-start unit cleanup was verified, the live unit and launcher were unchanged
+before and after (`b1c…` / `cac…`), and `service_started` was false. The JSON
+report is `p/candidate156-actual-systemd-parse.json`. This establishes a
+parser failure in the generated candidate data, but not the exact invocation
+behind the historical journal. No guard execution or candidate adoption
+occurred. Sol refinement and Luna's new-cohort transport fix were in progress.
