@@ -144,6 +144,13 @@ _HTML = '''<!doctype html>
               placeholder="Message Jarvis…" autocomplete="off" autocapitalize="sentences"
               inputmode="text" autocorrect="on" spellcheck="true"
               enterkeyhint="send" aria-describedby="composer-hint"></textarea>
+            <div class="composer-actions">
+              <span class="composer-hint" id="composer-hint">Enter to send · Shift + Enter for a new line</span>
+              <button class="send-button" id="send-button" type="submit" aria-label="Send message">
+                <span class="send-label">Send</span><span class="send-icon" aria-hidden="true">↑</span>
+              </button>
+              <button class="stop-button" id="stop-button" type="button" hidden>Stop response</button>
+            </div>
             <section class="voice-dock" aria-labelledby="voice-dock-title">
               <div class="voice-dock-heading">
                 <div><span class="voice-dock-kicker">OPTIONAL · THIS BROWSER</span><h2 id="voice-dock-title">Voice controls</h2>
@@ -168,13 +175,6 @@ _HTML = '''<!doctype html>
               <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
               <p class="voice-status" id="chat-voice-unavailable" role="status" aria-live="polite" hidden></p>
             </section>
-            <div class="composer-actions">
-              <span class="composer-hint" id="composer-hint">Enter to send · Shift + Enter for a new line</span>
-              <button class="send-button" id="send-button" type="submit" aria-label="Send message">
-                <span class="send-label">Send</span><span class="send-icon" aria-hidden="true">↑</span>
-              </button>
-              <button class="stop-button" id="stop-button" type="button" hidden>Stop response</button>
-            </div>
           </form>
         </div>
       </main>

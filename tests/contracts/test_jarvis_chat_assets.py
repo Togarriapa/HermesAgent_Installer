@@ -955,6 +955,10 @@ FEATURE_API
         _content_type, page = reviewed_chat_asset("/chat")
         markup = page.decode("utf-8")
         composer = markup.split('id="composer"', 1)[1].split("</form>", 1)[0]
+        self.assertLess(composer.index('id="message-input"'), composer.index('class="composer-actions"'))
+        self.assertLess(composer.index('class="composer-actions"'), composer.index('class="voice-dock"'))
+        self.assertIn('id="send-button" type="submit"', composer)
+        self.assertIn('id="stop-button" type="button" hidden', composer)
         self.assertIn('class="voice-dock" aria-labelledby="voice-dock-title"', composer)
         self.assertIn('class="voice-dock-disclosure"', composer)
         disclosure = composer.split('class="voice-dock-disclosure">', 1)[1].split("</p>", 1)[0]
@@ -971,6 +975,9 @@ FEATURE_API
 
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
+        self.assertIn('ui.form.addEventListener("submit"', client)
+        self.assertIn('ui.stop.addEventListener("click", stopTurn)', client)
+        self.assertIn(".voice-button,.send-button,.stop-button{min-height:44px}", css)
         dock_start = client.index("  function renderVoiceDock() {")
         dock_end = client.index("\n  function stopRecognition(", dock_start)
         dock_source = client[dock_start:dock_end]
