@@ -406,6 +406,93 @@ Primary journal remained absent during and after v97. Source/tools match v96,
 whose170 checks were not repeated; broader changed fixture qualification and
 full update/recovery acceptance remain pending.
 
+The v112 candidate `01f498f6f30cf6ba3e9779e590678d7c493d2d39`
+compiled and passed strict specs/plan validation on the Pi. Archive SHA-256
+`0bd2f955bca6e68fe79f27fbe0439dddeebb7a3fcdbe37d2d425d509bc75cc24`.
+All ten quick actual guards passed in2.85s, including nine/eleven-member
+empty-optional admission, tamper/missing refusal and empty-required refusal
+with a matching empty-content manifest. The registered full update positive
+passed, including the actual final generated guard and exact controlled
+registration/vault preservation. The paired injected-restart rollback case
+failed; combined result one pass/one failure in355.42s. This is isolated
+orchestration evidence with explicit provider/native-readback fixtures, not
+actual live registered-reader, provider or deployed-Jarvis acceptance.
+
+The v113 test-only diagnostic candidate
+`b41bf4d8b91d2b485077b25091f7bbd85e5fa98a`, archive
+`4694a2bb9c8bc02f22a3553650c41b7a5d096c3a68ab665cae40cf50ed0569c0`,
+passed compile/spec/plan and quick checks; only registered rollback was replayed.
+It failed in94.69s. The injected restart failure did occur, but recovery then
+failed validating the owner-generation restore receipt. The prior marker
+diagnostic used a stale line number and therefore emitted no category. v114
+uses a fixed function/error identity instead: source
+`d16da73a5e8123f0ca667e75282651fc054a2f5d`, archive
+`c4af23fb63bb8ba595981b162b9ff960eb8a14140b9e9cc0a1488831479adf6f`.
+Its rollback-only case failed in95.25s; the A0/artifact mismatch is the expected
+old-generation probe against current A1, and does not establish the recovery
+cause. The exact failure is the closed restore-receipt check at Core line4991.
+A bounded Boolean receipt-join diagnostic is required before any Source fix.
+The passed v112 positive is not repeated for these test-only changes. Live
+deployment, complete recovery and all eight broad task groups remain pending.
+
+The v115 diagnostic candidate `265c6712e78d48d9a7dc2a5b75d028394a6b834b`,
+archive `e4b7d6ca2cb9401c694ee54c6b2dc4386cac46b24d6f20dd60dc80580b3fbe59`,
+passed compilation, strict specs/plan and ten quick checks. Registered rollback
+failed in95.25s. Its bounded receipt diagnostic identified one false predicate:
+the retained backup path. The genuine producer retains the generation under
+`HERMES_HOME/name`; the Core consumer expected `HERMES_HOME/skills/name`.
+The remaining closed receipt predicates were true. Luna corrected only that
+consumer path join; Sol reviewed and updated the exact Core source pin.
+
+The v116 specification-only candidate `6d1ea679abaf5bf7edfe2525c0cf75dc9eb2efdc`,
+archive `0dab1271d977dfec91fdb191bc609876470ceb9de6f9f0ff1b8f232d57d4737f`,
+passed compilation, OpenSpec status/instructions and strict specs/plan on the Pi.
+It records the four independent feature leaves in Issues17–20. It proves no UI
+rendering, audio, native effects or completed feature acceptance.
+
+The v117 candidate `13cf877ee64306065052dccea4040a3c65089686`, archive
+`ba65232b37ae51ca8e831ac71d5883f5d341fb3a1825561b45df56457d039dc6`,
+passed compilation, strict specs/plan and all ten quick checks in2.93s.
+The registered injected-restart rollback passed in94.92s. The genuine owner
+importer restores the exact prior controlled generation while the closed receipt
+and preservation assertions remain enforced. The full Core and adopter suites
+are running separately against this identical archive; their outcome is pending.
+This is controlled Pi recovery evidence, with explicit native/provider fixtures;
+production adoption, real registered-reader/provider effects and broad acceptance
+remain separate.
+
+The v111 candidate `6437a6407fb938cdb4e1f1ffef678e55a319464a`
+compiled and passed strict specs/plan validation on the Pi. Archive SHA-256
+`9c4947bea285e60b70a9e0cb64bac9cf0d1140de2d59b424b1b40595cf033f9c`.
+Seven quick actual guard/diagnostic checks passed in2.32s. The registered
+full update stopped at the original committed guard denial in295.51s.
+The bounded diagnostic is now usable: only backup verification is false;
+current source/recipe, service files, Resources, initial Primary, native plugin,
+cohort phase and reconstruction checks are true. Read-only checks of the
+retained fixture backup prove its manifest is canonical and equals the current
+journal reference; all11 files have exact recorded hashes and Root600
+single-link custody. The overlay, prior Primary and prior cohort files are
+empty, reflecting absence before update. The snapshot and backup writer
+intentionally retain those empty bytes, while the generated guard erroneously
+requires every backup member to be nonempty. Sol reviewed the bounded repair:
+only four defined optional member names may have zero bytes with the exact
+empty-content digest; all required members and other checks remain strict.
+Fast actual nine/eleven-member positive and denial tests must precede the
+next full replay. No full update/recovery or live acceptance is claimed.
+
+The v110 candidate `e83cb5299e739dc3df5b01a2694fddecad9962a7`
+compiled and passed strict specs/plan validation on the Pi. Archive SHA-256
+`ed96754f5513ea4a449bce490cfa562c607957a96648e2c492861fe81f653d8a`.
+Six quick actual guard tests passed in2.19s. The new registered-vault full
+positive stopped at the final original guard denial in295.00s; no preservation
+or complete positive acceptance is claimed. The failure-only traced diagnostic
+produced `guard_flags=None`: its closed parser rejected an uncaptured
+`base_ok=None`. The next test-only correction omits uncaptured flags and adds
+a fast actual wrong-token diagnostic contract plus bounded exception metadata.
+That quick contract must pass before another expensive full replay. The
+original unwrapped guard remains authoritative, with the rerun occurring in
+the retained private HOME/credential view; no live deployment occurred.
+
 The v109 candidate `9f5ce0b49372647ee520b089e553701f308223ea`
 compiled and passed strict specs/plan validation on the Pi. Archive SHA-256
 `2656be1e3969b1c7e5d8c76d0aebb3586d7770a1cb2cdc9533976ddda8b2262e`.
