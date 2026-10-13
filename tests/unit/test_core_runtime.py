@@ -49,6 +49,87 @@ _KNOWN_HELPER_IMPORTER_ERRORS = {
 }
 
 
+def _classify_owner_marker_mismatch(expected_raw, actual_raw):
+    """Classify bounded in-memory marker bytes without exposing their values."""
+    maximum = 2 * 1024 * 1024
+    if (type(expected_raw) is not bytes or type(actual_raw) is not bytes
+            or not expected_raw or not actual_raw
+            or len(expected_raw) > maximum or len(actual_raw) > maximum):
+        return "unclassified"
+    try:
+        expected = json.loads(expected_raw)
+        actual = json.loads(actual_raw)
+    except (UnicodeError, ValueError, TypeError):
+        return "unclassified"
+    fields = {
+        "schema", "stage", "artifact_sha256", "source_revision", "source_tree",
+        "profile_source_id", "user_visible_profile", "internal_profile_count",
+        "target_home_role", "members",
+    }
+    if (type(expected) is not dict or type(actual) is not dict
+            or set(expected) != fields or set(actual) != fields):
+        return "marker-schema"
+    if any(type(value) is not int for value in (expected["schema"], actual["schema"])):
+        return "marker-schema"
+    if any(expected[key] != actual[key] for key in (
+            "schema", "stage", "profile_source_id", "user_visible_profile",
+            "internal_profile_count", "target_home_role")):
+        return "marker-schema"
+    if expected["artifact_sha256"] != actual["artifact_sha256"]:
+        return "artifact"
+    if expected["source_revision"] != actual["source_revision"]:
+        return "source-revision"
+    if expected["source_tree"] != actual["source_tree"]:
+        return "source-tree"
+    left, right = expected["members"], actual["members"]
+    if type(left) is not list or type(right) is not list:
+        return "marker-schema"
+    if len(left) != len(right):
+        return "member-count"
+    row_fields = {"path", "sha256", "size_bytes"}
+    for first, second in zip(left, right):
+        if (type(first) is not dict or type(second) is not dict
+                or set(first) != row_fields or set(second) != row_fields
+                or type(first["size_bytes"]) is not int
+                or type(second["size_bytes"]) is not int):
+            return "marker-schema"
+        if first != second:
+            return "member-digest"
+    return "unclassified"
+
+
+def test_owner_marker_mismatch_classifier_uses_only_bounded_fixed_categories():
+    marker = {
+        "schema": 1, "stage": "manual-owned-bundled-resources-import",
+        "artifact_sha256": "a" * 64, "source_revision": "b" * 40,
+        "source_tree": "c" * 40, "profile_source_id": "hermes",
+        "user_visible_profile": {"source_id": "hermes", "native_key": "default",
+                                 "display_name": "Jarvis"},
+        "internal_profile_count": 207, "target_home_role": "jarvis-primary-home",
+        "members": [{"path": "generation/member", "sha256": "d" * 64, "size_bytes": 4}],
+    }
+
+    def encode(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+    assert _classify_owner_marker_mismatch(encode(marker), encode(marker)) == "unclassified"
+    for field, label, replacement in (
+            ("schema", "marker-schema", 2),
+            ("artifact_sha256", "artifact", "e" * 64),
+            ("source_revision", "source-revision", "f" * 40),
+            ("source_tree", "source-tree", "0" * 40),
+            ("internal_profile_count", "marker-schema", 206)):
+        changed = dict(marker)
+        changed[field] = replacement
+        assert _classify_owner_marker_mismatch(encode(marker), encode(changed)) == label
+    changed = dict(marker, members=[])
+    assert _classify_owner_marker_mismatch(encode(marker), encode(changed)) == "member-count"
+    changed = dict(marker, members=[dict(marker["members"][0], sha256="e" * 64)])
+    assert _classify_owner_marker_mismatch(encode(marker), encode(changed)) == "member-digest"
+    assert _classify_owner_marker_mismatch(b"{}", encode(marker)) == "marker-schema"
+    assert _classify_owner_marker_mismatch(b"x" * (2 * 1024 * 1024 + 1), encode(marker)) == "unclassified"
+
+
 @contextlib.contextmanager
 def _bounded_cohort_exception_sites():
     """Expose only code locations/types for a hidden cohort failure on Pi."""
@@ -56,6 +137,7 @@ def _bounded_cohort_exception_sites():
     sites = []
     first_substantive = []
     importer_outcomes = []
+    owner_marker_mismatches = []
     custody_false_returns = []
     initial_primary_exceptions = []
     routine = {"GeneratorExit", "StopIteration", "StopAsyncIteration"}
@@ -76,6 +158,31 @@ def _bounded_cohort_exception_sites():
         if event == "call":
             return trace if filename_kind(frame.f_code.co_filename) in allowed else None
         kind = filename_kinds.get(frame.f_code.co_filename)
+        if (event == "exception" and kind == "core_runtime.py"
+                and frame.f_code.co_name == "_hash_generation_tree"
+                and frame.f_lineno == 1468):
+            values = frame.f_locals
+            artifact = values.get("artifact_sha")
+            expected_raw = values.get("expected_owner")
+            actual_raw = values.get("marker")
+            label = "unknown"
+            parent = frame.f_back
+            while parent is not None:
+                if (filename_kind(parent.f_code.co_filename) == "core_runtime.py"
+                        and parent.f_code.co_name == "_restore_adapter_update_backup"):
+                    cohort = parent.f_locals.get("cohort")
+                    if type(cohort) is dict:
+                        if artifact == cohort.get("old_artifact_sha256"):
+                            label = "A0"
+                        elif artifact == cohort.get("new_artifact_sha256"):
+                            label = "A1"
+                    break
+                parent = parent.f_back
+            if label in {"A0", "A1"} and not any(row[0] == label for row in owner_marker_mismatches):
+                owner_marker_mismatches.append((label, _classify_owner_marker_mismatch(
+                    expected_raw, actual_raw)))
+                if len(owner_marker_mismatches) > 2:
+                    del owner_marker_mismatches[0]
         if (event == "return" and kind == "core_runtime.py"
                 and frame.f_code.co_name in {"_initial_primary_current", "_validate_guarded_new_read"}
                 and arg is False):
@@ -138,6 +245,7 @@ def _bounded_cohort_exception_sites():
         print("bounded exception context chain: " + repr(contexts))
         print("first substantive non-CoreRuntimeError site: " + repr(first_substantive[:1]))
         print("bounded cohort exception sites: " + repr(sites[:30] + sites[-50:]))
+        print("bounded owner marker mismatch classes: " + repr(owner_marker_mismatches[:2]))
         print("bounded custody false-return sites: " + repr(custody_false_returns[-12:]))
         print("bounded initial-primary predicate exceptions: " + repr(initial_primary_exceptions[-12:]))
         # Read only outcome metadata from the genuine fixed importer frame.
