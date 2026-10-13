@@ -254,7 +254,7 @@ _MOUNT = r'''function mount(container, api) {
       li.append(endpoints,details);
       pruneSeenPulses();
       const canPulse=liveNow(relation) && !seenPulses.has(relation.id) && seenPulses.size<pulseLedgerLimit;
-      if (canPulse) { seenPulses.set(relation.id,Math.min(snapshot.observedAt+120000,relation.at_ms+120000)); arrow.dataset.pulse='true'; arrow.addEventListener('animationend',()=>delete arrow.dataset.pulse,{once:true}); }
+      if (canPulse) { seenPulses.set(relation.id,relation.at_ms+120000); arrow.dataset.pulse='true'; arrow.addEventListener('animationend',()=>delete arrow.dataset.pulse,{once:true}); }
       graph.append(li);
     }
     const teams=snapshot.teams.filter(team=>team.members.some(id=>visibleIds.has(id))
