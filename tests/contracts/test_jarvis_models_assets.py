@@ -215,11 +215,27 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  assert.match(status.textContent,/native result is unknown/);
  assert.equal(posts.length,2,'unknown pending is not retried automatically');
 
+ const uncertain=apply.handler();
+ assert.equal(posts.length,3);
+ posts[2].d.reject(Error("lost response")); await uncertain; await flush();
+ assert.equal(choice.disabled,true,'rejected mutation invalidates the old selection revision');
+ assert.equal(apply.disabled,true,'rejected mutation requires a fresh settings read');
+ await apply.handler();
+ assert.equal(posts.length,3,'a rejected mutation cannot be resubmitted on its old approval');
  conversation.fire("change");
  assert.equal(reads[7].path,`/chat/api/conversations/${A}/model-settings`);
+ reads[7].d.resolve(settings("recovered-A","revision-recovered-A")); await flush();
+ assert.equal(apply.disabled,false,'a deliberate fresh conversation read restores selection');
+ const recovered=apply.handler();
+ assert.equal(posts.length,4);
+ assert.equal(posts[3].body.revision,"revision-recovered-A");
+ posts[3].d.reject(Error("second uncertain response")); await recovered; await flush();
+
+ conversation.fire("change");
+ assert.equal(reads[8].path,`/chat/api/conversations/${A}/model-settings`);
  cleanup();
  const afterUnmount=status.textContent;
- reads[7].d.resolve(settings("after-unmount","revision-late")); await flush();
+ reads[8].d.resolve(settings("after-unmount","revision-late")); await flush();
  assert.equal(status.textContent,afterUnmount,'late settings completion after unmount is ignored');
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''.replace("MOUNT", FEATURE_ASSETS.mount_js)
