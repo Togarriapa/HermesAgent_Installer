@@ -599,6 +599,26 @@ def _rebind_migrated_fixture_to_prior_generation():
     return source
 
 
+def _rebind_fixture_resources_to_current_journal():
+    """Refresh only the fixture receipt join after a deliberate journal rewrite."""
+    resources_raw = core._projection_file(
+        core.RESOURCES_RECORD, owner=core.ROOT_UID, group=core.ROOT_UID,
+        mode=0o600, maximum=16 * 1024)
+    resources = json.loads(resources_raw)
+    current_journal = core._projection_file(
+        core.JOURNAL, owner=core.ROOT_UID, group=core.ROOT_UID,
+        mode=0o600, maximum=64 * 1024)
+    resources["core_source_generation"] = core._core_source_generation()
+    resources["core_ownership_sha256"] = hashlib.sha256(current_journal).hexdigest()
+    core._atomic_replace(
+        core.RESOURCES_RECORD,
+        (json.dumps(resources, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"),
+        0o600, core.ROOT_UID, core.ROOT_UID)
+    assert core.read_current_resources_discovery(
+        core_source_generation=resources["core_source_generation"]
+    )["resources_state"] == "discovered"
+
+
 def _fake_update_pidfd(monkeypatch, enabled, request):
     """Model an owned service PIDFD whose liveness follows the fake service."""
     read_fd, write_fd = os.pipe()
@@ -987,6 +1007,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
     core._atomic_replace(core.UNIT, prior_unguarded_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
     migrated_record["unit_sha256"] = hashlib.sha256(prior_unguarded_unit).hexdigest()
     core._replace_journal(migrated_record)
+    _rebind_fixture_resources_to_current_journal()
     prior = core.JOURNAL.read_bytes()
     launcher = core.LAUNCHER.read_bytes()
     unit = core.UNIT.read_bytes()
@@ -1027,6 +1048,7 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     core._atomic_replace(core.UNIT, prior_unguarded_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
     migrated_record["unit_sha256"] = hashlib.sha256(prior_unguarded_unit).hexdigest()
     core._replace_journal(migrated_record)
+    _rebind_fixture_resources_to_current_journal()
     prior = core.JOURNAL.read_bytes()
     launcher = core.LAUNCHER.read_bytes()
     unit = core.UNIT.read_bytes()
@@ -1075,6 +1097,7 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     core._atomic_replace(core.UNIT, prior_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
     migrated["unit_sha256"] = hashlib.sha256(prior_unit).hexdigest()
     core._replace_journal(migrated)
+    _rebind_fixture_resources_to_current_journal()
     prior = core.JOURNAL.read_bytes()
     prior_launcher = core.LAUNCHER.read_bytes()
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")

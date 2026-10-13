@@ -3277,7 +3277,7 @@ def _initial_primary_rollback_current(custody):
   generation=HERMES_HOME/"skills"/native._GENERATION
   archive=_projection_file(RESOURCES_CAS/(custody.artifact_a1_sha256+".zip"),
    owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
-  manifest,files=native._read_transition_archive(archive,custody.artifact_a1_sha256)
+  manifest,files,_helper=native._read_transition_archive(archive,custody.artifact_a1_sha256)
   native._verify_owned_generation(generation,files,custody.artifact_a1_sha256)
   installed_raw=_projection_file(generation/native._OWNER_FILE,owner=1000,group=1000,
    mode=0o600,maximum=2*1024*1024)
@@ -3382,7 +3382,8 @@ def _issue_initial_primary_rollback_custody(*,reference,prior,contents,cohort,co
  generation=HERMES_HOME/"skills"/native._GENERATION
  archive=_projection_file(RESOURCES_CAS/(cohort["new_artifact_sha256"]+".zip"),
   owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
- manifest,files=native._read_transition_archive(archive,cohort["new_artifact_sha256"])
+ manifest,files,_helper=native._read_transition_archive(
+  archive,cohort["new_artifact_sha256"])
  native._verify_owned_generation(generation,files,cohort["new_artifact_sha256"])
  installed_raw=_projection_file(generation/native._OWNER_FILE,owner=1000,group=1000,
   mode=0o600,maximum=2*1024*1024)
@@ -4733,8 +4734,8 @@ def _restore_adapter_update_owner_generation(cohort):
   group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
  new_archive=_projection_file(RESOURCES_CAS/(new_sha+".zip"),owner=ROOT_UID,
   group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
- old_manifest,old_files=native._read_transition_archive(old_archive,old_sha)
- new_manifest,new_files=native._read_transition_archive(new_archive,new_sha)
+ old_manifest,old_files,_old_helper=native._read_transition_archive(old_archive,old_sha)
+ new_manifest,new_files,_new_helper=native._read_transition_archive(new_archive,new_sha)
  target_ok=False
  try:
   native._verify_owned_generation(target,old_files,old_sha); target_ok=True
@@ -5072,7 +5073,8 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
   target=HERMES_HOME/"skills"/native._GENERATION
   old_archive=_projection_file(RESOURCES_CAS/(cohort["old_artifact_sha256"]+".zip"),
    owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
-  old_manifest,old_files=native._read_transition_archive(old_archive,cohort["old_artifact_sha256"])
+  old_manifest,old_files,_old_helper=native._read_transition_archive(
+   old_archive,cohort["old_artifact_sha256"])
   try:
    native._verify_owned_generation(target,old_files,cohort["old_artifact_sha256"])
   except CoreRuntimeError:
@@ -5729,9 +5731,11 @@ def _update_owned_core_adapter_locked():
   _projection_file(HERMES_HOME/"skills"/native._GENERATION/native._OWNER_FILE,
    owner=1000,group=1000,mode=0o600,maximum=2*1024*1024),resources_raw)
  new_archive=reconstruction.new_composed_archive
- old_manifest,old_generation_files=native._read_transition_archive(old_archive,old_artifact)
+ old_manifest,old_generation_files,_old_helper=native._read_transition_archive(
+  old_archive,old_artifact)
  new_artifact=reconstruction.new_composed_artifact_sha256
- new_manifest,new_generation_files=native._read_transition_archive(new_archive,new_artifact)
+ new_manifest,new_generation_files,_new_helper=native._read_transition_archive(
+  new_archive,new_artifact)
  shared_manifest,shared_tree,shared_count=native._same_materialization_digests(
   new_manifest,new_generation_files)
  if (shared_manifest!=native._same_materialization_digests(old_manifest,old_generation_files)[0]
