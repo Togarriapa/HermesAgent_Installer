@@ -1215,3 +1215,13 @@ not establish a guard denial, timeout, or candidate-156 startup cause. A V3
 headerless type classifier was running; its outcome was not available. The
 candidate's qualification groups remain passed, while actual acceptance is
 pending.
+
+V3's protected Pi collector (SHA-256
+`a37cddb8eecb85d0cfbcfe32f27ab6883dd0792bb63f51df6f7ddd02813b272b`) returned
+28 `SyntaxError` exception-type tokens. The one-hour fixed-unit aggregate
+reported 28 process-control exits with status 1/FAILURE, zero valid guards and
+zero rejected cases. Candidate and phase remain unknown; no raw exception text
+or paths were collected. The old service remained active and unchanged. Native
+and Sol are investigating the difference between systemd-decoded generated
+Python and the fixture parser. Cause remains unresolved; no apply outcome is
+inferred from V3.
