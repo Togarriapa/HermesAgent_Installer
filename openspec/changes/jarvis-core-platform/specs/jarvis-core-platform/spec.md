@@ -2635,3 +2635,15 @@ The installer SHALL attach qualification diagnostic callbacks only to the exact 
 - **WHEN** entry-only diagnostics replace the broad qualification tracer after candidate146 rollback
 - **THEN** Core9e70, original110s custody, outer300s timeout and real update/recovery assertions remain unchanged; Root validates the exact changed candidate and retries actual adoption separately.
 - **AND** prior fixture qualification and restored-old runtime retain their exact source evidence; reduced overhead alone proves neither the previous failure cause nor actual deployment acceptance.
+
+### Requirement: Prior adapter recovery waits for the retained source
+The installer SHALL wait for the exact protected prior adapter source when restoring an adapter update, retaining strict process/listener identity and existing bounded recovery deadlines.
+
+#### Scenario: Incoming controller restores a distinct prior adapter
+- **WHEN** protected recovery restores the prior journal, unit and launcher and starts that prior adapter service
+- **THEN** the real listener wait checks the retained validated prior adapter source, followed by the same strict prior-source PIDFD check; incoming-current or foreign listeners cannot satisfy recovery.
+- **AND** the 30-second wait and all ownership, backup, process, socket, Resources, plugin and currentness guards remain unchanged, without importing old controller code or rewriting journal history.
+
+#### Scenario: Default current-source wait remains strict
+- **WHEN** ordinary current-source startup uses the default wait or a recovery listener does not match its explicit expected source
+- **THEN** defaults still check the current module source, and mismatch produces the original bounded refusal. Pi contracts execute the real wait and preserve source-aware predicate and actual restoration coverage; source review and exact pin qualification precede acceptance.
