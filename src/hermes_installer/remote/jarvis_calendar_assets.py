@@ -38,6 +38,11 @@ _MOUNT = r'''function mount(container, api, state) {
   const select = root.querySelector('[data-calendar-select]');
   const disable = root.querySelector('[data-calendar-disable]');
   let active = true, serial = 0, displayTimezone;
+  const isCurrent = token => active && token === serial;
+  function clearDisplay() {
+    events.replaceChildren(); empty.hidden = true; source.textContent = ''; source.hidden = true;
+    next.textContent = ''; next.hidden = true; displayTimezone = undefined;
+  }
   const dateText = value => {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? 'Time unavailable' : new Intl.DateTimeFormat(undefined,
@@ -46,11 +51,12 @@ _MOUNT = r'''function mount(container, api, state) {
   async function load() {
     const current = ++serial;
     refresh.disabled = true; status.textContent = 'Loading verified calendar events…';
-    events.replaceChildren(); empty.hidden = true; source.hidden = true; next.hidden = true;
+    clearDisplay();
     try {
       const response = await fetch('/chat/api/calendar', {credentials:'same-origin', cache:'no-store'});
-      if (!active || current !== serial) return;
+      if (!isCurrent(current)) return;
       const payload = response.ok ? await response.json() : null;
+      if (!isCurrent(current)) return;
       if (!payload || payload.schema !== 1) throw new Error('unavailable');
       select.hidden = ['connected', 'empty', 'partial'].includes(payload.status);
       disable.hidden = !['connected', 'empty', 'partial'].includes(payload.status);
@@ -92,32 +98,44 @@ _MOUNT = r'''function mount(container, api, state) {
         status.textContent = 'No events were returned for this verified date range.'; empty.hidden = false;
       }
     } catch (_) {
-      if (!active || current !== serial) return;
+      if (!isCurrent(current)) return;
       status.textContent = 'Calendar events are unavailable. Connect and authorize a selected account in Integrations, then refresh.';
       next.textContent = 'Only read-only access is used here. Calendar changes, invitations, and messages are not available.';
       next.hidden = false;
-    } finally { if (active && current === serial) refresh.disabled = false; }
+    } finally { if (isCurrent(current)) refresh.disabled = false; }
   }
   async function setSelection(action) {
+    const current = ++serial;
+    // Consent transitions immediately revoke the currently displayed projection. An
+    // in-flight read or selection response can no longer repopulate it.
+    clearDisplay();
     select.disabled = true; disable.disabled = true;
+    if (action === 'enable') disable.hidden = false;
+    else { disable.hidden = true; select.hidden = false; }
     status.textContent = action === 'enable' ? 'Confirming the selected read-only Calendar connection…' : 'Removing Calendar dashboard consent…';
     try {
       const response = await fetch('/chat/api/calendar/selection', {method:'POST', credentials:'same-origin', cache:'no-store',
         headers:{'Content-Type':'application/json'}, body:JSON.stringify({schema:1, action, confirmation:'read-only-calendar-events'})});
+      if (!isCurrent(current)) return;
       const result = await response.json().catch(() => null);
+      if (!isCurrent(current)) return;
       if (!response.ok || !result || result.schema !== 1
           || result.state !== (action === 'enable' ? 'selected' : 'disabled')) {
         const detail = result && typeof result.error === 'string' ? result.error : 'selection-unavailable';
         throw new Error(detail);
       }
       if (action === 'disable') {
-        events.replaceChildren(); empty.hidden = true; source.hidden = true; next.hidden = true;
         disable.hidden = true; select.hidden = false; status.textContent = 'Calendar dashboard consent was removed.';
-      } else { await load(); }
+      } else {
+        select.disabled = false; disable.disabled = false;
+        void load();
+      }
     } catch (error) {
+      if (!isCurrent(current)) return;
+      if (action === 'enable') disable.hidden = true;
       status.textContent = error && error.message && error.message !== 'selection-unavailable'
         ? error.message : 'No current protected Calendar connection is available. Complete the root-managed Google Calendar enrollment, then retry.';
-    } finally { if (active) { select.disabled = false; disable.disabled = false; } }
+    } finally { if (isCurrent(current)) { select.disabled = false; disable.disabled = false; } }
   }
   const enableSelection = () => setSelection('enable');
   const disableSelection = () => setSelection('disable');
@@ -125,7 +143,7 @@ _MOUNT = r'''function mount(container, api, state) {
   select.addEventListener('click', enableSelection);
   disable.addEventListener('click', disableSelection);
   load();
-  return () => { active = false; serial++; refresh.removeEventListener('click', load);
+  return () => { active = false; serial++; clearDisplay(); refresh.removeEventListener('click', load);
     select.removeEventListener('click', enableSelection); disable.removeEventListener('click', disableSelection); };
 }'''
 
