@@ -288,7 +288,7 @@ def _bounded_cohort_exception_sites():
 
 
 def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None,
-                    runner=None, diagnostic=False):
+                    runner=None, diagnostic=False, service_sources=None):
     """Run the untouched generated guard as admin in a private mount view."""
     if os.geteuid() != 0:
         raise AssertionError("the Pi startup-guard fixture requires root to model admin")
@@ -303,6 +303,18 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
     if not unshare or not runuser:
         raise AssertionError("Pi guard fixture requires unshare and runuser")
     before_fixed_paths = _fixed_service_path_identity()
+    source_unit, source_launcher = service_sources or (core.UNIT, core.LAUNCHER)
+    source_unit, source_launcher = Path(source_unit), Path(source_launcher)
+    if diagnostic:
+        for path, mode, maximum in ((source_unit, 0o644, 256 * 1024),
+                                    (source_launcher, 0o755, 128 * 1024)):
+            info = path.lstat()
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode))
+                    != (0, 0, mode) or not 1 <= info.st_size <= maximum):
+                raise AssertionError("diagnostic service input custody differs")
+        if source_unit.read_bytes() != unit_bytes:
+            raise AssertionError("diagnostic unit bytes differ from retained service input")
     cred_dir = Path(tempfile.mkdtemp(prefix="core-start-guard-", dir="/tmp"))
     cred_dir.chmod(0o700)
     cred_view = Path(tempfile.mkdtemp(prefix="core-start-guard-view-", dir="/tmp"))
@@ -405,7 +417,7 @@ exec "$runuser_bin" -u admin -- "$@"
         run = subprocess.run if runner is None else runner
         result = run(
             [unshare, "--mount", "--propagation", "private", "--", "sh", "-eu", "-c",
-             namespace_script, "core-start-guard", str(core.UNIT), str(core.LAUNCHER),
+             namespace_script, "core-start-guard", str(source_unit), str(source_launcher),
              str(cred_dir), str(cred_view), runuser, *command],
             cwd="/", env={"PATH": "/usr/bin:/bin"}, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, check=False,
