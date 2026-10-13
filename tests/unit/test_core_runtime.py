@@ -818,8 +818,15 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
                 or record.get("resources_revision") != source.get("revision")
                 or record.get("resources_tree") != source.get("git_tree")):
             return {"resources_state": "stale"}
-        overlay_record, overlay_contents, overlay_raw = core._resources_skill_overlay_read()
         try:
+            # Before a cohort is committed, the active owner overlay is still
+            # anchored to the installed A0 base.  The incoming helper source
+            # builds A1, so the strict overlay reader correctly refuses to
+            # resolve that old record against A1.  Public discovery reports
+            # this transition window as stale; keep the fixture projection
+            # aligned with that contract rather than treating the refusal as
+            # a malformed journal.
+            overlay_record, overlay_contents, overlay_raw = core._resources_skill_overlay_read()
             effective_archive, effective_sha = core._current_resources_overlay_artifact(
                 native.build_manual_jarvis_skills_artifact(), overlay_record,
                 overlay_contents, overlay_raw)
