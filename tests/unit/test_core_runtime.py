@@ -396,7 +396,8 @@ def _bounded_owner_generation_restore_failure():
 
 
 def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None,
-                    runner=None, diagnostic=False, service_sources=None):
+                    runner=None, diagnostic=False, service_sources=None,
+                    return_result=False):
     """Run the untouched generated guard as admin in a private mount view."""
     if os.geteuid() != 0:
         raise AssertionError("the Pi startup-guard fixture requires root to model admin")
@@ -642,7 +643,7 @@ exec "$runuser_bin" -u admin -- "$@"
                 + (f"; guard_flags={diagnostic_summary!r}; diagnostic_meta={diagnostic_meta!r}"
                    if diagnostic else "")
             )
-        return result.returncode
+        return result if return_result else result.returncode
     finally:
         for child in cred_dir.iterdir():
             child.unlink()
@@ -2449,7 +2450,8 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     assert core.LAUNCHER.read_bytes() != prior_launcher
     expected_new_unit = core._unit(
         adapter_source=Path(updated["adapter_source"]), cohort_gate=True,
-        backup_generation=prior["adapter_generation"], native_plugin_transition=True)
+        backup_generation=prior["adapter_generation"], native_plugin_transition=True,
+        failure_diagnostics=True)
     backup_credentials = [row for row in expected_new_unit.decode().splitlines()
         if row.startswith("LoadCredential=adapter-backup-")]
     assert len(backup_credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 3
@@ -3636,6 +3638,75 @@ def test_m1_guard_diagnostic_runs_only_after_original_guard_denies(
     assert "invalid fixture token" not in message
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="generated guard effects require the enrolled Pi root actor")
+def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypatch, request):
+    unit, _plugin, _old_members, _new_members = _native_plugin_starting_fixture(
+        tmp_path, monkeypatch, request)
+    source = Path("/opt/hermes-installer-core-fixture/src")
+    legacy_unit = core._unit(adapter_source=source, cohort_gate=True,
+        backup_generation="a" * 64, native_plugin_transition=True)
+    assert unit != legacy_unit
+    assert b"HERMES_CORE_START_GUARD_FAILURE_V1=" not in legacy_unit
+
+    successful = _exec_start_pre(unit, expect_success=True, return_result=True)
+    assert successful.returncode == 0
+    assert b"HERMES_CORE_START_GUARD_FAILURE_V1=" not in successful.stderr
+
+    token_row = next(row for row in unit.decode().splitlines()
+                     if row.startswith("LoadCredential=") and "session-token" in row)
+    token_name = token_row.partition("=")[2].partition(":")[0]
+    sentinel = b"guard-telemetry-secret-sentinel"
+    denied = _exec_start_pre(unit, credential_mutations={token_name: ("bytes", sentinel)},
+        expect_success=False, return_result=True)
+    assert denied.returncode == 1
+    assert sentinel not in denied.stderr
+    rows = [line for line in denied.stderr.splitlines()
+            if line.startswith(b"HERMES_CORE_START_GUARD_FAILURE_V1=")]
+    assert len(rows) == 1 and len(rows[0]) <= 4096
+    payload = json.loads(rows[0].partition(b"=")[2])
+    assert set(payload) == {"schema", "flags"} and payload["schema"] == 1
+    flags = payload["flags"]
+    expected_flags = {
+        "ok", "source_ok", "native_ok", "service_files", "journal_join",
+        "resources_join", "record_identity", "adapter_state_join",
+        "generation_recipe_join", "backup_ok", "phase_ok", "starting",
+        "starting_ok", "active_update_ok",
+    }
+    assert set(flags) == expected_flags
+    assert all(type(value) is bool or value is None for value in flags.values())
+    assert flags["ok"] is False
+    assert b"guard-telemetry-secret-sentinel" not in rows[0]
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="cohort recipe custody is qualified on the enrolled Pi")
+def test_m1_cohort_accepts_only_its_exact_legacy_or_diagnostic_guard_recipe(
+        tmp_path, monkeypatch, request):
+    _unit_bytes, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request)
+    source = Path(cohort["new_source"])
+    launcher_sha = hashlib.sha256(core._launcher(adapter_source=source)).hexdigest()
+    for diagnostic in (False, True):
+        unit = core._unit(adapter_source=source, cohort_gate=True,
+            backup_generation=cohort["old_adapter_generation"],
+            native_plugin_transition=False, failure_diagnostics=diagnostic)
+        unit_sha = hashlib.sha256(unit).hexdigest()
+        recipe = core._adapter_recipe_sha256(
+            str(source), cohort["new_adapter_generation"], unit_sha, launcher_sha)
+        bound = dict(cohort, new_unit_sha256=unit_sha,
+                     new_launcher_sha256=launcher_sha,
+                     new_source_recipe_sha256=recipe)
+        assert core._cohort_guard_unit(bound, source=source,
+            backup_generation=cohort["old_adapter_generation"],
+            native_plugin_transition=False) == unit
+        tampered = dict(bound, new_source_recipe_sha256="f" * 64)
+        with pytest.raises(core.CoreRuntimeError, match="exact generated recipes"):
+            core._cohort_guard_unit(tampered, source=source,
+                backup_generation=cohort["old_adapter_generation"],
+                native_plugin_transition=False)
+    with pytest.raises(core.CoreRuntimeError, match="source-cohort unit"):
+        core._unit(adapter_source=source, failure_diagnostics=True)
+
+
 def _native_plugin_starting_fixture(tmp_path, monkeypatch, request, *, empty_optional_backups=False):
     """Promote the bounded starting fixture to the exact closed 11-member recipe."""
     unit, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
@@ -3698,7 +3769,8 @@ def _native_plugin_starting_fixture(tmp_path, monkeypatch, request, *, empty_opt
     journal["adapter_update_backup"]["files"] = backup_files
 
     new_unit = core._unit(adapter_source=Path(cohort["new_source"]), cohort_gate=True,
-        backup_generation=cohort["old_adapter_generation"], native_plugin_transition=True)
+        backup_generation=cohort["old_adapter_generation"], native_plugin_transition=True,
+        failure_diagnostics=True)
     journal["unit_sha256"] = hashlib.sha256(new_unit).hexdigest()
     journal_raw = core._canonical_json(journal)
     core.JOURNAL.write_bytes(journal_raw)

@@ -768,7 +768,7 @@ def _validate_adapter_update_cohort_journal(record,raw_journal):
      or record.get("launcher_sha256")!=cohort["new_launcher_sha256"]):
   raise CoreRuntimeError("committed adapter cohort tuple differs from final source custody")
  transition=cohort.get("native_plugin_transition")
- expected_unit=_unit(adapter_source=Path(cohort["new_source"]),cohort_gate=True,
+ expected_unit=_cohort_guard_unit(cohort,source=Path(cohort["new_source"]),
   backup_generation=cohort["old_adapter_generation"],
   native_plugin_transition=transition is not None)
  if unit!=expected_unit:
@@ -2692,10 +2692,12 @@ def _journal_adapter_backup_generation(record):
  return generation
 
 def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generation=None,
-                           native_plugin_transition=False):
+                           native_plugin_transition=False,failure_diagnostics=False):
  """Validate systemd's journal snapshot and the exact fixed service recipe."""
  if type(native_plugin_transition) is not bool:
   raise CoreRuntimeError("native plugin guard mode must be fixed")
+ if type(failure_diagnostics) is not bool or (failure_diagnostics and not cohort_gate):
+  raise CoreRuntimeError("failure diagnostics require an explicitly selected source cohort")
  expected_source=str(adapter_source or ADAPTER_SOURCE)
  base_code=("import hashlib,json,os,stat; "
          f"service={SERVICE!r}; source={expected_source!r}; "
@@ -2811,16 +2813,49 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
     "ok=ok and cohort_ok; ")
  else:
   gate_code=""
- return base_code+gate_code+"raise SystemExit(0 if ok else 1)"
+ diagnostic_code=""
+ if failure_diagnostics:
+  diagnostic_code=(
+   "def _diag_value(fn):\n"
+   " try:\n"
+   "  value=fn()\n"
+   "  return value if type(value) is bool else None\n"
+   " except BaseException:\n"
+   "  return None\n"
+   "def _diag_emit():\n"
+   " flags={\n"
+   "  'ok':_diag_value(lambda:ok),\n"
+   "  'source_ok':_diag_value(lambda:source_ok),\n"
+   "  'native_ok':_diag_value(lambda:native_ok),\n"
+   "  'service_files':_diag_value(lambda:all(valid(p,u,g,m,h) for p,u,g,m,h in files)),\n"
+   "  'journal_join':_diag_value(lambda:expected_j==hashlib.sha256(raw).hexdigest() and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id')),\n"
+   "  'resources_join':_diag_value(lambda:expected_r==hashlib.sha256(rr).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(raw).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256')),\n"
+   "  'record_identity':_diag_value(lambda:canonical(c)==cr and keys_ok and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home'),\n"
+   "  'adapter_state_join':_diag_value(lambda:d.get('adapter_update_target_source')==source and d.get('adapter_update_target_generation')==d.get('adapter_generation') and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and ((starting and d.get('adapter_update_state')=='starting') or (phase=='committed' and d.get('adapter_update_state')=='active'))),\n"
+   "  'generation_recipe_join':_diag_value(lambda:c.get('new_source')==source and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==recipe(source,d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256'))),\n"
+   "  'backup_ok':_diag_value(lambda:backup_ok),\n"
+   "  'phase_ok':_diag_value(lambda:phase_ok),\n"
+   "  'starting':_diag_value(lambda:starting),\n"
+   "  'starting_ok':_diag_value(lambda:starting_ok),\n"
+   "  'active_update_ok':_diag_value(lambda:active_update_ok),\n"
+   " }\n"
+   " line=b'HERMES_CORE_START_GUARD_FAILURE_V1='+json.dumps({'schema':1,'flags':flags},sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False).encode('ascii')+b'\\n'\n"
+   " if len(line)<=4096: os.write(2,line)\n"
+   "if not ok:\n"
+   " try: _diag_emit()\n"
+   " except BaseException: pass\n")
+ return base_code+gate_code+diagnostic_code+"raise SystemExit(0 if ok else 1)"
 def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False,backup_generation=None,
-          native_plugin_transition=False):
+          native_plugin_transition=False,failure_diagnostics=False):
  if type(native_plugin_transition) is not bool or (native_plugin_transition and not cohort_gate):
   raise CoreRuntimeError("native plugin unit mode must be cohort-bound")
+ if type(failure_diagnostics) is not bool or (failure_diagnostics and not cohort_gate):
+  raise CoreRuntimeError("failure diagnostics require a source-cohort unit")
  a=pwd.getpwnam("admin")
  if a.pw_uid!=1000 or a.pw_gid!=1000 or a.pw_dir!="/home/admin": raise CoreRuntimeError("admin identity mismatch")
  guard=""
  if startup_guard:
-  guard=(f'ExecStartPre={PYTHON} -I -S -c "{_core_start_guard_code(adapter_source,cohort_gate,backup_generation,native_plugin_transition)}"\n'
+  guard=(f'ExecStartPre={PYTHON} -I -S -c "{_core_start_guard_code(adapter_source,cohort_gate,backup_generation,native_plugin_transition,failure_diagnostics)}"\n'
          f'LoadCredential=core-ownership-journal:{JOURNAL}\n')
   if cohort_gate:
    guard+=(f'LoadCredential=adapter-update-cohort:{ADAPTER_UPDATE_COHORT}\n'
@@ -2861,6 +2896,28 @@ ReadWritePaths={HERMES_HOME}
 [Install]
 WantedBy=multi-user.target
 """.encode()
+
+def _cohort_guard_unit(cohort,*,source,backup_generation,native_plugin_transition):
+ """Return only the exact diagnostic or historical recipe bound by this cohort."""
+ if type(cohort) is not dict:
+  raise CoreRuntimeError("adapter cohort unit record is not closed")
+ candidates=(
+  _unit(adapter_source=source,cohort_gate=True,backup_generation=backup_generation,
+        native_plugin_transition=native_plugin_transition),
+  _unit(adapter_source=source,cohort_gate=True,backup_generation=backup_generation,
+        native_plugin_transition=native_plugin_transition,failure_diagnostics=True),
+ )
+ matches=[]
+ for candidate in candidates:
+  candidate_sha=hashlib.sha256(candidate).hexdigest()
+  if (candidate_sha==cohort.get("new_unit_sha256")
+      and _adapter_recipe_sha256(str(source),cohort.get("new_adapter_generation"),
+        candidate_sha,cohort.get("new_launcher_sha256"))==cohort.get("new_source_recipe_sha256")):
+   matches.append(candidate)
+ if len(matches)!=1:
+  raise CoreRuntimeError("adapter cohort unit is outside the exact generated recipes")
+ return matches[0]
+
 def _journal():
  if not JOURNAL.is_file() or JOURNAL.is_symlink(): raise CoreRuntimeError("core ownership journal missing")
  raw_journal=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
@@ -2914,11 +2971,12 @@ def _journal():
       hashlib.sha256(_unit(startup_guard=False,adapter_source=adapter_source)).hexdigest()}
   if d.get("adapter_migration_state")=="active" and d.get("adapter_update_cohort_transaction_id") and not guarded_old:
    cohort_for_unit,_cohort_raw=_read_adapter_update_cohort()
-   transition_for_unit=(cohort_for_unit is not None
-       and cohort_for_unit.get("cohort_transaction_id")==d.get("adapter_update_cohort_transaction_id")
-       and cohort_for_unit.get("native_plugin_transition") is not None)
-   expected_units.add(hashlib.sha256(_unit(adapter_source=adapter_source,cohort_gate=True,
-    backup_generation=_journal_adapter_backup_generation(d),
+   if (cohort_for_unit is None
+       or cohort_for_unit.get("cohort_transaction_id")!=d.get("adapter_update_cohort_transaction_id")):
+    raise CoreRuntimeError("active adapter unit cohort does not match the owned journal")
+   transition_for_unit=cohort_for_unit.get("native_plugin_transition") is not None
+   expected_units.add(hashlib.sha256(_cohort_guard_unit(cohort_for_unit,
+    source=adapter_source,backup_generation=_journal_adapter_backup_generation(d),
     native_plugin_transition=transition_for_unit)).hexdigest())
   if d["state"]!="retiring" and not guarded_old and (d["unit_sha256"] not in expected_units or
       hashlib.sha256(_launcher(adapter_source=adapter_source)).hexdigest()!=d["launcher_sha256"]):
@@ -4276,10 +4334,11 @@ def _read_active_adapter_runtime():
                 _unit(startup_guard=False,adapter_source=old_source)}
  if record.get("adapter_update_cohort_transaction_id"):
   prior_cohort,_prior_cohort_raw=_read_adapter_update_cohort()
-  transition_for_prior=(prior_cohort is not None and prior_cohort.get("cohort_transaction_id")
-    ==record.get("adapter_update_cohort_transaction_id")
-    and prior_cohort.get("native_plugin_transition") is not None)
-  allowed_units.add(_unit(adapter_source=old_source,cohort_gate=True,
+  if (prior_cohort is None or prior_cohort.get("cohort_transaction_id")
+      !=record.get("adapter_update_cohort_transaction_id")):
+   raise CoreRuntimeError("journal-owned prior adapter cohort differs")
+  transition_for_prior=prior_cohort.get("native_plugin_transition") is not None
+  allowed_units.add(_cohort_guard_unit(prior_cohort,source=old_source,
    backup_generation=_journal_adapter_backup_generation(record),
    native_plugin_transition=transition_for_prior))
  if files[UNIT] not in allowed_units or files[LAUNCHER]!=_launcher(adapter_source=old_source):
@@ -4403,7 +4462,7 @@ def _read_adapter_update_backup(reference):
       or prior_cohort.get("phase")!="committed"):
    raise CoreRuntimeError("prior adapter backup cohort does not match its journal")
   transition_for_prior=prior_cohort.get("native_plugin_transition") is not None
-  allowed_prior_units.add(_unit(adapter_source=old_source,cohort_gate=True,
+  allowed_prior_units.add(_cohort_guard_unit(prior_cohort,source=old_source,
    backup_generation=_journal_adapter_backup_generation(prior),
    native_plugin_transition=transition_for_prior))
  if contents["unit"] not in allowed_prior_units or contents["launcher"]!=_launcher(adapter_source=old_source):
@@ -5214,7 +5273,7 @@ def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
  plugin_transition=cohort.get("native_plugin_transition") is not None
  allowed_units={contents["unit"],_unit(adapter_source=old_source,cohort_gate=True,
    backup_generation=cohort["old_adapter_generation"],native_plugin_transition=plugin_transition),
-                _unit(adapter_source=Path(cohort["new_source"]),cohort_gate=True,
+                _cohort_guard_unit(cohort,source=Path(cohort["new_source"]),
    backup_generation=cohort["old_adapter_generation"],native_plugin_transition=plugin_transition)}
  if unit not in allowed_units:
   raise CoreRuntimeError("current unit is outside the exact guarded source recipes")
@@ -6206,7 +6265,7 @@ def _update_owned_core_adapter_locked():
  if verified_old_manifest!=old_manifest or verified_old_files!=old_generation_files:
   raise CoreRuntimeError("verified prior A0 archive changed during transition preparation")
  new_unit=_unit(adapter_source=ADAPTER_SOURCE,cohort_gate=True,backup_generation=old_adapter,
-  native_plugin_transition=plugin_transition is not None)
+  native_plugin_transition=plugin_transition is not None,failure_diagnostics=True)
  new_launcher=_launcher(adapter_source=ADAPTER_SOURCE)
  old_unit=old_files[UNIT]; old_launcher=old_files[LAUNCHER]
  new_unit_sha=hashlib.sha256(new_unit).hexdigest(); new_launcher_sha=hashlib.sha256(new_launcher).hexdigest()
