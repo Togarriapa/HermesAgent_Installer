@@ -2493,6 +2493,11 @@ Helper-only transition SHALL preserve protected overlay-journal bytes and histor
 - **THEN** root validates retained B0/B1/A0 archives, exact journal/content custody, every stable-order intermediate hash and reconstructed final A0; it derives A1 by only fixed helper/installer replacement, proves A0/A1 equality and exact current installed/discovery bytes, with all other manifest/member/provenance and J bytes unchanged.
 - **AND** a closed root cohort row binds B0/B1/A0/A1/J/content-set/source/installed/discovery digests; both discovery and overlay consumers independently verify that exact current committed reconstruction before use, not a public DTO, transitive base alias or replaced historical hash.
 
+#### Scenario: Core wrapper separates base and composed classifiers
+- **WHEN** protected owner edits make composed A0 differ from pristine incoming B1
+- **THEN** incoming helper/current-source equality remains mandatory; the existing strict transformer proves base B0/B1, exact retained J/intermediates/content to A0 and composed A0/A1, without comparing A0 to B1. Historic J and all Root owner/member/custody joins remain unchanged.
+- **AND** with no overlay, old base/composed archives must be identical and the direct old/new helper-only classifier remains mandatory. Semantic/base/member/history changes still deny; this distinction admits no general old artifact or new permission.
+
 #### Scenario: Missing original CAS, changed journal or partial cohort
 - **WHEN** base/content/intermediate/final proof is absent/changed, current source/cohort/owner differs or the transition is incomplete/replayed after restart
 - **THEN** consumer resolution denies/pends without guessing/rebuilding old authority, editing J or broadening manifest comparison; exact verified rollback restores compatible data and current binding without lease revival. Subsequent owner edits need their ordinary explicit review/CAS and cannot use reconstruction as write authority.

@@ -26,6 +26,8 @@ M1 phase handoff clarification: preserve original J0 while Root performs exact p
 
 ## M1 exact owner-overlay reconstruction clarification
 
+Pi138 exposed a Core wrapper layer error: its unconditional classifier compares owner-composed A0 against pristine incoming base B1 before reconstruction, rejecting legitimate retained skill edits. Keep the incoming helper's exact source-byte check unconditional. Without an owner overlay, classify identical old base/composed bytes against B1; with an overlay, use the existing strict transformer to prove B0/B1 and reconstructed A0/A1 separately. Root A0 custody and final composed equality remain required. No history rewrite, extra exclusion or semantic acceptance follows; exact source/pin and Pi overlay qualification precede deployment.
+
 Clarify the existing helper-only transition: an unchanged protected owner-overlay journal still names its original base and intermediate archive hashes. Prove old/new base helper-only equality, reconstruct and verify that exact old overlay chain from retained CAS/content, then replace only helper/installer metadata in its fully verified composed artifact. Persist a fixed current cohort reconstruction record binding the exact old/new base and composed artifacts plus unchanged journal digest; every consumer rechecks it instead of guessing a base alias or comparing old hashes to new composition. All overlay/member/provenance bytes and grants remain unchanged. Pi33 specs/plan have passed; runtime repair/this leaf qualification remain separate and OPEN.
 
 ## M1 helper-only generation transition
