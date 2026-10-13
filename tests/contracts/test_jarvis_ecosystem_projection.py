@@ -49,11 +49,11 @@ def _snapshot(instances: list[dict]) -> dict:
     }
 
 
-def _team_snapshot() -> dict:
+def _team_snapshot(*, recipient_profile: str = "researcher") -> dict:
     sender = _instance(profile="developer")
     sender["execution_key"] = "e" * 32
     sender["gateway_turn_id"] = "f" * 32
-    recipient = _instance(profile="developer")
+    recipient = _instance(profile=recipient_profile)
     recipient["execution_key"] = "g" * 32
     recipient["gateway_turn_id"] = "f" * 32
     now = max(sender["updated_at"], recipient["updated_at"])
@@ -182,7 +182,8 @@ def test_projection_exposes_only_root_joined_team_instances_and_completed_messag
     assert projected["observation"]["partial"] is True
     assert projected["pending"]["team_membership"] == "verified"
     assert projected["pending"]["communication_edges"] == "verified"
-    assert projected["instances"][0]["profile_id"] == projected["instances"][1]["profile_id"] == "developer"
+    assert projected["instances"][0]["profile_id"] == "developer"
+    assert projected["instances"][1]["profile_id"] == "researcher"
     assert projected["instances"][0]["id"] != projected["instances"][1]["id"]
     assert projected["teams"] == [{
         "id": "T" * 32, "team_execution_key": "T" * 32, "team_id": "pair_1",
@@ -202,6 +203,25 @@ def test_projection_exposes_only_root_joined_team_instances_and_completed_messag
     # The projection carries no completion handles, message bytes, or digest material.
     assert "excerpt_sha256" not in str(projected)
     assert "completion_handle" not in str(projected)
+
+
+def test_current_same_profile_instances_keep_exact_directed_execution_join():
+    value = _team_snapshot(recipient_profile="developer")
+    sender_key = value["relations"][0]["sender_execution_key"]
+    recipient_key = value["relations"][0]["recipient_execution_key"]
+    value["team_instances"][0]["state"] = "current"
+    value["relations"][0]["state"] = "current"
+
+    projected = project_native_activity_snapshot(value)
+
+    assert projected["pending"]["communication_edges"] == "verified"
+    assert projected["instances"][0]["profile_id"] == projected["instances"][1]["profile_id"] == "developer"
+    assert sender_key != recipient_key
+    relation = projected["relations"][0]
+    assert relation["from"] == sender_key == "e" * 32
+    assert relation["to"] == recipient_key == "g" * 32
+    assert relation["state"] == "current"
+    assert relation["mission_id"] == "c" * 32 and relation["mission_revision"] == 2
 
 
 @pytest.mark.parametrize("mutate", [
