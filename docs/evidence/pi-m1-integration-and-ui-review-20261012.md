@@ -1306,3 +1306,28 @@ protected backup contents with actual service `LoadCredential` metadata was
 pending; no waiver or apply followed. Read-only host token metadata showed
 admin ownership/mode 0400, which does not establish the service's private
 view. Root `1e9ba70` still had source 226 unchanged.
+
+## Candidate 159 credential-custody diagnosis and candidate 160 gate
+
+Three protected, no-content probes succeeded and left actual Core files and
+service state unchanged. Dummy V1 (SHA-256 `604778…`, exit 0) confirmed all
+three projected-credential registrations had one link, were non-writable and
+had expected sizes, but UID/GID `admin` and mode 0400 did not match. The service
+identity `admin`/1000 matched. Dummy V2 (SHA-256 `346f747…`, exit 0) matched
+UID/GID 0 and mode 0440 for all three; modes 0444 and 0404 did not match. A
+read-only check of the actual token ACL (version 2, five entries) confirmed
+root read, named admin UID 1000 read, group-object none, read mask, and other
+none. Dummy V3 (SHA-256
+`67987b30822efa5b34d118dcd0a0a9532f6c23db0be19993f11693c3f9a2e688`, exit 0)
+matched those exact ACL booleans for all three. Cleanup affected dummy units
+only. These results show actual systemd-projected custody differs from the
+fixture's guard assumption; a new strict recipe is required. No waiver was
+made.
+
+Sol refinement `04b`, Root candidate
+`4c278a65c91976e3c5c5bf199545038f42c8f7bc`, archive SHA-256
+`3d4fd062396716f69cdd0ba14cd4f86f5c9d2bca56c661e1d062e4ecec8434f8`, passed
+candidate-160 Pi spec validation and plan validation for the 219/62/18/4/8
+sets. This is not runtime acceptance. Native implementation of a fourth
+recipe preserving candidate 159's bytes was in progress. Core source remained
+`0727` pending reviewed code.
