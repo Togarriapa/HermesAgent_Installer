@@ -82,6 +82,25 @@ that require explicit fixture providers before those unit paths advance.
 They were not reached in this run. Real provider/startup evidence remains
 separate from controlled update-ordering and rollback tests.
 
+The v73 candidate `1683aeb4c09b76bfb7225120b3e5499470faa0bf` compiled
+on the Pi and passed strict specs/plan validation. First group156 passed
+in12.89s; expanded Core group4 failed/14 passed in133.17s. Archive SHA-256
+`8bd05cacad1f2dcdf37658f69d59083464a468912adb668260688d4be3c87c75`.
+The four fixture failures were genuine recipe refusals: the fixture changed
+its HOME/HERMES_HOME after creating the migrated unit, before the protected
+active-reader comparison. Sol independently confirmed this ordering issue.
+The fixture correction rebuilds its fixed unit/launcher and journal hashes
+for the selected isolated home; production recipe validation is retained.
+
+The v74 specification-only candidate
+`8f644fffa96e57036c9c750933d98f2d6924fff1` compiled on the Pi and passed
+strict specs/plan validation. Archive SHA-256
+`078b76551e40b9299026a1b2af61143f59d2a4e7e6a3e8ecbd588ebe06f8a1f3`.
+It records official Cloudflare client-session limits without enabling that
+beta path, removing binding-cookie protection or enrolling any device.
+Renewable device pairing remains unimplemented; browser720h was separately
+verified live. Runtime tests were not repeated for this specification leaf.
+
 The v69 specification-only candidate
 `6b4621209a11895ce9f7894013ce034e1bdb3b05` compiled on the Pi and passed
 strict specs/plan validation. Archive SHA-256
