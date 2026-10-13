@@ -164,6 +164,7 @@ const mount=new Function('return ('+MOUNT+')')();
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const buttons=()=>nodes.get('[data-final-effects]').children[0]?.children[2]?.children||[];
 const effectsNote=()=>nodes.get('[data-final-effects-note]').textContent;
+const confirmedRowNote=()=>nodes.get('[data-final-effects]').children[0]?.children[1]?.textContent||'';
 async function pollOnce(){await poll();await flush();await flush();}
 (async()=>{
  const cleanup=mount(root,api); await flush(); await flush(); await flush();
@@ -192,7 +193,8 @@ async function pollOnce(){await poll();await flush();await flush();}
  const denyDecision=buttons()[1].fire('click'); await flush();
  assert.equal(posts.length,2); posts[1].d.resolve({pendingId:pendingDeny.pendingId,status:'denied'}); await denyDecision;
  assert.deepEqual(posts[1].body,{pending_id:pendingDeny.pendingId,review_sha256:pendingDeny.reviewSha256,decision:'deny',idempotency_key:'key-2'});
- assert.match(effectsNote(),/Owner decision confirmed: denied/i);
+ assert.equal(effectsNote(),'Owner decision confirmed for the exact reviewed request. Tool action completion is separate.');
+ assert.equal(confirmedRowNote(),'Owner decision confirmed: denied. This does not confirm that the tool action completed.');
  assert.equal(buttons().length,0);
  effectRows=[]; await pollOnce(); // denied reviews are not returned by the current producer
  latestTurn='turn-3'; effectRows=[]; await pollOnce();
@@ -202,8 +204,8 @@ async function pollOnce(){await poll();await flush();await flush();}
  assert.equal(posts.length,3);
  await pollOnce(); assert.equal(buttons()[0].disabled,true,'poll redraw keeps the same exact decision locked while submit is pending');
  posts[2].d.resolve({pendingId:pendingAccepted.pendingId,status:'approved'}); await acceptedDecision;
- assert.match(effectsNote(),/Owner decision confirmed: approved/i);
- assert.match(effectsNote(),/does not confirm that the tool action completed/i);
+ assert.equal(effectsNote(),'Owner decision confirmed for the exact reviewed request. Tool action completion is separate.');
+ assert.equal(confirmedRowNote(),'Owner decision confirmed: approved. This does not confirm that the tool action completed.');
  assert.equal(buttons().length,0,'exact POST status confirms the decision while keeping effect completion separate');
  effectRows=[]; await pollOnce(); // spent review is no longer returned by the producer
  latestTurn='turn-4';
@@ -225,10 +227,12 @@ async function pollOnce(){await poll();await flush();await flush();}
  assert.equal(effectsNote(),beforeUnmount,'late decision failure cannot update an unmounted view');
  assert.equal(intervalCleared,true);
  assert.equal(posts.length,5,'unmount does not replay an unresolved decision');
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().then(()=>{console.log('ACTIVITY_DECISION_HARNESS_COMPLETE');})
+ .catch(error=>{console.error(error);process.exitCode=1;});
 '''.replace('MOUNT', FEATURE_ASSETS.mount_js)
     with tempfile.TemporaryDirectory() as temporary:
         script = Path(temporary) / "activity-decision-race.js"
         script.write_text("const assert=require('node:assert/strict');\n" + harness, encoding="utf-8")
-        result = subprocess.run(["node", str(script)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["node", str(script)], capture_output=True, text=True, check=False, timeout=15)
     assert result.returncode == 0, result.stderr
+    assert "ACTIVITY_DECISION_HARNESS_COMPLETE" in result.stdout
