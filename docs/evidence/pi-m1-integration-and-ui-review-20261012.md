@@ -159,6 +159,31 @@ step refused before effects. The next fixture correction replaces both
 bindings with the same explicit adapters. Real bootstrap filesystem checks
 remain separate. No target apply or production acceptance followed these runs.
 
+The v81 candidate `fa85ee40c77fdf5980e6cb0bd48b40fbe515ee34` compiled
+on the Pi and passed strict specs/plan validation. The four changed full-cycle
+fixtures failed in219.26s. Its source/tools matched v80, whose156 unchanged
+checks were not repeated. Archive SHA-256
+`d9711f2109d440c9a9cda4612dd28433c9e51651c02703d55b2b5945600943b0`.
+The bounded context identified an actual prepared-transition constructor
+error: omitted home role and an undeclared private prompt field. Its failed
+recovery also left a pending primary transition outside the required rollback
+phase. Both finite corrections were source-reviewed before v82.
+
+The v82 candidate `90413cc75af19a09968f4dda0e22cba69c772aa0` compiled
+and passed strict specs/plan validation; first group156 passed and expanded
+Core group4 failed/14 passed in219.57s. Archive SHA-256
+`e7f1002065ee5c0e0588a7e9aebf969685f6ef27ba69dd0637ef4087a02dee6c`.
+The importer recheck found an obsolete fixture `_identity` keyword signature.
+Recovery then exposed the strict reader's missing entirely-unwritten rollback
+case: no progress or owner backup existed before profile writing. The proposed
+correction accepts only all-null progress/backup with absent primary ownership,
+and separately proves exact original SOUL bytes/signature under the stopped
+cohort. Written/partly recorded states keep mandatory immutable backups.
+Sol also found two actual later startup mismatches before another target run:
+stale/out-of-scope journal read after initial adoption, and absent new-read
+custody in startup context. Those were corrected without relaxing admission.
+All subsequent checks and production acceptance remain pending.
+
 The v69 specification-only candidate
 `6b4621209a11895ce9f7894013ce034e1bdb3b05` compiled on the Pi and passed
 strict specs/plan validation. Archive SHA-256
