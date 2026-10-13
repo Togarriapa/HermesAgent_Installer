@@ -1366,7 +1366,7 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(all(response.status == 403 for response in responses),
                                     [response.status for response in responses])
                     messages = [await response.text() for response in responses]
-                    self.assertTrue(all("pending original global-admin registration" in message
+                    self.assertTrue(all("pending original-admin issue #21" in message
                                         for message in messages))
                     overview.assert_not_called()
                     self.assertEqual(denied_provider.calls, [])
@@ -1385,7 +1385,12 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
             await client.start_server()
             headers = {"Host": single_config.hostname, "Cf-Access-Jwt-Assertion": token}
             overview = SimpleNamespace(core_generation=single_accepted.core_generation,
-                                       verify_current=lambda **_kwargs: True)
+                                       verify_current=lambda _config, **kwargs: (
+                                           _config is single_config
+                                           and kwargs.get("peer_pid") == single_accepted.peer_pid
+                                           and kwargs.get("peer_uid") == single_accepted.peer_uid
+                                           and kwargs.get("peer_gid") == single_accepted.peer_gid
+                                           and kwargs.get("accepted_ingress") is single_accepted))
             try:
                 with patch.object(core_gateway, "_read_config_current"), \
                      patch.object(core_gateway, "accept_core_ingress", return_value=single_accepted), \
@@ -1417,7 +1422,7 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                                   side_effect=AssertionError("caller mismatch must deny before Core overview")):
                     response = await client.get("/chat/api/profiles", headers=headers)
                 self.assertEqual(response.status, 403)
-                self.assertIn("pending original global-admin registration", await response.text())
+                self.assertIn("pending original-admin issue #21", await response.text())
                 self.assertEqual(mismatch_provider.calls, [])
             finally:
                 await client.close()
