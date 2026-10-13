@@ -188,7 +188,7 @@ class CoreGatewayProfileAdminProvider:
         if (set(scope) != {"state", "authorized", "revision", "record_sha256",
                 "owner_subject_sha256", "token_fingerprint_sha256", "config_sha256",
                 "core_generation", "parent_nonce", "parent_proof_sha256", "purpose",
-                "expires_in_seconds"}
+                "expires_monotonic"}
                 or (scope["authorized"] is not True and action != "admin-status")
                 or scope["state"] not in {"active", "revoked", "unconfigured", "legacy-singleton"}
                 or type(scope["authorized"]) is not bool or type(scope["revision"]) is not int
@@ -202,8 +202,9 @@ class CoreGatewayProfileAdminProvider:
                 or scope["parent_proof_sha256"] != accepted_ingress.root_observation.proof_sha256
                 or not _HASH.fullmatch(scope["parent_proof_sha256"])
                 or scope["purpose"] != "profiles-native-skills"
-                or type(scope["expires_in_seconds"]) not in {int, float}
-                or not 0 < scope["expires_in_seconds"] <= 5.0
+                or type(scope["expires_monotonic"]) not in {int, float}
+                or time.monotonic() >= scope["expires_monotonic"]
+                or scope["expires_monotonic"] > accepted_ingress.root_observation.expires_monotonic
                 or (scope["authorized"] is True and scope["state"] not in {"active", "legacy-singleton"})):
             raise JarvisChatDenied("Root administrator proof is unavailable")
         if action == "admin-status":
@@ -218,7 +219,7 @@ class CoreGatewayProfileAdminProvider:
             scope["record_sha256"], scope["owner_subject_sha256"],
             scope["token_fingerprint_sha256"], scope["config_sha256"],
             scope["core_generation"], scope["parent_nonce"], scope["parent_proof_sha256"],
-            time.monotonic() + float(scope["expires_in_seconds"]))
+            float(scope["expires_monotonic"]))
 
     def current_admin_scope(self, admin_context: RootProfileAdminContext) -> tuple[int, str]:
         if type(admin_context) is not RootProfileAdminContext or admin_context.expires_monotonic <= time.monotonic():
@@ -736,7 +737,7 @@ async def _current_owner(request: Any, service: JarvisChatService,
     except Exception:
         raise web.HTTPServiceUnavailable(text="current Core is unavailable", headers=_secure_headers()) from None
 
-    def verify_current() -> None:
+    async def verify_current() -> None:
         current = service._current(request)
         if (current.subject != principal.subject
                 or current.core_generation != principal.core_generation
@@ -744,6 +745,17 @@ async def _current_owner(request: Any, service: JarvisChatService,
                     peer_uid=accepted.peer_uid, peer_gid=accepted.peer_gid,
                     accepted_ingress=accepted) is not True):
             raise JarvisChatDenied("current owner or Core generation changed")
+        if time.monotonic() >= admin_context.expires_monotonic:
+            raise JarvisChatDenied("original administrator ingress expired")
+        try:
+            fresh = await asyncio.wait_for(asyncio.to_thread(
+                admin._provider.admin_status, access_jwt=assertions[0],
+                accepted_ingress=accepted), timeout=3.0)
+        except Exception:
+            raise JarvisChatDenied("current Root administrator status is unavailable") from None
+        if (type(fresh) is not RootProfileAdminContext or fresh != admin_context
+                or fresh.authorized is not True or time.monotonic() >= fresh.expires_monotonic):
+            raise JarvisChatDenied("original administrator status changed")
 
     assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])
     if (len(assertions) != 1 or not isinstance(assertions[0], str)
@@ -791,7 +803,7 @@ def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
             payload = await asyncio.wait_for(asyncio.to_thread(admin.list_profiles,
                 subject=principal.subject, core_generation=principal.core_generation,
                 access_jwt=access_jwt, accepted_ingress=accepted, admin_context=admin_context), timeout=3.0)
-            verify_current()
+            await verify_current()
             return web.json_response(payload, headers=_secure_headers())
         except web.HTTPException:
             raise
@@ -805,7 +817,7 @@ def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
                 subject=principal.subject, core_generation=principal.core_generation,
                 profile_id=profile_id(request), file_kind=request.match_info.get("file_kind", ""),
                 access_jwt=access_jwt, accepted_ingress=accepted, admin_context=admin_context), timeout=3.0)
-            verify_current()
+            await verify_current()
             return web.json_response(payload, headers=_secure_headers())
         except web.HTTPException:
             raise
@@ -821,7 +833,7 @@ def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
             selected = next((row for row in snapshot["profiles"] if row["id"] == profile_id(request)), None)
             if selected is None:
                 raise JarvisChatDenied("profile is unavailable")
-            verify_current()
+            await verify_current()
             return web.json_response({"coreGeneration": principal.core_generation,
                 "profile": {"id": selected["id"], "name": selected["name"], "kind": selected["kind"],
                             "sourceGeneration": selected["sourceGeneration"]},
@@ -841,7 +853,7 @@ def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
                 profile_id=profile_id(request), file_kind=body["file_kind"],
                 base_sha256=body["base_sha256"], content=body["content"],
                 access_jwt=access_jwt, accepted_ingress=accepted, admin_context=admin_context), timeout=4.0)
-            verify_current()
+            await verify_current()
             return web.json_response(payload, headers=_secure_headers())
         except web.HTTPException:
             raise
@@ -855,14 +867,14 @@ def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
             principal, accepted, _launch, verify_current, access_jwt, admin_context = await _current_owner(request, service, admin)
             body = await _read_json(request, {"file_kind", "base_sha256", "content",
                                               "preview_token", "idempotency_key"})
-            verify_current()
+            await verify_current()
             result = await asyncio.wait_for(asyncio.to_thread(admin.save,
                 subject=principal.subject, core_generation=principal.core_generation,
                 profile_id=profile_id(request), file_kind=body["file_kind"],
                 base_sha256=body["base_sha256"], content=body["content"],
                 preview_token=body["preview_token"], idempotency_key=body["idempotency_key"],
                 access_jwt=access_jwt, accepted_ingress=accepted, admin_context=admin_context), timeout=8.0)
-            verify_current()
+            await verify_current()
             return web.json_response(result, headers=_secure_headers())
         except web.HTTPException:
             raise

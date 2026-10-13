@@ -615,6 +615,8 @@ def derive_profile_admin_ingress(config: CoreGatewayConfig, *, request: dict[str
         retained=parent, principal=principal)
     if status["authorized"] is not True:
         raise CoreInspectionDenied("original administrator scope is unavailable")
+    # Send one absolute same-host monotonic deadline, clamped to both the
+    # original retained parent and this independently verified JWT.
     jwt_deadline = time.monotonic() + max(0.0, principal.expires_at - time.time())
     expires = min(parent.expires_monotonic, jwt_deadline)
     now = time.monotonic()
@@ -645,7 +647,9 @@ def derive_profile_admin_ingress(config: CoreGatewayConfig, *, request: dict[str
         "child_nonce": child_nonce, "child_proof_sha256": child_proof,
         "action": request["action"], "revision": status["revision"],
         "record_sha256": status["record_sha256"],
-        "expires_in_seconds": max(0.0, expires - time.monotonic())}
+        # Same-host IPC preserves the absolute monotonic deadline.  A relative
+        # duration would let transport latency silently renew this child.
+        "expires_monotonic": expires}
 
 
 def _consume_profile_admin_child(*, caller_pid: int, caller_start_ticks: str,
@@ -2658,8 +2662,8 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
     deadline = min(time.monotonic() + MAX_PROOF_SECONDS, retained.expires_monotonic)
     principal = validate_access_jwt(request.get("access_jwt"),
         policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
-    jwt_deadline = time.monotonic() + max(0.0, principal.expires_at - time.time())
-    status_deadline = min(retained.expires_monotonic, jwt_deadline)
+    # Retained accepted ingress is already bounded by the verified JWT.
+    status_deadline = retained.expires_monotonic
     if action == "admin-status":
         status_fields = {"schema", "op", "action", "nonce", "peer_pid", "peer_uid", "peer_gid",
             "access_jwt", "core_generation", "ingress_nonce", "ingress_proof_sha256"}
@@ -2677,7 +2681,7 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
             "config_sha256": config.config_sha256, "core_generation": request["core_generation"],
             "parent_nonce": retained.nonce, "parent_proof_sha256": retained.proof_sha256,
             "purpose": "profiles-native-skills",
-            "expires_in_seconds": max(0.0, status_deadline - time.monotonic())}}}
+            "expires_monotonic": status_deadline}}}
 
     required = {"child_nonce", "child_proof_sha256", "expected_admin_revision", "expected_admin_sha256"}
     if (action not in _PROFILE_ADMIN_ACTIONS or not required.issubset(request)
@@ -2699,8 +2703,7 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
 
     def sealed_scope(scope: dict[str, Any]) -> dict[str, Any]:
         return {**scope, **proof_context,
-            "expires_in_seconds": max(0.0, min(MAX_PROOF_SECONDS,
-                status_deadline - time.monotonic()))}
+            "expires_monotonic": status_deadline}
 
     with global_admin.locked(exclusive=False):
         record, digest = global_admin.read_locked()
@@ -2806,8 +2809,15 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
     retained = _peek_ingress_issue(caller_pid=caller_pid, caller_start_ticks=caller_start,
         nonce=request["ingress_nonce"], proof_sha256=request["ingress_proof_sha256"],
         peer=(peer_pid, peer_uid, peer_gid), core_generation=request["core_generation"], config=config)
-    deadline = min(time.monotonic() + MAX_PROOF_SECONDS, retained.expires_monotonic,
-                   child_expires_monotonic)
+    # Keep the original-parent deadline in the ingress witness: it is part of
+    # the signed observation digest.  The shorter child deadline is a distinct
+    # effect lease and is checked independently below and before each effect.
+    witness_deadline = min(retained.expires_monotonic,
+                           retained.issued_monotonic + MAX_PROOF_SECONDS)
+    effect_deadline = min(witness_deadline, child_expires_monotonic)
+    if time.monotonic() >= effect_deadline:
+        raise CoreInspectionDenied("one-use profile administrator child expired")
+    deadline = witness_deadline
     current = observe_current_ingress(config, nonce=retained.nonce,
         caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
         peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
@@ -2831,6 +2841,33 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
         return {"schema": 1, "nonce": request["nonce"], "ok": True,
                 "action": action, "result": {"state": "current"}}
 
+    def checkpoint_native_access() -> None:
+        """Recheck parent custody and child expiry after catalog/lock waits."""
+        if time.monotonic() >= effect_deadline:
+            raise CoreInspectionDenied("one-use profile administrator child expired")
+        ingress = observe_current_ingress(config, nonce=retained.nonce,
+            caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+            peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+            _issued=retained.issued_monotonic, _deadline=witness_deadline,
+            _retain_issuance=False)
+        if (ingress["proof_sha256"] != retained.proof_sha256
+                or ingress["core_generation"] != request["core_generation"]):
+            raise CoreInspectionDenied("original profile ingress changed before native access")
+        pidfd, start_ticks, _invocation = _check_unit_process(
+            config, unit=CORE_GATEWAY_UNIT, pid=caller_pid, deadline=effect_deadline)
+        try:
+            if start_ticks != retained.caller_start_ticks:
+                raise CoreInspectionDenied("profile gateway process changed before native access")
+        finally:
+            os.close(pidfd)
+        current_custody = capture_current_core_native_custody(config)
+        try:
+            if (current_custody.core_generation != custody.core_generation
+                    or current_custody.core_source_generation != custody.core_source_generation):
+                raise CoreInspectionDenied("profile administration Core custody changed before native access")
+        finally:
+            os.close(current_custody._core_pidfd)
+
     # Root verifies the pinned Resources manifest and the current Core process on
     # every operation. Only profile IDs with actual native files are projected.
     from ..components.resources_active_profile_source import _read_catalog
@@ -2850,6 +2887,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
         catalog = _read_catalog(custody.core_source_generation)
         if catalog is None:
             raise CoreInspectionDenied("Current profile manifest is unavailable")
+        checkpoint_native_access()
         profile_ids = tuple(sorted(catalog["sources"]))
         if action == "list":
             result: Any = current_profile_files(profile_ids)
@@ -2865,6 +2903,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
                     or len({row["skill_id"] for row in manifest_skills}) != len(manifest_skills)):
                 raise CoreInspectionDenied("Pinned skill source manifest is invalid")
             pinned_ids = tuple(sorted(row["skill_id"] for row in manifest_skills))
+            checkpoint_native_access()
             current_native_rows = current_profile_skill_files(pinned_ids)
             from .. import core_runtime as core
             _overlay_record, overlay_contents, _overlay_bytes = core._resources_skill_overlay_read()
@@ -2909,6 +2948,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
                 elif row is None and action not in {"skill-archive", "skill-restore"}:
                     raise CoreInspectionDenied("Native skill is not currently installed")
                 elif action == "skill-read":
+                    checkpoint_native_access()
                     value = (read_resources_skill(selected_skill) if row["source"] == "resources"
                              else read_profile_skill("hermes", selected_skill))
                     result = {"skill_id": selected_skill, "file_name": f"skills/{selected_skill}/SKILL.md",
@@ -2921,6 +2961,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
                     if row is None or row["editable"] is not True:
                         raise CoreInspectionDenied("Selected skill is read-only")
                     if row["source"] == "resources":
+                        checkpoint_native_access()
                         value = core.admin_resources_skill("write", selected_skill,
                             expected_sha256=request["expected_sha256"], content=request["content"].encode("utf-8"),
                             idempotency_key=hashlib.sha256(request["idempotency_key"].encode("ascii")).hexdigest(),
@@ -2929,6 +2970,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
                             "source_generation": value["source_generation"], "sha256": value["sha256"],
                             "recovery_id": value["recovery_id"], "effective_readback": value["effective_readback"]}
                     else:
+                        checkpoint_native_access()
                         value = write_profile_skill(selected_skill,
                             expected_sha256=request["expected_sha256"], content=request["content"],
                             idempotency_key=request["idempotency_key"],
@@ -2938,6 +2980,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
                             "recovery_id": value.recovery_id, "effective_readback": value.readback}
                 elif action == "skill-archive":
                     if row is not None and row["source"] == "resources":
+                        checkpoint_native_access()
                         value = core.admin_resources_skill("archive", selected_skill,
                             expected_sha256=request["expected_sha256"],
                             idempotency_key=hashlib.sha256(request["idempotency_key"].encode("ascii")).hexdigest(),
@@ -2948,6 +2991,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
                     else:
                         if row is not None and row["source"] != "owner-added":
                             raise CoreInspectionDenied("Selected skill cannot be archived")
+                        checkpoint_native_access()
                         value = archive_profile_skill(selected_skill,
                             expected_sha256=request["expected_sha256"],
                             idempotency_key=request["idempotency_key"],
@@ -2960,6 +3004,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
                     if not _valid_profile_skill_restore_id(request["restore_id"], restore_source):
                         raise CoreInspectionDenied("Archived skill version does not match its selected source")
                     if selected_skill in resource_ids:
+                        checkpoint_native_access()
                         value = core.admin_resources_skill("restore", selected_skill,
                             expected_sha256=request["expected_sha256"], restore_id=request["restore_id"],
                             idempotency_key=hashlib.sha256(request["idempotency_key"].encode("ascii")).hexdigest(),
@@ -2968,6 +3013,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
                             "source_generation": value["source_generation"], "sha256": value["sha256"],
                             "recovery_id": value["recovery_id"], "effective_readback": value["effective_readback"]}
                     else:
+                        checkpoint_native_access()
                         value = restore_profile_skill(selected_skill,
                             expected_sha256=request["expected_sha256"], restore_id=request["restore_id"],
                             idempotency_key=request["idempotency_key"],
@@ -2978,6 +3024,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
         elif request["profile_id"] not in catalog["sources"]:
             raise CoreInspectionDenied("Profile is not in the current source manifest")
         elif action == "read":
+            checkpoint_native_access()
             value = read_profile_file(request["profile_id"], request["file_kind"])
             primary_projection = None
             if request["profile_id"] == "hermes" and request["file_kind"] == "soul":
@@ -2994,6 +3041,7 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
                     (custody.core_source_generation + "\0" + value.sha256).encode()).hexdigest(),
                 "effective": True}
         else:
+            checkpoint_native_access()
             value = write_profile_file(request["profile_id"], request["file_kind"],
                 expected_sha256=request["expected_sha256"], content=request["content"],
                 idempotency_key=request["idempotency_key"],
@@ -3013,7 +3061,8 @@ def _observe_profile_admin_transaction(config: CoreGatewayConfig, *, request: di
             if (final_custody.core_generation != custody.core_generation
                     or final_custody.core_source_generation != custody.core_source_generation
                     or final_ingress["proof_sha256"] != retained.proof_sha256
-                    or time.monotonic() >= deadline):
+                    or time.monotonic() >= deadline
+                    or time.monotonic() >= effect_deadline):
                 raise CoreInspectionDenied("Profile administration authority expired during operation")
         finally:
             os.close(final_custody._core_pidfd)
@@ -6244,15 +6293,16 @@ class CoreGatewayInspector:
             derived = _profile_admin_root_call(self._config, packet=derive,
                 nonce=derive_nonce, deadline=deadline)
             if (set(derived) != {"schema", "nonce", "ok", "child_nonce", "child_proof_sha256",
-                    "action", "revision", "record_sha256", "expires_in_seconds"}
+                    "action", "revision", "record_sha256", "expires_monotonic"}
                     or derived["action"] != action
                     or not isinstance(derived.get("child_nonce"), str)
                     or re.fullmatch(r"[0-9a-f]{64}", derived["child_nonce"]) is None
                     or not _is_hash(derived.get("child_proof_sha256"))
                     or derived["revision"] != admin_context["revision"]
                     or derived["record_sha256"] != admin_context["record_sha256"]
-                    or type(derived["expires_in_seconds"]) not in {int, float}
-                    or not 0 < derived["expires_in_seconds"] <= admin_context["expires_monotonic"] - time.monotonic() + 0.01):
+                    or type(derived["expires_monotonic"]) not in {int, float}
+                    or time.monotonic() >= derived["expires_monotonic"]
+                    or derived["expires_monotonic"] > admin_context["expires_monotonic"]):
                 raise CoreGatewayDenied("Root profile child issuance is malformed or stale")
             body.update({"child_nonce": derived["child_nonce"],
                          "child_proof_sha256": derived["child_proof_sha256"]})
@@ -6270,7 +6320,7 @@ class CoreGatewayInspector:
                 or set(result["result"]["admin_scope"]) != {
                     "state", "authorized", "revision", "record_sha256", "owner_subject_sha256",
                     "token_fingerprint_sha256", "config_sha256", "core_generation",
-                    "parent_nonce", "parent_proof_sha256", "purpose", "expires_in_seconds"}
+                    "parent_nonce", "parent_proof_sha256", "purpose", "expires_monotonic"}
                 or result["result"]["admin_scope"]["state"] not in {"active", "revoked", "unconfigured", "legacy-singleton"}
                 or type(result["result"]["admin_scope"]["authorized"]) is not bool
                 or type(result["result"]["admin_scope"]["revision"]) is not int
@@ -6283,10 +6333,9 @@ class CoreGatewayInspector:
                 or result["result"]["admin_scope"]["parent_nonce"] != proof.nonce
                 or result["result"]["admin_scope"]["parent_proof_sha256"] != proof.proof_sha256
                 or result["result"]["admin_scope"]["purpose"] != "profiles-native-skills"
-                or type(result["result"]["admin_scope"]["expires_in_seconds"]) not in {int, float}
-                or not 0 < result["result"]["admin_scope"]["expires_in_seconds"] <= MAX_PROOF_SECONDS
-                or result["result"]["admin_scope"]["expires_in_seconds"] >
-                    accepted_ingress.expires_monotonic - time.monotonic() + 0.01
+                or type(result["result"]["admin_scope"]["expires_monotonic"]) not in {int, float}
+                or not time.monotonic() < result["result"]["admin_scope"]["expires_monotonic"]
+                or result["result"]["admin_scope"]["expires_monotonic"] > proof.expires_monotonic
                 or time.monotonic() >= deadline):
             raise CoreGatewayDenied("root profile source response is malformed or stale")
         if result["result"]["admin_scope"]["authorized"] is not True and action != "admin-status":

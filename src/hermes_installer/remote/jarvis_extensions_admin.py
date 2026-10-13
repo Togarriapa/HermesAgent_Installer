@@ -359,6 +359,21 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
         except Exception:
             raise JarvisChatDenied("current native skill source adapter is unavailable") from None
 
+    async def verify_admin_current(request: Any) -> None:
+        """Recheck Root scope for this request after waits and before bytes/effects."""
+        from .jarvis_profiles_admin import RootProfileAdminContext
+        captured = request.get("profile_admin_context")
+        accepted = request.get("core_ingress")
+        if (type(captured) is not RootProfileAdminContext or captured.authorized is not True
+                or time.monotonic() >= captured.expires_monotonic):
+            raise JarvisChatDenied("current original administrator scope expired")
+        fresh = await asyncio.wait_for(asyncio.to_thread(
+            skill_provider(request).admin_status, access_jwt=access_jwt(request),
+            accepted_ingress=accepted), timeout=3.0)
+        if (type(fresh) is not RootProfileAdminContext or fresh != captured
+                or fresh.authorized is not True or time.monotonic() >= fresh.expires_monotonic):
+            raise JarvisChatDenied("original administrator status changed")
+
     async def inventory(request: Any) -> dict[str, Any]:
         principal = current_owner(request)
         accepted = request.get("core_ingress")
@@ -375,6 +390,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
         skills, plugins, mcps = await asyncio.gather(
             service.backend.skills_inventory(), service.backend.list_managed_plugins(),
             service.backend.list_mcp_servers())
+        await verify_admin_current(request)
         owner_mcp_revisions = owned_mcp_revisions(principal.subject, principal.core_generation)
         owner_plugin_revisions = owned_plugin_revisions(principal.subject, principal.core_generation)
         bundle = _verified_bundle_inventory()
@@ -394,6 +410,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             before = current_owner(request)
             payload = await asyncio.wait_for(inventory(request), timeout=8.0)
             after = current_owner(request)
+            await verify_admin_current(request)
             if (after.subject != before.subject or after.core_generation != before.core_generation):
                 raise JarvisChatDenied("owner or core generation changed during inventory")
             for item in payload["items"]:
@@ -530,6 +547,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             before = current_owner(request, require_origin=True)
             body = await _read_body(request, _BODY_FIELDS[operation])
             before_inventory = await asyncio.wait_for(inventory(request), timeout=8.0)
+            await verify_admin_current(request)
             if not isinstance(body.get("revision"), str) or body["revision"] != before_inventory["revision"]:
                 raise web.HTTPConflict(text="extension inventory changed; refresh before retrying",
                                        headers=_secure_headers())
@@ -617,6 +635,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                                        headers=_secure_headers())
             reserved = reserve_action(body, operation, before.subject)
             if reserved != "new":
+                await verify_admin_current(request)
                 return web.json_response({"status": reserved}, status=202 if reserved == "pending" else 200,
                                          headers=_secure_headers())
             mcp_owner_revision = None
@@ -628,6 +647,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 reload_result = await service.backend.reload_skills()
                 observed = await service.backend.skills_inventory()
                 if not _native_skill_loaded(observed, _slug(result["name"])):
+                    await verify_admin_current(request)
                     return web.json_response({"status": "pending", "reason": "skill install was accepted but is not present in the refreshed native inventory"},
                                              status=202, headers=_secure_headers())
                 result["reload"] = reload_result
@@ -651,11 +671,13 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                         or not isinstance(write.source_generation, str)
                         or not re.fullmatch(r"[0-9a-f]{64}", write.source_generation)
                         or not recovery_id_valid):
+                    await verify_admin_current(request)
                     return web.json_response({"status": "pending", "reason": "skill source was saved but active readback is pending"},
                                              status=202, headers=_secure_headers())
                 reloaded = await service.backend.reload_skills()
                 observed = await service.backend.skills_inventory()
                 if not _native_skill_loaded(observed, target["name"]):
+                    await verify_admin_current(request)
                     return web.json_response({"status": "pending", "reason": "skill source was saved but is absent from the refreshed native inventory"},
                                              status=202, headers=_secure_headers())
                 result = {"state": write.state, "sha256": write.sha256, "action": "edit",
@@ -684,12 +706,14 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 if (archived.state != expected_archive_state or archived.effective_readback is not True
                         or not archive_sha_valid
                         or not archive_id_valid):
+                    await verify_admin_current(request)
                     return web.json_response({"status": "pending", "reason": "skill archive outcome is pending"},
                                              status=202, headers=_secure_headers())
                 reload_result = await service.backend.reload_skills()
                 observed = await service.backend.skills_inventory()
                 should_be_loaded = target.get("source") == "bundledResources"
                 if _native_skill_loaded(observed, target["name"]) is not should_be_loaded:
+                    await verify_admin_current(request)
                     return web.json_response({"status": "pending", "reason": "archive was recorded but refreshed native skill state is not confirmed"},
                                              status=202, headers=_secure_headers())
                 result = {"state": archived.state, "recoveryId": archived.recovery_id,
@@ -724,11 +748,13 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                         or restored.sha256 != archived["sha256"] or not restore_id_valid
                         or not isinstance(restored.source_generation, str)
                         or not re.fullmatch(r"[0-9a-f]{64}", restored.source_generation)):
+                    await verify_admin_current(request)
                     return web.json_response({"status": "pending", "reason": "restore outcome is pending"},
                                              status=202, headers=_secure_headers())
                 reload_result = await service.backend.reload_skills()
                 observed = await service.backend.skills_inventory()
                 if not _native_skill_loaded(observed, target["name"]):
+                    await verify_admin_current(request)
                     return web.json_response({"status": "pending", "reason": "restored source is not present in refreshed native inventory"},
                                              status=202, headers=_secure_headers())
                 result = {"state": restored.state, "recoveryId": restored.recovery_id,
@@ -744,6 +770,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 revision = _plugin_config_revision(observed) if isinstance(observed, dict) else None
                 if (observed is None or observed.get("source") not in {"catalog", "user", "git"}
                         or revision is None):
+                    await verify_admin_current(request)
                     return web.json_response({"status": "pending",
                         "reason": "plugin install was accepted but exact native configuration readback is pending"},
                         status=202, headers=_secure_headers())
@@ -760,6 +787,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 result = await service.backend.remove_plugin(target["name"])
                 observed_plugins = await service.backend.list_managed_plugins()
                 if any(row.get("name") == target["name"] for row in observed_plugins):
+                    await verify_admin_current(request)
                     return web.json_response({"status": "pending",
                         "reason": "plugin removal was accepted but native inventory still contains it"},
                         status=202, headers=_secure_headers())
@@ -774,6 +802,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 if (observed is None or observed.get("source") != "config"
                         or revision is None
                         or observed.get("config_revision") != revision):
+                    await verify_admin_current(request)
                     return web.json_response({"status": "pending",
                         "reason": "MCP add was accepted but exact native configuration readback is pending"},
                         status=202, headers=_secure_headers())
@@ -788,6 +817,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             else:
                 raise web.HTTPNotFound(text="not found", headers=_secure_headers())
             after = current_owner(request, require_origin=True)
+            await verify_admin_current(request)
             if after.subject != before.subject or after.core_generation != before.core_generation:
                 return web.json_response({"status": "pending", "reason": "owner or core generation changed"},
                                          status=202, headers=_secure_headers())
@@ -802,6 +832,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             elif operation == "mcps:remove" and isinstance(forget_mcp_name, str):
                 forget_owned_mcp(before.subject, before.core_generation, forget_mcp_name)
             complete_action(body, before.subject)
+            await verify_admin_current(request)
             return web.json_response({"status": "applied", "result": result}, status=status,
                                      headers=_secure_headers())
         except web.HTTPException:
@@ -832,6 +863,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             before = current_owner(request, require_origin=True)
             body = await _read_body(request, _BODY_FIELDS["skills:restore-list"])
             snapshot = await asyncio.wait_for(inventory(request), timeout=8.0)
+            await verify_admin_current(request)
             if body.get("revision") != snapshot["revision"]:
                 raise web.HTTPConflict(text="extension inventory changed; refresh before listing archives",
                                        headers=_secure_headers())
@@ -842,6 +874,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             archive_row = next((item for item in archive_rows if item["skill_id"] == row["name"]), None)
             versions = archive_row["versions"] if archive_row else ()
             after = current_owner(request, require_origin=True)
+            await verify_admin_current(request)
             if after.subject != before.subject or after.core_generation != before.core_generation:
                 raise JarvisChatDenied("owner or core generation changed during archive inventory")
             return web.json_response({"skill": row["label"], "versions": [
@@ -861,6 +894,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             before = current_owner(request, require_origin=True)
             body = await _read_body(request, _BODY_FIELDS["skills:read"])
             snapshot = await asyncio.wait_for(inventory(request), timeout=8.0)
+            await verify_admin_current(request)
             if body.get("revision") != snapshot["revision"]:
                 raise web.HTTPConflict(text="extension inventory changed; refresh before reading",
                                        headers=_secure_headers())
@@ -873,6 +907,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 accepted_ingress=request.get("core_ingress"),
                 admin_context=request.get("profile_admin_context"))
             after = current_owner(request, require_origin=True)
+            await verify_admin_current(request)
             if after.subject != before.subject or after.core_generation != before.core_generation:
                 raise JarvisChatDenied("owner or core generation changed during skill read")
             return web.json_response({"name": value.skill_id, "content": value.content,

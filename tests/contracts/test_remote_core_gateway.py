@@ -1305,7 +1305,7 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
                     self.authorized, 1 if self.authorized else 0, "a" * 64 if self.authorized else "0" * 64,
                     hashlib.sha256(principal.subject.encode()).hexdigest(), principal.token_fingerprint,
                     accepted_ingress._config_sha256, accepted_ingress.core_generation,
-                    proof.nonce, proof.proof_sha256, time.monotonic() + 5)
+                    proof.nonce, proof.proof_sha256, proof.expires_monotonic)
 
             def list_profiles(self, **_kwargs):
                 self.calls.append("list")
@@ -1490,6 +1490,78 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await client.close()
 
+    async def test_profile_read_rechecks_root_revocation_before_returning_bytes(self):
+        from hermes_installer.remote.core_gateway_inspector import CoreGatewayInspector
+        from hermes_installer.remote.jarvis_profiles_admin import (
+            JarvisProfileAdmin, ProfileAdminFile, RootProfileAdminContext,
+            install_jarvis_profiles_admin_routes,
+        )
+
+        config = dataclasses.replace(_config(), allowed_emails=frozenset({"owner@example.test"}))
+        token = "profile-revocation-test-token"
+        base = _accepted_observation(config, now=time.monotonic())
+        principal = dataclasses.replace(base.principal,
+            token_fingerprint=hashlib.sha256(token.encode("ascii")).hexdigest())
+        claim = core_gateway._accepted_claim_digest(principal=principal,
+            jwt_expiry=base.jwt_expires_monotonic, root_proof=base.root_observation,
+            peer=(base.peer_pid, base.peer_uid, base.peer_gid),
+            listener=(base.listener_device, base.listener_inode),
+            issued=base.issued_monotonic, expiry=base.expires_monotonic,
+            core_generation=base.core_generation, config_sha256=base._config_sha256)
+        accepted = dataclasses.replace(base, principal=principal, _claim_sha256=claim)
+
+        class RevokingProvider:
+            def __init__(self):
+                self.authorized = True
+                self.reads = 0
+
+            def admin_status(self, *, access_jwt, accepted_ingress):
+                proof = accepted_ingress.root_observation
+                return RootProfileAdminContext(
+                    "active" if self.authorized else "revoked", self.authorized,
+                    1 if self.authorized else 2, "a" * 64 if self.authorized else "b" * 64,
+                    hashlib.sha256(accepted_ingress.principal.subject.encode()).hexdigest(),
+                    accepted_ingress.principal.token_fingerprint,
+                    accepted_ingress._config_sha256, accepted_ingress.core_generation,
+                    proof.nonce, proof.proof_sha256, proof.expires_monotonic)
+
+            def read_file(self, **_kwargs):
+                self.reads += 1
+                self.authorized = False
+                text = "secret source bytes must not reach the browser"
+                return ProfileAdminFile("hermes", "soul", "SOUL.md", "f" * 64,
+                    text, hashlib.sha256(text.encode()).hexdigest(), True)
+
+        provider = RevokingProvider()
+        launch = core_gateway.CoreGatewayLaunch(config, RemotePolicy(
+            config.hostname, config.issuer, config.audience, config.allowed_emails, {}))
+        with tempfile.TemporaryDirectory(prefix="jarvis-profile-revoke-after-read-") as temporary:
+            service = _jarvis_service(launch, Path(temporary) / "chat.sqlite3")
+            service.inspector = CoreGatewayInspector(config)
+            app = web.Application(middlewares=[web.middleware(core_gateway._core_ingress_middleware)])
+            app["core_gateway_launch"] = launch
+            service.install(app)
+            install_jarvis_profiles_admin_routes(app, service, JarvisProfileAdmin(provider))
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            overview = _overview_observation(config, accepted, now=time.monotonic())
+            try:
+                with patch.object(core_gateway, "_read_config_current"), \
+                     patch.object(core_gateway, "accept_core_ingress", return_value=accepted), \
+                     patch.object(core_gateway.CoreAcceptedIngressObservation,
+                                  "verify_current", return_value=True), \
+                     patch.object(core_gateway_inspector, "verify_current_core_overview",
+                                  return_value=overview):
+                    response = await client.get("/chat/api/profiles/hermes/files/soul",
+                        headers={"Host": config.hostname,
+                                 "Cf-Access-Jwt-Assertion": token})
+                    body = await response.text()
+                self.assertEqual(response.status, 403)
+                self.assertNotIn("secret source bytes", body)
+                self.assertEqual(provider.reads, 1)
+            finally:
+                await client.close()
+
     def test_profile_admin_inspector_allows_matching_singleton_before_native_list(self):
         config = _config()
         token = "single-owner-profile-token"
@@ -1517,10 +1589,11 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="88"), \
              patch.object(core_gateway_inspector, "_peek_ingress_issue", return_value=retained), \
              patch.object(core_gateway_inspector, "_consume_profile_admin_child",
-                          return_value=SimpleNamespace(expires_monotonic=now + 4)), \
+                          return_value=SimpleNamespace(expires_monotonic=now + 2)), \
              patch.object(global_admin, "locked"), \
              patch.object(global_admin, "read_locked", return_value=(None, None)), \
-             patch.object(core_gateway_inspector, "observe_current_ingress", return_value=current), \
+             patch.object(core_gateway_inspector, "observe_current_ingress",
+                          return_value=current) as observe_ingress, \
              patch.object(core_gateway_inspector, "_check_unit_process",
                           return_value=(92, "88", "gateway-invocation")), \
              patch.object(core_gateway_inspector.os, "close"), \
@@ -1529,7 +1602,7 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
              patch("hermes_installer.components.resources_active_profile_source._read_catalog",
                    return_value=catalog), \
              patch.object(core_gateway_inspector, "capture_current_core_native_custody",
-                          side_effect=[custody, custody]), \
+                          side_effect=[custody, custody, custody]), \
              patch("hermes_installer.remote.jarvis_profile_source_adapter.current_profile_files",
                    return_value=current_rows) as list_native:
             result = core_gateway_inspector.observe_profile_admin(config, request=request,
@@ -1538,6 +1611,9 @@ class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["action"], "list")
         self.assertEqual(result["result"]["data"], current_rows)
         list_native.assert_called_once_with(("hermes",))
+        self.assertEqual(len(observe_ingress.call_args_list), 3)
+        self.assertTrue(all(call.kwargs["_deadline"] == retained.expires_monotonic
+                            for call in observe_ingress.call_args_list))
         wrong_principal = Principal("member@example.test", "owner-subject", time.time() + 60,
                                     hashlib.sha256(token.encode("ascii")).hexdigest())
         with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="88"), \
