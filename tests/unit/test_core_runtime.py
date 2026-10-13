@@ -49,8 +49,26 @@ def _bounded_cohort_exception_sites():
     sys.settrace(trace)
     try:
         yield
-    except BaseException:
+    except BaseException as failure:
         sys.settrace(previous)
+        contexts = []
+        current = failure
+        seen = set()
+        for _ in range(4):
+            if current is None or id(current) in seen:
+                break
+            seen.add(id(current))
+            frames = []
+            tb = current.__traceback__
+            while tb is not None and len(frames) < 8:
+                frame = tb.tb_frame
+                if Path(frame.f_code.co_filename).name in allowed:
+                    frames.append((Path(frame.f_code.co_filename).name,
+                                   frame.f_code.co_name, tb.tb_lineno))
+                tb = tb.tb_next
+            contexts.append((type(current).__name__, frames))
+            current = current.__context__
+        print("bounded exception context chain: " + repr(contexts))
         print("first substantive non-CoreRuntimeError site: " + repr(first_substantive[:1]))
         print("bounded cohort exception sites: " + repr(sites[:30] + sites[-30:]))
         raise
