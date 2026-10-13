@@ -1117,3 +1117,26 @@ active. Sol's four-artifact refinement `76aaa` was pending Pi spec validation
 to preserve the exact prior wait, 30-second bound, custody and PIDFD. Its
 source fix/test awaited review. No new optimization, source deployment,
 authority or native-event claim is made.
+
+## Candidates 151–153 evidence
+
+Candidate 151 (`3012b84cd5fa589b275a27b903282ba0412315cf`), archive SHA-256
+`6da02af566b14b9fda9093a63c6a7917af4768cda1622d3e2d35f28138d8c840`, used
+Core `95de`. The focused real-wait tests passed (2 passed in 0.58s; log
+SHA-256 `b8151e58ad322cbf5d95fbb255dd6e48b9cf8bcd421c7e9c5890e6561e8f9732`).
+Both restart variants passed while exercising the real prior-source wait
+(2 passed in 341.86s; log SHA-256
+`d8c3b16d20b5ab3a17c750a509931c806aa89e2e395b1ea49ca8a92fb8af88ec`) in
+`/var/tmp/hermes-native-a0-3012b84cd5fa-20261013T210822Z-3190605/`. Candidate
+151 retains the prior A0 140 and update 145 evidence; Core `9e70` is historical
+for those earlier runs and was not changed by that evidence.
+
+Candidate 152 passed strict spec validation for its four-artifact refinement.
+Candidate 153 (`bc7231a1ac1b35437f7169821e59ed3d662d7693`), archive SHA-256
+`c53cd798cfd5f7ec11b602c48a30a808c4c89fcf128a5208e392bd7d708142dc`, uses
+Core `95de`. Its new tool `ce402` preserves the original trace argument and
+bounds tracing to four exception objects, 12 frames and privacy constraints;
+33 tests passed in 0.13s, and spec/plan validation passed. Candidate 153 apply
+was still running, so no apply or runtime acceptance is claimed. The public
+old-source reload showed a secure connection, Ready state and live owner
+statistics. No candidate-153 or new-feature live claim is made.
