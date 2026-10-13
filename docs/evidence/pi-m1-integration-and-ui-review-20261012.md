@@ -1244,3 +1244,29 @@ report is `p/candidate156-actual-systemd-parse.json`. This establishes a
 parser failure in the generated candidate data, but not the exact invocation
 behind the historical journal. No guard execution or candidate adoption
 occurred. Sol refinement and Luna's new-cohort transport fix were in progress.
+
+## Candidates 158–159 qualification evidence
+
+Root candidate 158 (`154fe252262d2f1193e0f762cd0a81569b640703`), archive
+`497d…`, used Core `0727`. Pi validation passed for the 219/62/18/4/8
+specification and plan sets. Its startup group had 3 passes and 1 failure in
+3.80s (log SHA-256
+`39a701d378b0b07d44d217ae833eb769bcff22a660bba57a67b78967e29d3f0f`): test
+4048 supplied literal rather than exact wrapper parameters. This was a fixture
+mismatch, not a production failure. Native test correction `d5f` passed Sol
+review and preserves exact fidelity; Core `0727` remained unchanged. An
+initial read-only probe using `-I` lacked an import and made no effects; V2
+inserted the fixed verified-source handling.
+
+Candidate 159 (`2262886f7360afbf13f3c4c8b380105c1f75400f`), archive SHA-256
+`83df1cd0c805c2e404b3a17cba6f8d5ceed45fae5dcce918821af57be29b152c`, used
+Core `0727` and test `614d`. Sealed `/opt` qualification, Pi spec/plan and
+actual read-only A0 readiness passed using existing Root locks. Its startup
+group passed 4 tests (log SHA-256
+`ec30a97eeb39b6b442c7f8c1c40103282814c0902cb4f3a7d25aad940ab8ad69`); listener
+group passed 2 (log SHA-256
+`c178449272bb51b7cf4ea950c6169cee3d94d323b8186f6cd7eca96df22dc4a9`). Logs
+were under `/var/tmp/hermes-native-guard-159-2262886f7-20261013T231835Z-3215666/`.
+Update and restart groups were still running, with outcomes pending. Live source
+remained `0cb`, all four services were stable, and candidate 159 had not been
+attempted for adoption.
