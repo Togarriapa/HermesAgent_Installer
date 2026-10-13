@@ -497,7 +497,7 @@ def _systemd_decoded_exec_start_pre(unit_bytes):
         if (identity is None or (current.st_dev, current.st_ino) != identity
                 or not stat.S_ISREG(current.st_mode) or current.st_uid != 0
                 or current.st_gid != 0 or stat.S_IMODE(current.st_mode) != 0o644
-                or current.st_nlink != 1 or current.read_bytes() != content):
+                or current.st_nlink != 1 or path.read_bytes() != content):
             raise AssertionError("temporary parser unit cleanup refused")
         path.unlink()
         if loaded:
@@ -3701,6 +3701,13 @@ def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resource
     systemd_argv = _systemd_decoded_exec_start_pre(unit)
     compile(systemd_argv[4], "<systemd-decoded-source-cohort-guard>", "exec")
     assert systemd_argv[4].startswith("exec(bytes.fromhex(")
+    expected_program = core._core_start_guard_code(
+        adapter_source=Path(cohort["new_source"]), cohort_gate=True,
+        backup_generation=cohort["old_adapter_generation"],
+        native_plugin_transition=False, failure_diagnostics=True)
+    expected_wrapper = "exec(bytes.fromhex(" + repr(
+        expected_program.encode("utf-8").hex()) + ").decode('utf-8'))"
+    assert systemd_argv[4] == expected_wrapper
     assert _exec_start_pre(unit, expect_success=True, systemd_argv=systemd_argv) == 0
     # A reboot during any incomplete phase must fail closed even when the
     # systemd unit and launcher already contain the new source recipe.
@@ -3714,17 +3721,17 @@ def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resource
             core._canonical_json(changed_reconstruction)).hexdigest()
         core._atomic_replace(core.ADAPTER_UPDATE_COHORT,
             core._canonical_json(changed), 0o400, core.ROOT_UID, core.ROOT_UID)
-        assert _exec_start_pre(unit, expect_success=False) != 0
+        assert _exec_start_pre(unit, expect_success=False, systemd_argv=systemd_argv) != 0
     core._atomic_replace(core.ADAPTER_UPDATE_COHORT,
         core._canonical_json(cohort), 0o400, core.ROOT_UID, core.ROOT_UID)
 
     core.JOURNAL.write_bytes(b'{"partial":"journal"}\n')
-    assert _exec_start_pre(unit, expect_success=False) != 0
+    assert _exec_start_pre(unit, expect_success=False, systemd_argv=systemd_argv) != 0
     core.JOURNAL.write_bytes(journal_raw)
     core.RESOURCES_RECORD.write_bytes(b'{"partial":"resources"}\n')
-    assert _exec_start_pre(unit, expect_success=False) != 0
+    assert _exec_start_pre(unit, expect_success=False, systemd_argv=systemd_argv) != 0
     core.RESOURCES_RECORD.write_bytes(resources_raw)
-    assert _exec_start_pre(unit, expect_success=True) == 0
+    assert _exec_start_pre(unit, expect_success=True, systemd_argv=systemd_argv) == 0
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
@@ -4034,6 +4041,12 @@ def test_m1_boot_gate_checks_typed_native_plugin_transition_quickly(
     # not a shlex reconstruction of the ExecStartPre source.
     systemd_argv = _systemd_decoded_exec_start_pre(unit)
     compile(systemd_argv[4], "<systemd-decoded-native-guard>", "exec")
+    expected_program = core._core_start_guard_code(
+        adapter_source=Path("/opt/hermes-installer-core-fixture/src"),
+        cohort_gate=True, backup_generation="a" * 64,
+        native_plugin_transition=True, failure_diagnostics=True)
+    assert systemd_argv[4] == "exec(bytes.fromhex(" + repr(
+        expected_program.encode("utf-8").hex()) + ").decode('utf-8'))"
     # The retained inline diagnostic recipe is intentionally still available
     # for exact old-cohort custody, but systemd's C-unescaping corrupts it.
     # New native-plugin cohorts therefore use the separately recipe-bound
