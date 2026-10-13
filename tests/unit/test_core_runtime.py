@@ -386,7 +386,24 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
             except (ValueError, IndexError):
                 raise AssertionError("generated guard command has no isolated source") from None
             wrapper = (
-                "import hashlib,json,sys\n"
+                "import builtins,hashlib,json,os,sys\n"
+                "_guard_access_failures=[]\n"
+                "def _guard_path_label(path):\n"
+                " try: name=os.path.basename(os.fspath(path))\n"
+                " except Exception: return 'other'\n"
+                " allowed={'admin','.hermes','plugins','hermes-installer-resources-delegation','plugin.yaml','__init__.py','SOUL.md','core-ownership-journal','hermes-session-token','adapter-update-cohort','resources-discovery','adapter-backup-manifest','adapter-backup-journal','hermes-jarvis-core.service','hermes-jarvis-core-launcher'}\n"
+                " return name if name in allowed else 'other'\n"
+                "def _guard_wrap_access(function,operation):\n"
+                " def wrapped(path,*args,**kwargs):\n"
+                "  try: return function(path,*args,**kwargs)\n"
+                "  except PermissionError:\n"
+                "   _guard_access_failures.append((operation,_guard_path_label(path)))\n"
+                "   if len(_guard_access_failures)>16: del _guard_access_failures[0]\n"
+                "   raise\n"
+                " return wrapped\n"
+                "os.open=_guard_wrap_access(os.open,'os.open')\n"
+                "os.stat=_guard_wrap_access(os.stat,'os.stat')\n"
+                "builtins.open=_guard_wrap_access(builtins.open,'open')\n"
                 "_guard_source=" + repr(guard_source) + "\n"
                 "_guard_diag_state={}\n"
                 "def _guard_emit(values):\n"
@@ -413,6 +430,7 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
                 " if event not in ('return','exception'): return _guard_trace\n"
                 " result=_guard_emit(values)\n"
                 " sys.stdout.write('GUARD_DIAGNOSTIC='+json.dumps(result,sort_keys=True,separators=(',',':'))+'\\n')\n"
+                " sys.stdout.write('GUARD_ACCESS_DIAGNOSTIC='+json.dumps(_guard_access_failures,separators=(',',':'))+'\\n')\n"
                 " sys.settrace(None)\n"
                 " return _guard_trace\n"
                 "sys.settrace(_guard_trace)\n"
@@ -508,6 +526,25 @@ exec "$runuser_bin" -u admin -- "$@"
                                 and ("phase" not in candidate or candidate["phase"] in {
                                     "source-starting", "bindings-verified", "committed"})):
                             diagnostic_summary = candidate
+                        break
+                access_names = {"admin", ".hermes", "plugins",
+                                "hermes-installer-resources-delegation", "plugin.yaml",
+                                "__init__.py", "SOUL.md", "core-ownership-journal",
+                                "hermes-session-token", "adapter-update-cohort",
+                                "resources-discovery", "adapter-backup-manifest",
+                                "adapter-backup-journal", "hermes-jarvis-core.service",
+                                "hermes-jarvis-core-launcher", "other"}
+                for row in diagnostic_stdout.splitlines():
+                    if row.startswith("GUARD_ACCESS_DIAGNOSTIC="):
+                        try:
+                            candidate = json.loads(row.partition("=")[2])
+                        except (ValueError, TypeError):
+                            candidate = None
+                        if (type(candidate) is list and len(candidate) <= 16
+                                and all(type(item) is list and len(item) == 2
+                                        and item[0] in {"open", "os.open", "os.stat"}
+                                        and item[1] in access_names for item in candidate)):
+                            diagnostic_meta["permission_failures"] = candidate
                         break
             if diagnostic:
                 print("bounded ExecStartPre failure diagnostics: " + repr({
