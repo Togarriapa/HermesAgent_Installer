@@ -395,6 +395,77 @@ def _success_checks(before: dict[str, Any], after: dict[str, Any], candidate_src
     }
 
 
+def _root_setup_exception_origin(exc_type: type, tb, candidate_src: Path) -> dict | None:
+    name = getattr(exc_type, "__name__", None)
+    if (not isinstance(name, str)
+            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name) is None):
+        return None
+    frames = []
+    visited = 0
+    while tb is not None and visited < 128 and len(frames) < 12:
+        visited += 1
+        frame = tb.tb_frame
+        try:
+            filename = os.path.abspath(frame.f_code.co_filename)
+            relative = os.path.relpath(filename, str(candidate_src))
+            relative_path = Path(relative)
+            function = frame.f_code.co_name
+            line = tb.tb_lineno
+            if (relative == "." or os.path.isabs(relative)
+                    or any(part in {"", ".", ".."} for part in relative_path.parts)
+                    or re.fullmatch(r"[A-Za-z0-9_./-]{1,512}", relative) is None
+                    or not isinstance(function, str)
+                    or re.fullmatch(r"[A-Za-z0-9_<>.$-]{1,256}", function) is None
+                    or type(line) is not int or line < 1):
+                tb = tb.tb_next
+                continue
+            frames.append({"source_relative_path": relative_path.as_posix(),
+                           "function": function, "line": line})
+        except (OSError, ValueError, TypeError):
+            pass
+        tb = tb.tb_next
+    if not frames:
+        return None
+    return {"exception_type": name, "frames": frames}
+
+
+def _run_fixed_root_adapter_update(root_setup, candidate_src: Path) -> tuple[int, dict | None]:
+    if sys.gettrace() is not None:
+        raise RuntimeError("qualification runner requires an untraced root CLI context")
+    main = root_setup.main
+    main_code = getattr(main, "__code__", None)
+    if main_code is None:
+        raise RuntimeError("fixed root CLI entry point has no verified code object")
+    captured: dict[str, dict | None] = {"origin": None}
+
+    def trace(frame, event, arg):
+        if event == "exception" and frame.f_code is main_code:
+            try:
+                if type(arg) is not tuple or len(arg) != 3:
+                    captured["origin"] = None
+                    return trace
+                exc_type, tb = arg[0], arg[2]
+                captured["origin"] = _root_setup_exception_origin(
+                    exc_type, tb, candidate_src)
+            except (TypeError, ValueError):
+                captured["origin"] = None
+        return trace
+
+    sys.settrace(trace)
+    try:
+        try:
+            result = main(["core-service", "adapter-update"])
+            cli_exit = result if type(result) is int and 0 <= result <= 255 else 1
+        except Exception:
+            # The trace retains only type and source locations; never inspect
+            # or serialize the exception object or its arguments.
+            cli_exit = 1
+    finally:
+        sys.settrace(None)
+    origin = captured["origin"] if cli_exit != 0 else None
+    return cli_exit, origin
+
+
 def _load_candidate_runtime(source_root: Path):
     if "hermes_installer" in sys.modules:
         raise RuntimeError("unexpected installer module was loaded before source selection")
@@ -447,7 +518,8 @@ def main(argv: list[str] | None = None) -> int:
         # command, credential, or failure-injection selector from the caller.
         cli_stdout, cli_stderr = _DigestSink(), _DigestSink()
         with contextlib.redirect_stdout(cli_stdout), contextlib.redirect_stderr(cli_stderr):
-            cli_exit = root_setup.main(["core-service", "adapter-update"])
+            cli_exit, cli_failure_origin = _run_fixed_root_adapter_update(
+                root_setup, candidate_src)
         after_public = None
         after_private = None
         after_error = None
@@ -482,6 +554,7 @@ def main(argv: list[str] | None = None) -> int:
             "source_receipt_is_operator_paired_not_signature": True,
             "ancestor_and_verifier_custody_checked_before_execution": True,
             "cli_exit_code": cli_exit,
+            "cli_failure_origin": cli_failure_origin,
             "cli_output": {
                 "stdout_bytes": cli_stdout.byte_count, "stdout_sha256": cli_stdout.sha256,
                 "stderr_bytes": cli_stderr.byte_count, "stderr_sha256": cli_stderr.sha256,

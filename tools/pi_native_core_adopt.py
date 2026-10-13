@@ -38,6 +38,8 @@ FIXED_UNITS = {
 GATEWAY_CONFIG = Path("/etc/hermes-installer/jarvis-core-gateway.json")
 INGRESS_BACKUP = Path("/var/lib/hermes-installer/core-runtime/native-adoption-ingress-backup.json")
 INGRESS_HISTORY = INGRESS_BACKUP.parent / "native-adoption-ingress-history"
+CORE_QUALIFICATION_FAILURE = (
+    INGRESS_BACKUP.parent / "core-adapter-qualification-last-failure.json")
 ADOPTER_LOCK = Path("/run/lock/hermes-native-core-adopt.lock")
 NATIVE_OBSERVER_DIRECTORY = Path("/run/hermes-jarvis-native-observer")
 NATIVE_OBSERVER_PRESTART = (
@@ -47,6 +49,25 @@ NATIVE_OBSERVER_READ_WRITE = "ReadWritePaths=/var/lib/hermes-installer/core-runt
 NATIVE_OBSERVER_SUPPLEMENTARY_GROUPS = "SupplementaryGroups=1000"
 _SOURCE_PATH = re.compile(rb"/opt/hermes-installer-core-[0-9a-f]{9,64}/src\Z")
 _APPROVED_EMAIL_UNION_MAX_BYTES = 16 * 1024
+_QUALIFICATION_CHECKS = frozenset({
+    "candidate_adapter_is_active", "adapter_generation_changed", "prior_source_bound",
+    "Core_generation_preserved", "selected_plugin_preserved", "overlay_skill_bytes_preserved",
+    "Obsidian_registration_and_vault_preserved", "committed_update_cohort",
+    "protected_prior_backup_bound", "candidate_listener_current",
+    "protected_prior_backup_matches_exact_bytes", "runtime_token_digest_preserved",
+    "primary_prompt_owner_bytes_and_adopted_record_preserved",
+})
+_QUALIFICATION_SNAPSHOT_KEYS = frozenset({
+    "journal_sha256", "unit_sha256", "launcher_sha256", "token_custody_verified",
+    "token_sha256", "adapter_source", "adapter_generation", "core_source_generation",
+    "plugin_selection_sha256", "resources_record_sha256", "overlay_record_sha256",
+    "overlay_content_count", "overlay_contents_sha256", "primary_record_sha256",
+    "obsidian_registration_state", "obsidian_registration_sha256",
+    "obsidian_vault_tree_sha256", "adapter_update_state", "adapter_update_previous_source",
+    "adapter_update_backup_source_generation", "primary_prompt_soul_sha256",
+    "primary_prompt_state", "primary_owner_prefix_sha256", "primary_owner_prefix_length",
+    "primary_immutable_backup_sha256",
+})
 
 
 class _IngressSnapshotConflict(RuntimeError):
@@ -458,6 +479,170 @@ def _read_candidate_qualification_inputs(candidate_sha: str, source: Path) -> tu
     return archive_sha, tool, before
 
 
+def _valid_qualification_origin(value: object) -> bool:
+    if value is None:
+        return True
+    if type(value) is not dict or set(value) != {"exception_type", "frames"}:
+        return False
+    name = value["exception_type"]
+    frames = value["frames"]
+    if (not isinstance(name, str)
+            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name) is None
+            or type(frames) is not list or not 1 <= len(frames) <= 12):
+        return False
+    for frame in frames:
+        if type(frame) is not dict or set(frame) != {
+                "source_relative_path", "function", "line"}:
+            return False
+        path, function, line = (frame["source_relative_path"], frame["function"],
+                                frame["line"])
+        if (not isinstance(path, str) or not 1 <= len(path) <= 512
+                or re.fullmatch(r"[A-Za-z0-9_./-]{1,512}", path) is None
+                or path.startswith("/") or "\\" in path
+                or any(part in {"", ".", ".."} for part in path.split("/"))
+                or not isinstance(function, str)
+                or re.fullmatch(r"[A-Za-z0-9_<>.$-]{1,256}", function) is None
+                or type(line) is not int or not 1 <= line <= 10_000_000):
+            return False
+    return True
+
+
+def _valid_qualification_snapshot(value: object) -> bool:
+    if type(value) is not dict or set(value) != _QUALIFICATION_SNAPSHOT_KEYS:
+        return False
+    optional_digests = {
+        "primary_record_sha256", "obsidian_registration_sha256", "obsidian_vault_tree_sha256",
+        "adapter_update_backup_source_generation", "primary_owner_prefix_sha256",
+        "primary_immutable_backup_sha256",
+    }
+    digest_pattern = r"[0-9a-f]{64}"
+    for key in _QUALIFICATION_SNAPSHOT_KEYS:
+        if key in optional_digests and value[key] is None:
+            continue
+        if key in {
+                "journal_sha256", "unit_sha256", "launcher_sha256", "token_sha256",
+                "adapter_generation", "core_source_generation", "plugin_selection_sha256",
+                "resources_record_sha256", "overlay_record_sha256", "overlay_contents_sha256",
+                "primary_prompt_soul_sha256", "primary_record_sha256",
+                "obsidian_registration_sha256", "obsidian_vault_tree_sha256",
+                "adapter_update_backup_source_generation", "primary_owner_prefix_sha256",
+                "primary_immutable_backup_sha256"}:
+            if not isinstance(value[key], str) or re.fullmatch(digest_pattern, value[key]) is None:
+                return False
+        elif key == "token_custody_verified":
+            if value[key] is not True:
+                return False
+        elif key == "adapter_source":
+            if (not isinstance(value[key], str)
+                    or re.fullmatch(r"/opt/hermes-installer-core-[0-9a-f]{9,64}/src",
+                                    value[key]) is None):
+                return False
+        elif key == "adapter_update_previous_source":
+            if value[key] is not None and (not isinstance(value[key], str)
+                    or re.fullmatch(r"/opt/hermes-installer-core-[0-9a-f]{9,64}/src",
+                                    value[key]) is None):
+                return False
+        elif key in {"overlay_content_count", "primary_owner_prefix_length"}:
+            if type(value[key]) is not int or not 0 <= value[key] <= 1_000_000:
+                return False
+        elif key == "obsidian_registration_state":
+            if value[key] not in {"registered", "absent"}:
+                return False
+        elif key == "adapter_update_state":
+            if value[key] not in {None, "installed", "active"}:
+                return False
+        elif key == "primary_prompt_state":
+            if value[key] not in {"adopted", "unmanaged"}:
+                return False
+    return True
+
+
+def _validated_qualification_report(raw: bytes, candidate_sha: str,
+                                    archive_sha: str) -> tuple[dict, bool]:
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= 64 * 1024:
+        raise ValueError
+    report = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_unique_pairs)
+    expected = {
+        "schema", "action", "candidate_commit", "candidate_archive_sha256",
+        "source_receipt_is_operator_paired_not_signature",
+        "ancestor_and_verifier_custody_checked_before_execution", "cli_exit_code",
+        "cli_failure_origin", "cli_output", "before", "after", "after_readback_error_type",
+        "cohort_phase", "checks", "outcome", "rollback_qualification",
+        "interruption_recovery_qualification", "acceptance",
+    }
+    if (type(report) is not dict or set(report) != expected or type(report["schema"]) is not int
+            or report["schema"] != 1 or report["action"] != "core-service adapter-update"
+            or report["candidate_commit"] != candidate_sha
+            or report["candidate_archive_sha256"] != archive_sha
+            or report["source_receipt_is_operator_paired_not_signature"] is not True
+            or report["ancestor_and_verifier_custody_checked_before_execution"] is not True
+            or type(report["cli_exit_code"]) is not int
+            or not 0 <= report["cli_exit_code"] <= 255
+            or not _valid_qualification_origin(report["cli_failure_origin"])):
+        raise ValueError
+    cli_output = report["cli_output"]
+    if (type(cli_output) is not dict
+            or set(cli_output) != {"stdout_bytes", "stdout_sha256", "stderr_bytes", "stderr_sha256"}
+            or type(cli_output["stdout_bytes"]) is not int
+            or not 0 <= cli_output["stdout_bytes"] <= 64 * 1024
+            or type(cli_output["stderr_bytes"]) is not int
+            or not 0 <= cli_output["stderr_bytes"] <= 16 * 1024
+            or any(not isinstance(cli_output[key], str)
+                   or re.fullmatch(r"[0-9a-f]{64}", cli_output[key]) is None
+                   for key in ("stdout_sha256", "stderr_sha256"))):
+        raise ValueError
+    before, after, checks = report["before"], report["after"], report["checks"]
+    if (not _valid_qualification_snapshot(before)
+            or (after is not None and not _valid_qualification_snapshot(after))
+            or type(checks) is not dict
+            or (checks and (set(checks) != _QUALIFICATION_CHECKS
+                            or any(type(value) is not bool for value in checks.values())))
+            or (not checks and after is not None)):
+        raise ValueError
+    for key in ("after_readback_error_type",):
+        value = report[key]
+        if value is not None and (not isinstance(value, str)
+                or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", value) is None):
+            raise ValueError
+    phase = report["cohort_phase"]
+    if phase is not None and (not isinstance(phase, str)
+            or re.fullmatch(r"[a-z][a-z0-9-]{0,63}", phase) is None):
+        raise ValueError
+    if (report["rollback_qualification"] != "not_run"
+            or report["interruption_recovery_qualification"] != "not_run"
+            or report["acceptance"] != "not_claimed"):
+        raise ValueError
+    verified = (report["cli_exit_code"] == 0 and report["outcome"] == "verified_adapter_update"
+                and phase == "committed" and bool(checks)
+                and all(value is True for value in checks.values()))
+    if report["outcome"] != ("verified_adapter_update" if verified else "pending_or_failed"):
+        raise ValueError
+    if report["cli_exit_code"] == 0 and report["cli_failure_origin"] is not None:
+        raise ValueError
+    return report, verified
+
+
+def _persist_qualification_failure(report: dict) -> None:
+    raw = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    if len(raw) > 64 * 1024:
+        raise RuntimeError("fixed Core qualification failure report exceeds its bound")
+    report, verified = _validated_qualification_report(
+        raw, report.get("candidate_commit"), report.get("candidate_archive_sha256"))
+    if verified:
+        raise RuntimeError("successful Core qualification is not a failure report")
+    raw = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    parent = CORE_QUALIFICATION_FAILURE.parent
+    parent_info = parent.lstat()
+    if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0
+            or parent_info.st_gid != 0 or stat.S_IMODE(parent_info.st_mode) != 0o700):
+        raise RuntimeError("fixed Core qualification failure directory custody differs")
+    _atomic_fixed(CORE_QUALIFICATION_FAILURE, raw, uid=0, gid=0, mode=0o600)
+    persisted, _info = _read_fixed(CORE_QUALIFICATION_FAILURE, uid=0, gid=0,
+                                   mode=0o600, maximum=64 * 1024)
+    if persisted != raw:
+        raise RuntimeError("fixed Core qualification failure report readback differs")
+
+
 def _run_core_refresh_qualification(candidate_sha: str, archive_sha: str,
                                     tool: Path, tool_identity: tuple) -> dict:
     argv = ("/usr/bin/python3", "-I", str(tool), "--candidate-sha", candidate_sha,
@@ -473,33 +658,20 @@ def _run_core_refresh_qualification(candidate_sha: str, archive_sha: str,
     if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns,
             current.st_ctime_ns) != tool_identity:
         raise RuntimeError("fixed Core qualification runner changed during execution")
-    if (result.returncode != 0 or len(result.stdout) > 64 * 1024
+    if (type(result.returncode) is not int or type(result.stdout) is not bytes
+            or type(result.stderr) is not bytes or len(result.stdout) > 64 * 1024
             or len(result.stderr) > 16 * 1024):
         raise RuntimeError("fixed Core adapter qualification did not verify")
     try:
-        report = json.loads(result.stdout.decode("utf-8", "strict"),
-                            object_pairs_hook=_unique_pairs)
-        expected = {"schema", "action", "candidate_commit", "candidate_archive_sha256",
-                    "source_receipt_is_operator_paired_not_signature",
-                    "ancestor_and_verifier_custody_checked_before_execution", "cli_exit_code",
-                    "cli_output", "before", "after", "after_readback_error_type",
-                    "cohort_phase", "checks", "outcome", "rollback_qualification",
-                    "interruption_recovery_qualification", "acceptance"}
-        checks = report["checks"]
-        if (type(report) is not dict or set(report) != expected or report["schema"] != 1
-                or report["action"] != "core-service adapter-update"
-                or report["candidate_commit"] != candidate_sha
-                or report["candidate_archive_sha256"] != archive_sha
-                or report["source_receipt_is_operator_paired_not_signature"] is not True
-                or report["ancestor_and_verifier_custody_checked_before_execution"] is not True
-                or report["cli_exit_code"] != 0 or report["outcome"] != "verified_adapter_update"
-                or report["cohort_phase"] != "committed" or type(checks) is not dict
-                or not checks or any(value is not True for value in checks.values())
-                or report["acceptance"] != "not_claimed"):
-            raise ValueError
-    except (ValueError, TypeError, KeyError, UnicodeError):
+        report, verified = _validated_qualification_report(
+            result.stdout, candidate_sha, archive_sha)
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         raise RuntimeError("fixed Core adapter qualification report is not verified") from None
-    return report
+    if result.returncode == 0 and verified:
+        return report
+    if result.returncode != 0 and not verified:
+        _persist_qualification_failure(report)
+    raise RuntimeError("fixed Core adapter qualification did not verify")
 
 
 def _verify_adapter_refresh_commit(core_runtime, candidate_source: Path,

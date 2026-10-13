@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import stat
 import sys
 from pathlib import Path
@@ -1307,6 +1308,108 @@ def _completed_ingress_handoff_fixture(tmp_path, monkeypatch):
     saved = {gateway_path: (old_gateway, gateway_path.stat()),
              inspector_path: (old_inspector, inspector_path.stat())}
     return runtime, active, predecessor, saved, config_path
+
+
+def _qualification_report_fixture(candidate="b" * 40, archive="c" * 64):
+    def snapshot(source, generation):
+        return {
+            "journal_sha256": "1" * 64, "unit_sha256": "2" * 64,
+            "launcher_sha256": "3" * 64, "token_custody_verified": True,
+            "token_sha256": "4" * 64, "adapter_source": source,
+            "adapter_generation": generation, "core_source_generation": "5" * 64,
+            "plugin_selection_sha256": "6" * 64, "resources_record_sha256": "7" * 64,
+            "overlay_record_sha256": "8" * 64, "overlay_content_count": 1,
+            "overlay_contents_sha256": "9" * 64, "primary_record_sha256": None,
+            "obsidian_registration_state": "absent", "obsidian_registration_sha256": None,
+            "obsidian_vault_tree_sha256": None, "adapter_update_state": "active",
+            "adapter_update_previous_source": None,
+            "adapter_update_backup_source_generation": generation,
+            "primary_prompt_soul_sha256": "a" * 64, "primary_prompt_state": "unmanaged",
+            "primary_owner_prefix_sha256": "b" * 64, "primary_owner_prefix_length": 12,
+            "primary_immutable_backup_sha256": None,
+        }
+    return {
+        "schema": 1, "action": "core-service adapter-update",
+        "candidate_commit": candidate, "candidate_archive_sha256": archive,
+        "source_receipt_is_operator_paired_not_signature": True,
+        "ancestor_and_verifier_custody_checked_before_execution": True,
+        "cli_exit_code": 4,
+        "cli_failure_origin": {"exception_type": "RuntimeError", "frames": [
+            {"source_relative_path": "hermes_installer/core_runtime.py",
+             "function": "_replace_launcher", "line": 1234}]},
+        "cli_output": {"stdout_bytes": 0, "stdout_sha256": "0" * 64,
+                       "stderr_bytes": 0, "stderr_sha256": "0" * 64},
+        "before": snapshot("/opt/hermes-installer-core-aaaaaaaaa/src", "d" * 64),
+        "after": snapshot("/opt/hermes-installer-core-bbbbbbbbb/src", "e" * 64),
+        "after_readback_error_type": None, "cohort_phase": "source-starting",
+        "checks": {name: False for name in adopt._QUALIFICATION_CHECKS},
+        "outcome": "pending_or_failed", "rollback_qualification": "not_run",
+        "interruption_recovery_qualification": "not_run", "acceptance": "not_claimed",
+    }
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="protected failure report fixture requires root")
+def test_nonzero_qualification_persists_only_validated_sanitized_report(tmp_path, monkeypatch):
+    parent = tmp_path / "core-runtime"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    adopt.os.chown(parent, 0, 0)
+    report = _qualification_report_fixture()
+    raw = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    monkeypatch.setattr(adopt, "CORE_QUALIFICATION_FAILURE",
+                        parent / "core-adapter-qualification-last-failure.json")
+    tool = Path(adopt.__file__)
+    tool_info = tool.lstat()
+    identity = (tool_info.st_dev, tool_info.st_ino, tool_info.st_size,
+                tool_info.st_mtime_ns, tool_info.st_ctime_ns)
+    monkeypatch.setattr(adopt.subprocess, "run", lambda *_args, **_kwargs:
+                        SimpleNamespace(returncode=4, stdout=raw, stderr=b""))
+
+    with pytest.raises(RuntimeError, match="did not verify"):
+        adopt._run_core_refresh_qualification("b" * 40, "c" * 64, tool, identity)
+
+    failure = adopt.CORE_QUALIFICATION_FAILURE
+    saved = failure.read_bytes()
+    info = failure.stat()
+    assert stat.S_IMODE(info.st_mode) == 0o600
+    assert (info.st_uid, info.st_gid) == (0, 0)
+    assert b"_replace_launcher" in saved
+    assert b"PRIVATE" not in saved
+    assert json.loads(saved)["cli_failure_origin"] == report["cli_failure_origin"]
+
+
+@pytest.mark.parametrize("report_kind", ["malformed", "foreign-candidate", "unsafe-origin"])
+@pytest.mark.skipif(os.geteuid() != 0, reason="protected failure report fixture requires root")
+def test_untrusted_qualification_failure_report_cannot_replace_last_failure(
+        tmp_path, monkeypatch, report_kind):
+    parent = tmp_path / "core-runtime"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    adopt.os.chown(parent, 0, 0)
+    failure = parent / "core-adapter-qualification-last-failure.json"
+    failure.write_bytes(b"prior protected report")
+    failure.chmod(0o600)
+    adopt.os.chown(failure, 0, 0)
+    monkeypatch.setattr(adopt, "CORE_QUALIFICATION_FAILURE", failure)
+    report = _qualification_report_fixture()
+    if report_kind == "malformed":
+        raw = b"not a JSON report"
+    else:
+        if report_kind == "foreign-candidate":
+            report["candidate_commit"] = "f" * 40
+        else:
+            report["cli_failure_origin"]["frames"][0]["source_relative_path"] = "/etc/shadow"
+        raw = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    tool = Path(adopt.__file__)
+    tool_info = tool.lstat()
+    identity = (tool_info.st_dev, tool_info.st_ino, tool_info.st_size,
+                tool_info.st_mtime_ns, tool_info.st_ctime_ns)
+    monkeypatch.setattr(adopt.subprocess, "run", lambda *_args, **_kwargs:
+                        SimpleNamespace(returncode=4, stdout=raw, stderr=b""))
+
+    with pytest.raises(RuntimeError, match="report is not verified"):
+        adopt._run_core_refresh_qualification("b" * 40, "c" * 64, tool, identity)
+    assert failure.read_bytes() == b"prior protected report"
 
 
 def test_completed_ingress_handoff_archives_raw_predecessor_then_replaces_atomically(

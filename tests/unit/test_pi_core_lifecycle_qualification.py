@@ -81,6 +81,43 @@ def test_partial_or_mismatched_update_readback_stays_pending(mutation, phase, li
     assert any(value is False for value in checks.values())
 
 
+def test_fixed_cli_trace_retains_only_candidate_relative_exception_metadata():
+    class RootSetup:
+        @staticmethod
+        def main(argv):
+            assert argv == ["core-service", "adapter-update"]
+            try:
+                raise RuntimeError("PRIVATE_EXCEPTION_TEXT_MUST_NOT_ESCAPE")
+            except RuntimeError:
+                return 4
+
+    cli_exit, origin = qualification._run_fixed_root_adapter_update(
+        RootSetup, Path(__file__).resolve().parent)
+    assert cli_exit == 4
+    assert origin["exception_type"] == "RuntimeError"
+    assert len(origin["frames"]) == 1
+    frame = origin["frames"][0]
+    assert frame["source_relative_path"] == Path(__file__).name
+    assert frame["function"] == "main" and frame["line"] > 0
+    assert "PRIVATE_EXCEPTION_TEXT_MUST_NOT_ESCAPE" not in repr(origin)
+    assert qualification.sys.gettrace() is None
+
+
+def test_fixed_cli_trace_drops_caught_exception_when_cli_succeeds():
+    class RootSetup:
+        @staticmethod
+        def main(_argv):
+            try:
+                raise RuntimeError("PRIVATE_EXCEPTION_TEXT_MUST_NOT_ESCAPE")
+            except RuntimeError:
+                return 0
+
+    cli_exit, origin = qualification._run_fixed_root_adapter_update(
+        RootSetup, Path(__file__).resolve().parent)
+    assert cli_exit == 0
+    assert origin is None
+
+
 def _backup_fixture():
     journal = b'{"adapter_generation":"' + b"a" * 64 + b'"}'
     raw = {
