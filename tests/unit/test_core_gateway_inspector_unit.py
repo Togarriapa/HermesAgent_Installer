@@ -104,8 +104,10 @@ def test_profile_admin_status_deadline_is_absolute_and_clamped_to_short_jwt_and_
 def _derive_profile_admin_fixture(*, parent_expiry=None):
     now = time.monotonic()
     expiry = parent_expiry if parent_expiry is not None else now + 4.0
+    # Keep the signed JWT later than the retained parent so this case isolates
+    # the absolute Root parent deadline; the dedicated short-JWT case narrows it.
     principal = SimpleNamespace(subject="original-subject", email="owner@example.test",
-        token_fingerprint="e" * 64, expires_at=time.time() + max(0, expiry - now))
+        token_fingerprint="e" * 64, expires_at=time.time() + 60.0)
     config = SimpleNamespace(config_sha256="f" * 64, boot_id="boot",
         policy=lambda _jwks: object(), allowed_emails=frozenset({"owner@example.test"}))
     proof = {"nonce": "a" * 64, "proof_sha256": "b" * 64,
@@ -299,21 +301,31 @@ def test_profile_admin_inspector_denies_non_singleton_allowlist_before_ingress_o
         "expected_admin_revision": 0, "expected_admin_sha256": "0" * 64,
         **fields,
     }
-    principal = SimpleNamespace(email=(next(iter(allowed_emails)) if allowed_emails else "owner@example.test"),
+    principal = SimpleNamespace(email="owner@example.test",
         subject="immutable-subject", token_fingerprint=hashlib.sha256(
-            b"signed-access-token").hexdigest())
+            b"signed-access-token").hexdigest(), expires_at=time.time() + 60.0)
     with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="fixture-caller-start"), \
             patch.object(core_gateway_inspector, "_learning_jwks", return_value={}), \
             patch("hermes_installer.remote.gateway.validate_access_jwt", return_value=principal), \
-            patch.object(global_admin, "locked"), \
-            patch.object(global_admin, "read_locked", return_value=(None, None)), \
+            patch.object(global_admin, "locked") as admin_lock, \
+            patch.object(global_admin, "read_locked", return_value=(None, None)) as read_record, \
             patch.object(core_gateway_inspector, "_peek_ingress_issue",
                 return_value=SimpleNamespace(expires_monotonic=time.monotonic() + 5)), \
             patch.object(core_gateway_inspector, "_consume_ingress_issue",
                       side_effect=AssertionError("non-singleton admin must stop before ingress consumption")) as consume:
-        with pytest.raises(core_gateway_inspector.CoreInspectionDenied,
-                           match="original administrator setup"):
-            core_gateway_inspector.observe_profile_admin(
-                config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
-                peer_pid=551, peer_uid=996, peer_gid=981)
+        if not allowed_emails:
+            # Empty admission policy is invalid configuration; it must deny
+            # before registry access, native work, or ingress consumption.
+            with pytest.raises(ValueError):
+                core_gateway_inspector.observe_profile_admin(
+                    config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
+                    peer_pid=551, peer_uid=996, peer_gid=981)
+            admin_lock.assert_not_called()
+            read_record.assert_not_called()
+        else:
+            with pytest.raises(core_gateway_inspector.CoreInspectionDenied,
+                               match="original administrator setup"):
+                core_gateway_inspector.observe_profile_admin(
+                    config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
+                    peer_pid=551, peer_uid=996, peer_gid=981)
     consume.assert_not_called()
