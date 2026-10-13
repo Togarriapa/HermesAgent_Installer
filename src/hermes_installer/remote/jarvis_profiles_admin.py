@@ -621,7 +621,7 @@ async def _current_owner(request: Any, service: JarvisChatService):
             or not isinstance(accepted.principal.email, str)
             or accepted.principal.email.casefold() != next(iter(allowed_emails), None)):
         raise web.HTTPForbidden(
-            text="Global Profiles administration is pending original global-admin registration; configure exactly one approved email. Ordinary household chat remains available",
+            text="Global Profiles administration remains unavailable pending original-admin issue #21. Ordinary household chat remains available.",
             headers=_secure_headers())
     try:
         observation = await asyncio.wait_for(asyncio.to_thread(
