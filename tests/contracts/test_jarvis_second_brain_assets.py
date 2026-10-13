@@ -85,6 +85,7 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn("button.addEventListener('click', () => openNote(node.noteId))", FEATURE_ASSETS.mount_js)
 
     def test_focused_neighborhood_detail_and_recovery_use_current_vault_dtos(self):
+        self.assertLessEqual(len(FEATURE_ASSETS.mount_js.encode("utf-8")), 30_000)
         self.assertIn('data-graph-detail', FEATURE_ASSETS.view_html)
         self.assertIn('data-graph-focus', FEATURE_ASSETS.view_html)
         self.assertIn('data-graph-reset', FEATURE_ASSETS.view_html)
