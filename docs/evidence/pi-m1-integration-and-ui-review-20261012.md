@@ -406,6 +406,24 @@ Primary journal remained absent during and after v97. Source/tools match v96,
 whose170 checks were not repeated; broader changed fixture qualification and
 full update/recovery acceptance remain pending.
 
+The v102 candidate `1de46f19219790842b02cd4dfd0be947ef08cf0b`
+compiled on the Pi and passed strict specs/plan validation, including the
+Managed OAuth research-only refinement. Archive SHA-256
+`ee6b7b5f062bc466f57d041c6600269f9090c1373853020ccc7e97bf1b39df7d`.
+Only the changed controlled readback and complete update were rerun; the
+unchanged170 group was not repeated. Results: one pass and one failure,
+51 deselected in293.19s. The independent native-readback verifier case passed;
+complete update advanced through initial Primary adoption, Resources refresh
+and the controlled new-source lifecycle proof, then failed at the final
+journal/Resources join. The updater sets the final journal to `active` but
+passes it to a binder that accepts only `starting`. Sol's narrow correction
+requires a separate private final binder, exact starting-to-active derivative,
+current Root-locked bindings-verified cohort and fresh held-peer custody;
+the starting binder remains strict. Failure recovery also refused both old
+and new generation owner markers, retaining the protected backup. That
+separate recovery path is being audited; no safe full recovery or live new
+candidate acceptance is claimed.
+
 The v101 candidate `456a9314e851abc16b367f9b4dd928f326a8027a`
 compiled on the Pi and passed strict specs/plan validation. Archive SHA-256
 `50cb77fd218101b86d790c709d1f70950a75996d4c22fa4a7d3c1ce9017eab10`.
