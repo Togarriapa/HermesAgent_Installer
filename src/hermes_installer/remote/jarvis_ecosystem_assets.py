@@ -16,6 +16,8 @@ _VIEW = """<section class=\"ecosystem-page\" data-feature-root=\"ecosystem\" dat
     <section class=\"ecosystem-panel\" aria-labelledby=\"ecosystem-roster-title\"><h2 id=\"ecosystem-roster-title\">Instance roster</h2>
       <ol data-ecosystem-roster class=\"ecosystem-roster\"></ol><p data-ecosystem-roster-empty class=\"ecosystem-empty\">No current roster is available.</p></section>
     <section class=\"ecosystem-panel ecosystem-network-panel\" aria-labelledby=\"ecosystem-network-title\"><h2 id=\"ecosystem-network-title\">Observed communication</h2>
+      <div class=\"ecosystem-scene-frame\" data-ecosystem-scene-frame><svg data-ecosystem-scene tabindex=\"-1\" viewBox=\"0 0 720 360\" role=\"img\" aria-label=\"Directed network of observed execution instances\"><defs><marker id=\"ecosystem-arrowhead\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0,0 L8,4 L0,8 z\" fill=\"#83d9de\"></path></marker></defs><g data-ecosystem-scene-links></g><g data-ecosystem-scene-nodes></g></svg></div>
+      <div class=\"ecosystem-scene-actions\"><button type=\"button\" data-ecosystem-fit>Fit network</button><span data-ecosystem-selected tabindex=\"-1\" aria-live=\"polite\">No instance selected.</span></div>
       <ol data-ecosystem-graph class=\"ecosystem-graph\" aria-label=\"Directed, root-observed completed messages\"></ol>
       <p data-ecosystem-graph-empty class=\"ecosystem-empty\">No verified completed-message relations are available.</p>
       <p class=\"ecosystem-legend\"><span aria-hidden=\"true\">●</span> Instance &nbsp; <span aria-hidden=\"true\">→</span> Verified sender to recipient &nbsp; <span data-ecosystem-motion>Motion only marks a new, fresh observed relation.</span></p>
@@ -47,6 +49,14 @@ _CSS = """[data-feature-root=\"ecosystem\"]{max-width:1180px;margin:0 auto;paddi
 [data-feature-root=\"ecosystem\"] .ecosystem-instance[aria-pressed=\"true\"]{border-color:var(--accent,#83d9ca);background:rgba(38,181,193,.15)}
 [data-feature-root=\"ecosystem\"] .ecosystem-instance small{color:var(--muted,#9bafb4);text-align:right}
 [data-feature-root=\"ecosystem\"] .ecosystem-graph li{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:.6rem;padding:.65rem 0;border-top:1px solid var(--border,#20373e)}
+[data-feature-root=\"ecosystem\"] .ecosystem-scene-frame{overflow:auto;max-height:480px;margin:.4rem 0;border:1px solid var(--border,#20373e);border-radius:12px;background:radial-gradient(ellipse at 50% 45%,rgba(35,93,101,.18),transparent 70%)}
+[data-feature-root=\"ecosystem\"] [data-ecosystem-scene]{display:block;width:100%;height:auto;min-height:180px}
+[data-feature-root=\"ecosystem\"] .ecosystem-scene-link{fill:none;stroke:#83d9de;stroke-width:2;marker-end:url(#ecosystem-arrowhead)}
+[data-feature-root=\"ecosystem\"] .ecosystem-scene-node{cursor:pointer;outline:none}
+[data-feature-root=\"ecosystem\"] .ecosystem-scene-node circle{fill:#10343a;stroke:#83d9de;stroke-width:2}
+[data-feature-root=\"ecosystem\"] .ecosystem-scene-node[aria-pressed=\"true\"] circle,[data-feature-root=\"ecosystem\"] .ecosystem-scene-node:focus-visible circle{stroke:#fff;stroke-width:4}
+[data-feature-root=\"ecosystem\"] .ecosystem-scene-node text{fill:#edf5f6;font:12px system-ui,sans-serif;text-anchor:middle;pointer-events:none}
+[data-feature-root=\"ecosystem\"] .ecosystem-scene-actions{display:flex;align-items:center;gap:.7rem;margin:.5rem 0;color:var(--muted,#9bafb4);font-size:.8rem}
 [data-feature-root=\"ecosystem\"] .ecosystem-relation-endpoints{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:.6rem}
 [data-feature-root=\"ecosystem\"] .ecosystem-graph li>small{grid-column:1/-1}
 [data-feature-root=\"ecosystem\"] .ecosystem-endpoint{min-width:0;overflow-wrap:anywhere}
@@ -58,7 +68,7 @@ _CSS = """[data-feature-root=\"ecosystem\"]{max-width:1180px;margin:0 auto;paddi
 [data-feature-root=\"ecosystem\"] [data-ecosystem-events] li{padding:.55rem 0;border-top:1px solid var(--border,#20373e);overflow-wrap:anywhere}
 [data-feature-root=\"ecosystem\"] .ecosystem-empty{color:var(--muted,#9bafb4)}
 [data-feature-root=\"ecosystem\"][data-state=\"partial\"] .ecosystem-status,[data-feature-root=\"ecosystem\"][data-state=\"stale\"] .ecosystem-status{color:#e9c783}
-[data-feature-root=\"ecosystem\"][data-state=\"unknown\"] .ecosystem-arrow[data-pulse=\"true\"],[data-feature-root=\"ecosystem\"][data-state=\"partial\"] .ecosystem-arrow[data-pulse=\"true\"],[data-feature-root=\"ecosystem\"][data-state=\"stale\"] .ecosystem-arrow[data-pulse=\"true\"]{animation:none}
+[data-feature-root=\"ecosystem\"][data-state=\"unknown\"] .ecosystem-arrow[data-pulse=\"true\"],[data-feature-root=\"ecosystem\"][data-state=\"stale\"] .ecosystem-arrow[data-pulse=\"true\"]{animation:none}
 @media(prefers-reduced-motion:reduce){[data-feature-root=\"ecosystem\"] *,[data-feature-root=\"ecosystem\"] *::before,[data-feature-root=\"ecosystem\"] *::after{animation:none!important;scroll-behavior:auto!important}}
 html[data-jarvis-motion=\"reduce\"] [data-feature-root=\"ecosystem\"] *,html[data-jarvis-motion=\"reduce\"] [data-feature-root=\"ecosystem\"] *::before,html[data-jarvis-motion=\"reduce\"] [data-feature-root=\"ecosystem\"] *::after{animation:none!important}
 @media(max-width:700px){[data-feature-root=\"ecosystem\"] .ecosystem-header{flex-direction:column}[data-feature-root=\"ecosystem\"] .ecosystem-header button{width:100%}[data-feature-root=\"ecosystem\"] .ecosystem-layout{grid-template-columns:minmax(0,1fr)}}
@@ -72,10 +82,12 @@ _MOUNT = r'''function mount(container, api) {
   const refreshButton = $('[data-ecosystem-refresh]'), searchInput = $('[data-ecosystem-search]');
   const filterSelect = $('[data-ecosystem-filter]'), roster = $('[data-ecosystem-roster]');
   const graph = $('[data-ecosystem-graph]'), teamsList = $('[data-ecosystem-teams]');
+  const scene = $('[data-ecosystem-scene]'), sceneLinks = $('[data-ecosystem-scene-links]'), sceneNodes = $('[data-ecosystem-scene-nodes]');
+  const fitButton = $('[data-ecosystem-fit]'), selectedLabel = $('[data-ecosystem-selected]'), sceneFrame = $('[data-ecosystem-scene-frame]');
   const rosterEmpty = $('[data-ecosystem-roster-empty]'), graphEmpty = $('[data-ecosystem-graph-empty]');
   const teamsEmpty = $('[data-ecosystem-teams-empty]'), detail = $('[data-ecosystem-detail]');
   const eventList = $('[data-ecosystem-events]');
-  let stopped = false, loading = false, generation = 0, snapshot = null, selectedId = null;
+  let stopped = false, loading = false, generation = 0, snapshot = null, selectedId = null, sceneVisible = true, freshnessTimer = null;
   const seenPulses = new Set();
   const listeners = new AbortController();
   const instanceStates = new Set(['admitted','running','responded','completed','unknown']);
@@ -125,12 +137,14 @@ _MOUNT = r'''function mount(container, api) {
         const at=Date.parse(item.at);
         if (!team.members.includes(item.from) || !team.members.includes(item.to)
             || team.mission_id!==item.mission_id || team.mission_revision!==item.mission_revision
-            || !from || !to || from.profile_id===to.profile_id
+            || !from || !to
             || from.mission_id!==item.mission_id || to.mission_id!==item.mission_id
             || from.mission_revision!==item.mission_revision || to.mission_revision!==item.mission_revision
             || !Number.isFinite(at)) { omittedRelations++; continue; }
         seenRelationIds.add(item.id);
-        relations.push({...item,team_name:team.name,from_name:from.display_name,to_name:to.display_name,at_ms:at});
+        relations.push({...item,team_name:team.name,from_name:from.display_name,to_name:to.display_name,at_ms:at,
+          team_current:team.state==='current' && team.coverage==='observed-callbacks',
+          from_current:!from.stale && from.state!=='unknown',to_current:!to.stale && to.state!=='unknown'});
       }
       if (data.pending?.communication_edges === 'verified') omittedRelations += data.relations.length - relations.length - omittedRelations;
     }
@@ -142,8 +156,9 @@ _MOUNT = r'''function mount(container, api) {
         || omittedTeams>0 || omittedRelations>0};
   }
   function liveNow(row) {
-    return !!snapshot && !loading && !stopped && root.dataset.state==='current' && document.visibilityState==='visible'
-      && navigator.onLine!==false && snapshot.observation.state==='observed' && !snapshot.partial
+    return !!snapshot && !loading && !stopped && (root.dataset.state==='current'||root.dataset.state==='partial') && document.visibilityState==='visible'
+      && navigator.onLine!==false && sceneVisible && snapshot.observation.state!=='quiet' && row.partial!==true
+      && row.team_current===true && row.from_current===true && row.to_current===true
       && Number.isFinite(snapshot.observedAt) && Date.now()-snapshot.observedAt>=-30000
       && Date.now()-snapshot.observedAt<=120000 && row.state==='current'
       && row.coverage==='observed-callbacks' && Date.now()-row.at_ms>=-30000 && Date.now()-row.at_ms<=120000;
@@ -171,11 +186,12 @@ _MOUNT = r'''function mount(container, api) {
       + (row.mission_revision ? ` revision ${row.mission_revision}` : '')
       + ` · Snapshot observed ${snapshot.observation.observed_at}`;
     const events=row.events.filter(event=>event && typeof event.kind==='string' && typeof event.status==='string' && typeof event.at==='string').slice(-20);
+    detail.append(textNode('p',`${Number.isSafeInteger(row.observed_response_duration_ms)?`${row.observed_response_duration_ms} ms observed response duration`:'Observed response duration unknown'} · ${Number.isSafeInteger(row.response_duration_coverage)?`${row.response_duration_coverage} observed responses with duration`:'response duration coverage unknown'}`));
     for (const event of events) {
       const line=document.createElement('li');
       const when=Number.isFinite(Date.parse(event.at)) ? event.at : 'Unknown time';
       line.textContent=`${event.kind} · ${event.status} · ${when}`
-        + (Number.isSafeInteger(event.duration_ms) ? ` · ${event.duration_ms} ms` : '');
+        + (Number.isSafeInteger(event.duration_ms) ? ` · ${event.duration_ms} ms` : event.duration_ms===null?' · duration unavailable':' · duration unknown');
       eventList.append(line);
     }
     if (!events.length) eventList.append(textNode('li','No event detail is available in this observation.'));
@@ -183,7 +199,9 @@ _MOUNT = r'''function mount(container, api) {
   function render() {
     if (!snapshot) return;
     const visible=visibleRows(), visibleIds=new Set(visible.map(row=>row.id));
-    roster.replaceChildren(); graph.replaceChildren(); teamsList.replaceChildren();
+    if (!selectedId || !visibleIds.has(selectedId)) selectedId=visible.length ? visible[0].id : null;
+    selectedLabel.textContent=selectedId?`Selected ${snapshot.instanceMap.get(selectedId).display_name} · execution ${selectedId}`:'No instance selected.';
+    roster.replaceChildren(); graph.replaceChildren(); teamsList.replaceChildren(); sceneLinks.replaceChildren(); sceneNodes.replaceChildren();
     rosterEmpty.hidden=visible.length>0;
     for (const row of visible) {
       const li=document.createElement('li'), button=document.createElement('button');
@@ -201,6 +219,29 @@ _MOUNT = r'''function mount(container, api) {
       && (!filterSelect.value || filterSelect.value==='all' || effectiveLineageState(row)===filterSelect.value));
     graphEmpty.hidden=relations.length>0;
     const ordered=[...relations].sort((a,b)=>a.at_ms-b.at_ms || a.id.localeCompare(b.id));
+    const sceneRows=[...visible].sort((a,b)=>a.id.localeCompare(b.id));
+    const points=new Map(sceneRows.map((row,index)=>[row.id,{x:90+(index%4)*180,y:75+Math.floor(index/4)*125}]));
+    for (const relation of ordered) {
+      const from=points.get(relation.from),to=points.get(relation.to); if(!from||!to)continue;
+      const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+      path.setAttribute('d',`M ${from.x} ${from.y} L ${to.x} ${to.y}`);path.setAttribute('class','ecosystem-scene-link');
+      path.setAttribute('aria-label',`${relation.from_name} to ${relation.to_name}: verified completed message`);sceneLinks.append(path);
+    }
+    for (const row of sceneRows) {
+      const point=points.get(row.id),group=document.createElementNS('http://www.w3.org/2000/svg','g');
+      group.setAttribute('class','ecosystem-scene-node');group.setAttribute('tabindex','0');group.setAttribute('role','button');
+      group.setAttribute('aria-label',`${row.display_name}, execution ${row.id}, profile ${row.profile_id}`);
+      group.setAttribute('aria-pressed',String(selectedId===row.id));group.dataset.instanceId=row.id;
+      const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=`${row.display_name} · execution ${row.id}`;
+      const circle=document.createElementNS('http://www.w3.org/2000/svg','circle');circle.setAttribute('cx',String(point.x));circle.setAttribute('cy',String(point.y));circle.setAttribute('r','25');
+      const name=document.createElementNS('http://www.w3.org/2000/svg','text');name.setAttribute('x',String(point.x));name.setAttribute('y',String(point.y+43));name.textContent=row.display_name.slice(0,28);
+      const key=document.createElementNS('http://www.w3.org/2000/svg','text');key.setAttribute('x',String(point.x));key.setAttribute('y',String(point.y+58));key.textContent=`Execution …${row.id.slice(-8)}`;
+      group.append(title,circle,name,key);
+      const select=()=>{selectedId=row.id;render();selectedLabel.focus?.();};
+      group.addEventListener('click',select);group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();select();}});
+      sceneNodes.append(group);
+    }
+    scene.setAttribute('viewBox',`0 0 720 ${Math.max(360,Math.ceil(sceneRows.length/4)*125+50)}`);
     for (const relation of ordered) {
       const li=document.createElement('li'); li.dataset.relationId=relation.id;
       const source=textNode('span',relation.from_name,'ecosystem-endpoint');
@@ -210,7 +251,7 @@ _MOUNT = r'''function mount(container, api) {
       const endpoints=document.createElement('div'); endpoints.className='ecosystem-relation-endpoints'; endpoints.append(source,arrow,target);
       li.append(endpoints,details);
       const canPulse=liveNow(relation) && !seenPulses.has(relation.id);
-      if (canPulse) { seenPulses.add(relation.id); arrow.dataset.pulse='true'; arrow.addEventListener('animationend',()=>delete arrow.dataset.pulse,{once:true}); }
+      if (canPulse) { seenPulses.add(relation.id); if(seenPulses.size>200)seenPulses.delete(seenPulses.values().next().value); arrow.dataset.pulse='true'; arrow.addEventListener('animationend',()=>delete arrow.dataset.pulse,{once:true}); }
       graph.append(li);
     }
     const teams=snapshot.teams.filter(team=>team.members.some(id=>visibleIds.has(id))
@@ -222,17 +263,21 @@ _MOUNT = r'''function mount(container, api) {
       li.append(textNode('strong',`${team.name} · ${team.id}`),textNode('small',`${root.dataset.state==='stale'?'stale snapshot · ':''}${team.state} · ${team.coverage} · Source ${team.source_revision} · Mission ${team.mission_id} rev ${team.mission_revision} · ${memberDetails}`));
       teamsList.append(li);
     }
-    if (!selectedId || !snapshot.instanceMap.has(selectedId)) selectedId=visible.length ? visible[0].id : null;
     for (const button of roster.querySelectorAll('button')) button.setAttribute('aria-pressed',String(button.dataset.instanceId===selectedId));
     renderDetail(selectedId ? snapshot.instanceMap.get(selectedId) : null);
     const summary=snapshot.summary || {}, total=Number.isSafeInteger(summary.observed_instances)?summary.observed_instances:snapshot.instances.length;
     const completion=Number.isSafeInteger(summary.observed_completed_executions)?`${summary.observed_completed_executions} observed completions`:'Completion count unknown';
-    coverage.textContent=`${visible.length} of ${total} observed instances · ${completion} · Observed ${snapshot.observation.observed_at} · ${snapshot.schema===1?'schema 1 has no verified Team lineage':`${snapshot.teams.length} verified Team instances · ${snapshot.relations.length} verified completed-message relations`}`
+    const window=snapshot.observation.window || {}, windowText=`Window ${window.from || 'unknown'} to ${window.to || 'unknown'} (${Number.isFinite(window.seconds)?window.seconds:'unknown'} seconds)`;
+    const coverageText=typeof snapshot.observation.coverage==='string'?snapshot.observation.coverage:'unknown coverage';
+    const duration=Number.isSafeInteger(summary.response_duration_ms)&&summary.response_duration_coverage>0?`${summary.response_duration_ms} ms observed response duration`:'observed response duration unknown';
+    const durationCoverage=Number.isSafeInteger(summary.response_duration_coverage)?`${summary.response_duration_coverage} observed responses with duration`:'response duration coverage unknown';
+    coverage.textContent=`${visible.length} of ${total} observed instances · ${completion} · ${duration} (${durationCoverage}) · ${windowText} · ${coverageText} · Observed ${snapshot.observation.observed_at} · ${snapshot.schema===1?'schema 1 has no verified Team lineage':`${snapshot.teams.length} verified Team instances · ${snapshot.relations.length} verified completed-message relations`}`
       + (snapshot.partial?' · partial or stale coverage; totals may be incomplete':'')
       + (snapshot.omittedTeams || snapshot.omittedRelations ? ` · omitted ${snapshot.omittedTeams} invalid Team rows and ${snapshot.omittedRelations} invalid relation rows` : '');
   }
   async function refresh() {
     if (stopped || loading) return;
+    if (freshnessTimer) { clearTimeout(freshnessTimer); freshnessTimer=null; }
     loading=true; const current=++generation; refreshButton.disabled=true;
     if (snapshot) { setStatus('Refreshing; the previous snapshot is historical until a new read completes.','stale'); render(); }
     else setStatus('Reading current native observations…','unknown');
@@ -242,19 +287,25 @@ _MOUNT = r'''function mount(container, api) {
       const next=normalize(data);
       if (!next) throw new Error('invalid ecosystem projection');
       snapshot=next;
-      loading=false;
+      if (freshnessTimer) clearTimeout(freshnessTimer);
       if (next.observation.state==='quiet') setStatus('No native instances were observed in this window.','empty');
-      else if (next.partial) setStatus('Partial native observation; stale or omitted activity is not live.','partial');
+      else if (next.partial) setStatus('Aggregate observation is partial; only individually verified fresh relations may appear as observed events.','partial');
       else if (!Number.isFinite(next.observedAt) || Date.now()-next.observedAt>120000 || Date.now()-next.observedAt< -30000)
         setStatus('The last native snapshot is historical; current state is unknown.','stale');
       else setStatus('Current root-observed native execution snapshot.','current');
-      render();
     } catch (_) {
       if (stopped || current!==generation) return;
       if (snapshot) { setStatus('Refresh failed; showing the previous snapshot as stale.','stale'); render(); }
       else { setStatus('Native ecosystem observations are unavailable.','unknown'); coverage.textContent='Coverage is unknown; refresh when the protected source is available.'; roster.replaceChildren();graph.replaceChildren();teamsList.replaceChildren();renderDetail(null); }
     } finally {
-      if (!stopped && current===generation) { loading=false; refreshButton.disabled=false; }
+      if (!stopped && current===generation) {
+        loading=false; refreshButton.disabled=false;
+        if(snapshot && (root.dataset.state==='current'||root.dataset.state==='partial') && Number.isFinite(snapshot.observedAt)) {
+          const wait=Math.max(0,snapshot.observedAt+120000-Date.now()+1);
+          freshnessTimer=setTimeout(()=>{if(!stopped && snapshot && Date.now()-snapshot.observedAt>120000){setStatus('The last native snapshot is historical; current state is unknown.','stale');render();}},wait);
+        }
+        render();
+      }
     }
   }
   refreshButton.addEventListener('click',refresh,{signal:listeners.signal});
@@ -266,8 +317,12 @@ _MOUNT = r'''function mount(container, api) {
   document.addEventListener('visibilitychange',onVisibility,{signal:listeners.signal});
   window.addEventListener('offline',onOffline,{signal:listeners.signal});
   window.addEventListener('online',onOnline,{signal:listeners.signal});
+  fitButton.addEventListener('click',()=>{const height=Math.max(360,Math.ceil(sceneNodes.children.length/4)*125+50);scene.setAttribute('viewBox',`0 0 720 ${height}`);scene.focus?.();},{signal:listeners.signal});
+  const intersection=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{sceneVisible=!!entries[0]?.isIntersecting;if(!sceneVisible)render();},{threshold:0.01}):null;
+  intersection?.observe(sceneFrame);
+  window.addEventListener('resize',()=>{scene.setAttribute('viewBox',`0 0 720 ${Math.max(360,Math.ceil(sceneNodes.children.length/4)*125+50)}`);},{signal:listeners.signal});
   void refresh();
-  return function cleanup() { stopped=true; generation+=1; loading=false; listeners.abort(); refreshButton.disabled=true; };
+  return function cleanup() { stopped=true; generation+=1; loading=false;if(freshnessTimer)clearTimeout(freshnessTimer);intersection?.disconnect();listeners.abort();refreshButton.disabled=true; };
 }'''
 
 _UNMOUNT = "function unmount() {}"
