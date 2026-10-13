@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import pwd
+import select
 import shlex
 import shutil
 import stat
@@ -509,6 +510,65 @@ def _rebind_migrated_fixture_to_prior_generation():
     return source
 
 
+def _fake_update_pidfd(monkeypatch, enabled, request):
+    """Model an owned service PIDFD whose liveness follows the fake service."""
+    read_fd, write_fd = os.pipe()
+    open_state = {"read": read_fd, "write": write_fd}
+    pid = 424242
+
+    def cleanup_pipe():
+        for name in ("read", "write"):
+            fd = open_state[name]
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                open_state[name] = None
+
+    request.addfinalizer(cleanup_pipe)
+
+    def identity(source, adapter_generation, core_generation, actual_pid):
+        assert actual_pid == pid
+        evidence = {"boot_id": "fixture-boot", "pid": pid, "start_ticks": "1",
+                    "adapter_source": str(source), "adapter_generation": adapter_generation,
+                    "core_source_generation": core_generation, "invocation_id": "1" * 32,
+                    "cgroup_sha256": "2" * 64, "argv_sha256": "3" * 64}
+        return evidence, hashlib.sha256(core._canonical_json(evidence)).hexdigest()
+
+    def capture(source, adapter_generation, core_generation):
+        evidence, digest = identity(source, adapter_generation, core_generation, pid)
+        return os.dup(read_fd), pid, evidence, digest
+
+    def stop(pidfd, actual_pid, source, adapter_generation, core_generation, expected):
+        _evidence, actual = identity(source, adapter_generation, core_generation, actual_pid)
+        poller = select.poll()
+        poller.register(pidfd, select.POLLIN | select.POLLHUP)
+        assert actual == expected and not poller.poll(0)
+        core._run(["systemctl", "stop", core.SERVICE])
+        os.close(open_state["write"])
+        open_state["write"] = None
+        enabled["value"] = False
+        assert poller.poll(0)
+        assert core._run(["systemctl", "is-active", core.SERVICE], False).stdout.strip() != "active"
+
+    def stop_owned(allowed_sources):
+        if enabled["value"]:
+            assert any(core._owned_listener(adapter_source=source) for source in allowed_sources)
+        core._run(["systemctl", "stop", core.SERVICE])
+        enabled["value"] = False
+        if open_state["write"] is not None:
+            os.close(open_state["write"])
+            open_state["write"] = None
+
+    monkeypatch.setattr(core, "_adapter_process_identity", identity)
+    monkeypatch.setattr(core, "_capture_adapter_service_process", capture)
+    monkeypatch.setattr(core, "_stop_captured_adapter_process", stop)
+    monkeypatch.setattr(core, "_stop_owned_core_for_adapter_update", stop_owned)
+    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
+    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
+
+
 def _fixed_service_path_identity():
     """Read the Pi-owned targets that the generated guard treats as fixed."""
     paths = ((Path("/etc/systemd/system/hermes-jarvis-core.service"), 0o644),
@@ -607,13 +667,14 @@ def test_post_migration_recovery_refuses_changed_current_launcher_before_touchin
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
-def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_launcher(tmp_path, monkeypatch):
+def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_launcher(tmp_path, monkeypatch, request):
     calls, enabled, _old_launcher, selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     memory = core.HERMES_HOME / "memories" / "owner.md"
     memory.parent.mkdir(parents=True)
     memory.write_text("existing owner memory")
     core.migrate_owned_core_to_adapter_path()
+    _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
     prior = json.loads(core.JOURNAL.read_text())
     assert prior["state"] == "installed"
@@ -621,9 +682,6 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     prior_unit = core.UNIT.read_bytes()
     token = core.TOKEN.read_bytes()
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
-    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
-    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
-    _fake_update_pidfd(monkeypatch, enabled)
     real_run = core._run
     reload_service_states = []
     automatic_restarts = []
@@ -682,10 +740,11 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
-def test_native_adapter_update_restart_failure_restores_exact_prior_generation(tmp_path, monkeypatch):
+def test_native_adapter_update_restart_failure_restores_exact_prior_generation(tmp_path, monkeypatch, request):
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
+    _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
     migrated_record = json.loads(migrated_raw)
@@ -698,9 +757,6 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
     unit = core.UNIT.read_bytes()
     token = core.TOKEN.read_bytes()
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
-    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
-    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
-    _fake_update_pidfd(monkeypatch, enabled)
     attempts = {"wait": 0}
     def fail_first_restart():
         attempts["wait"] += 1
@@ -723,10 +779,11 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
-def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tmp_path, monkeypatch):
+def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tmp_path, monkeypatch, request):
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
+    _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
     migrated_record = json.loads(migrated_raw)
@@ -738,9 +795,6 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     launcher = core.LAUNCHER.read_bytes()
     unit = core.UNIT.read_bytes()
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
-    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
-    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
-    _fake_update_pidfd(monkeypatch, enabled)
     replace_journal = core._replace_journal
     interrupted = {"done": False}
     def interrupt_before_new_journal(record):
@@ -772,10 +826,11 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update recovery needs the real root actor")
-def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pre(tmp_path, monkeypatch):
+def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pre(tmp_path, monkeypatch, request):
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
+    _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
     migrated = json.loads(migrated_raw)
@@ -786,9 +841,6 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     prior = core.JOURNAL.read_bytes()
     prior_launcher = core.LAUNCHER.read_bytes()
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
-    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
-    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
-    _fake_update_pidfd(monkeypatch, enabled)
 
     real_run = core._run
     def interrupt_after_starting_recipe(argv, check=True):
@@ -1193,6 +1245,7 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request):
         "owner_generation_backup_name": ".jarvis-resources-skills-helper-transition-" + "2" * 32,
         "primary_record_sha256": core._ABSENT_DIGEST,
         "initial_primary_transition": None,
+        "native_plugin_transition": None,
         "obsidian_registration_state": "absent",
         "obsidian_registration_sha256": core._ABSENT_DIGEST,
         "obsidian_vault_tree_sha256": core._ABSENT_DIGEST,
