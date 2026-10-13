@@ -1813,12 +1813,13 @@ def test_incoming_adapter_verifies_old_a0_without_relaxing_public_discovery(
         assert files == inputs["old_files"]
         assert re.fullmatch(r"[0-9a-f]{64}", ownership_sha)
 
-    # The active runtime reader performs two fixed FragmentPath queries. No
-    # service mutation, enablement change, or protected-byte change is allowed.
+    # The active runtime reader proves the loaded fixed unit and rejects
+    # drop-ins with these ordered, read-only queries. No service mutation,
+    # enablement change, or protected-byte change is allowed.
     fragment_query = ("systemctl", "show", "--property=FragmentPath", "--value", core.SERVICE)
+    dropins_query = ("systemctl", "show", "--property=DropInPaths", "--value", core.SERVICE)
     new_calls = calls[len(calls_before):]
-    assert len(new_calls) == 2
-    assert [call[0] for call in new_calls] == [fragment_query, fragment_query]
+    assert [call[0] for call in new_calls] == [fragment_query, dropins_query]
     assert all(call[1] is unit_present_before for call in new_calls)
     assert enabled["value"] is enabled_before
     assert {path: path.read_bytes() for path in watched_paths} == bytes_before
