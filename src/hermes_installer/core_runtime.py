@@ -2660,6 +2660,8 @@ exec /home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be
 _ADAPTER_UPDATE_BACKUP_MEMBERS=("journal.json","unit","launcher","plugin-selection.json",
  "resources-record.json","overlay-record.json","primary-record.json",
  "obsidian-registration.json","cohort.json")
+_ADAPTER_UPDATE_OPTIONAL_EMPTY_BACKUP_MEMBERS=(
+ "overlay-record.json","primary-record.json","obsidian-registration.json","cohort.json")
 
 def _journal_adapter_backup_generation(record):
  reference=record.get("adapter_update_backup") if type(record) is dict else None
@@ -2778,7 +2780,8 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
     "backup_manifest_path=os.path.join(base,backup_manifest_name); backup_manifest_stat=os.stat(backup_manifest_path,follow_symlinks=False); backup_raw=open(backup_manifest_path,'rb').read(4097); "
     "backup_files=(backup.get('files') if isinstance(backup,dict) else None); "
     "backup_ok=(isinstance(backup,dict) and type(backup_files) is dict and set(backup_files)==set(backup_members) and backup.get('source_generation')==backup_generation and backup.get('path')=="+repr(str(ADAPTER_UPDATE_BACKUPS))+"+'/'+backup_generation and backup_raw==canonical(backup_files) and stat.S_ISREG(backup_manifest_stat.st_mode) and (backup_manifest_stat.st_uid,backup_manifest_stat.st_gid)==(1000,1000) and stat.S_IMODE(backup_manifest_stat.st_mode)==0o400 and backup_manifest_stat.st_nlink==1 and len(backup_raw)==backup_manifest_stat.st_size); "
-    "backup_valid=lambda n,h:(lambda p,s,b:stat.S_ISREG(s.st_mode) and (s.st_uid,s.st_gid)==(1000,1000) and stat.S_IMODE(s.st_mode)==0o400 and s.st_nlink==1 and 0<s.st_size<=262144 and len(b)==s.st_size and hashlib.sha256(b).hexdigest()==h)(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),os.stat(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),follow_symlinks=False),open(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),'rb').read(262145)); "
+    "optional_empty_backup_members="+repr(_ADAPTER_UPDATE_OPTIONAL_EMPTY_BACKUP_MEMBERS)+"; "
+    "backup_valid=lambda n,h:(lambda p,s,b:stat.S_ISREG(s.st_mode) and (s.st_uid,s.st_gid)==(1000,1000) and stat.S_IMODE(s.st_mode)==0o400 and s.st_nlink==1 and ((0<s.st_size<=262144) or (n in optional_empty_backup_members and s.st_size==0 and h==hashlib.sha256(b'').hexdigest())) and len(b)==s.st_size and hashlib.sha256(b).hexdigest()==h)(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),os.stat(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),follow_symlinks=False),open(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),'rb').read(262145)); "
     "backup_ok=backup_ok and all(backup_valid(name,backup_files.get(name)) for name in backup_members) and hashlib.sha256(backup_raw).hexdigest()==hashlib.sha256(canonical(backup_files)).hexdigest(); "
     "initial=c.get('initial_primary_transition'); initial_ok=(initial is None or (isinstance(initial,dict) and initial.get('purpose')=='initial-primary-adoption' and initial.get('prior_record_state')=='absent' and initial.get('state') in ('pending','adopted') and ((initial.get('state')=='pending' and c.get('primary_record_sha256')=='absent' and initial.get('owner_backup_sha256') is None) or (initial.get('state')=='adopted' and initial.get('adopted_record_sha256')==c.get('primary_record_sha256') and initial.get('after_resources_record_sha256')==c.get('starting_resources_record_sha256'))))); "
     "keys_ok=(set(c)==keys or (set(c)==legacy_keys and c.get('native_plugin_transition') is None)); "

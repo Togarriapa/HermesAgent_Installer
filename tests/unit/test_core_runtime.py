@@ -2109,7 +2109,7 @@ def test_atomic_primary_restore_accepts_new_inode_but_keeps_original_owner_metad
         assert not core._restored_soul_signature_matches(tampered, original)
 
 
-def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request):
+def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request, *, empty_optional_backups=False):
     """Build the exact on-disk systemd inputs used by the M1 source-start gate."""
     from hermes_installer.remote import obsidian_owner_lifecycle as obsidian
 
@@ -2175,8 +2175,11 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request):
     token_sha = hashlib.sha256(token).hexdigest()
     backup_directory = core.ADAPTER_UPDATE_BACKUPS / old_adapter
     backup_directory.mkdir(mode=0o700)
-    backup_contents = {name: ("proof:" + name + "\n").encode()
-                       for name in core._ADAPTER_UPDATE_BACKUP_MEMBERS}
+    optional_empty = set(core._ADAPTER_UPDATE_OPTIONAL_EMPTY_BACKUP_MEMBERS)
+    backup_contents = {
+        name: (b"" if empty_optional_backups and name in optional_empty
+               else ("proof:" + name + "\n").encode())
+        for name in core._ADAPTER_UPDATE_BACKUP_MEMBERS}
     backup_files = {name: hashlib.sha256(content).hexdigest()
                     for name, content in backup_contents.items()}
     for name, content in backup_contents.items():
@@ -2681,6 +2684,46 @@ def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resource
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
+def test_m1_boot_gate_accepts_only_manifested_empty_optional_legacy_backups(
+        tmp_path, monkeypatch, request):
+    unit, _cohort, _journal, _resources = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request, empty_optional_backups=True)
+    credentials = {row.partition(":")[0]: row.partition(":")[2]
+                   for row in unit.decode().splitlines()
+                   if row.startswith("LoadCredential=adapter-backup-")}
+    assert len(credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 1
+    assert _exec_start_pre(unit, expect_success=True) == 0
+
+    required = next(name for name in credentials if name.endswith("journal-json"))
+    assert _exec_start_pre(unit, credential_mutations={required: ("bytes", b"")},
+                           expect_success=False) != 0
+    optional = next(name for name in credentials if name.endswith("overlay-record"))
+    assert _exec_start_pre(unit, credential_mutations={optional: ("bytes", b"tampered")},
+                           expect_success=False) != 0
+    assert _exec_start_pre(unit, credential_mutations={optional: ("remove",)},
+                           expect_success=False) != 0
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="native start gate requires the enrolled Pi root actor")
+def test_m1_boot_gate_accepts_only_manifested_empty_optional_native_backups(
+        tmp_path, monkeypatch, request):
+    unit, _plugin, _old_members, _new_members = _native_plugin_starting_fixture(
+        tmp_path, monkeypatch, request, empty_optional_backups=True)
+    credentials = {row.partition(":")[0]: row.partition(":")[2]
+                   for row in unit.decode().splitlines()
+                   if row.startswith("LoadCredential=adapter-backup-")}
+    assert len(credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 3
+    assert _exec_start_pre(unit, expect_success=True) == 0
+
+    required = next(name for name in credentials if name.endswith("unit"))
+    optional = next(name for name in credentials if name.endswith("cohort-json"))
+    assert _exec_start_pre(unit, credential_mutations={required: ("bytes", b"")},
+                           expect_success=False) != 0
+    assert _exec_start_pre(unit, credential_mutations={optional: ("bytes", b"wrong hash")},
+                           expect_success=False) != 0
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
 def test_m1_guard_diagnostic_runs_only_after_original_guard_denies(
         tmp_path, monkeypatch, request):
     unit, _cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
@@ -2699,10 +2742,10 @@ def test_m1_guard_diagnostic_runs_only_after_original_guard_denies(
     assert "invalid fixture token" not in message
 
 
-def _native_plugin_starting_fixture(tmp_path, monkeypatch, request):
+def _native_plugin_starting_fixture(tmp_path, monkeypatch, request, *, empty_optional_backups=False):
     """Promote the bounded starting fixture to the exact closed 11-member recipe."""
     unit, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
-        tmp_path, monkeypatch, request)
+        tmp_path, monkeypatch, request, empty_optional_backups=empty_optional_backups)
     old_members = {"plugin.yaml": b"name: hermes-installer-resources-delegation\n",
                    "__init__.py": b"old reviewed native tools\n"}
     new_members = {"plugin.yaml": old_members["plugin.yaml"],
