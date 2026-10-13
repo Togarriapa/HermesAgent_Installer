@@ -73,6 +73,14 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn("source records are available", FEATURE_ASSETS.view_html)
         self.assertIn("filters match any selected tag", FEATURE_ASSETS.view_html.lower())
 
+    def test_knowledge_map_list_alternative_includes_isolated_notes(self):
+        self.assertIn("data-graph-notes", FEATURE_ASSETS.view_html)
+        self.assertIn("Notes in this map", FEATURE_ASSETS.view_html)
+        self.assertIn("const graphNotes = $('[data-graph-notes]')", FEATURE_ASSETS.mount_js)
+        self.assertIn("graphNotes.append(button)", FEATURE_ASSETS.mount_js)
+        self.assertIn("graphNotes.querySelectorAll('button[data-note-id]')", FEATURE_ASSETS.mount_js)
+        self.assertIn("button.addEventListener('click', () => openNote(node.noteId))", FEATURE_ASSETS.mount_js)
+
 
 if __name__ == "__main__":
     unittest.main()
