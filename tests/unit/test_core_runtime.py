@@ -664,6 +664,14 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
         path.mkdir(parents=True, exist_ok=True)
     for path in (etc, unit_dir, libexec):
         path.chmod(0o755)
+    if service_root is not None:
+        # The untouched ExecStartPre guard stats the original embedded source
+        # paths as admin, in addition to checking the private fixed-path binds.
+        # Make only the disposable service tree's traversal ancestors public;
+        # pytest data, credentials, journals and backups remain private.
+        for path in (service_root / "etc", service_root / "etc" / "systemd",
+                     service_root / "usr", service_root / "usr" / "local"):
+            path.chmod(0o755)
     monkeypatch.setattr(core, "ETC_INSTALLER", etc)
     monkeypatch.setattr(core, "VAR_LIB_INSTALLER", var)
     monkeypatch.setattr(core, "SYSTEMD_UNIT_DIR", unit_dir)
@@ -1022,11 +1030,35 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="act
         service_root = core.UNIT.parents[3]
         expected_files = {core.UNIT.resolve(), core.LAUNCHER.resolve()}
         actual_files = {path.resolve() for path in service_root.rglob("*") if path.is_file()}
+        expected_directories = {
+            service_root.resolve(),
+            (service_root / "etc").resolve(),
+            (service_root / "etc" / "systemd").resolve(),
+            core.UNIT.parent.resolve(),
+            (service_root / "usr").resolve(),
+            (service_root / "usr" / "local").resolve(),
+            core.LAUNCHER.parent.resolve(),
+        }
+        actual_directories = {
+            path.resolve() for path in service_root.rglob("*") if path.is_dir()
+        } | {service_root.resolve()}
         root_stat = service_root.stat()
-        if (actual_files != expected_files
+        directory_custody = all(
+            not path.is_symlink()
+            and stat.S_ISDIR(path.lstat().st_mode)
+            and (path.lstat().st_uid, path.lstat().st_gid,
+                 stat.S_IMODE(path.lstat().st_mode)) == (core.ROOT_UID, core.ROOT_UID, 0o755)
+            for path in (service_root, service_root / "etc", service_root / "etc" / "systemd",
+                         core.UNIT.parent, service_root / "usr", service_root / "usr" / "local",
+                         core.LAUNCHER.parent)
+        )
+        if (actual_files != expected_files or actual_directories != expected_directories
+                or not directory_custody
                 or (root_stat.st_uid, root_stat.st_gid, stat.S_IMODE(root_stat.st_mode))
                     != (core.ROOT_UID, core.ROOT_UID, 0o755)):
-            raise AssertionError("public fixture tree must retain only the two owned service files")
+            raise AssertionError(
+                "public fixture tree must retain only the two owned service files and "
+                "root-only-to-admin traversal ancestors")
     # The production recipe is the post-migration comparator. The on-disk
     # legacy launcher and journal hashes above remain the migration input.
     monkeypatch.setattr(core, "_launcher", _REAL_CORE_LAUNCHER)
