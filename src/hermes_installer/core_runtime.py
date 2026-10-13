@@ -2837,7 +2837,9 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
    "  'phase_ok':_diag_value(lambda:phase_ok),\n"
    "  'starting':_diag_value(lambda:starting),\n"
    "  'starting_ok':_diag_value(lambda:starting_ok),\n"
-   "  'active_update_ok':_diag_value(lambda:active_update_ok),\n"
+   # This diagnostic is phase-inapplicable while starting; the original gate
+   # still evaluates active_update_ok above and uses it in phase_ok.
+   "  'active_update_ok':_diag_value(lambda:active_update_ok if not starting else None),\n"
    " }\n"
    " line=b'HERMES_CORE_START_GUARD_FAILURE_V1='+json.dumps({'schema':1,'flags':flags},sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False).encode('ascii')+b'\\n'\n"
    " if len(line)<=4096: os.write(2,line)\n"

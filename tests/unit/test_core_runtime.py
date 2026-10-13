@@ -3653,7 +3653,8 @@ def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypat
 
     successful = _exec_start_pre(unit, expect_success=True, return_result=True)
     assert successful.returncode == 0
-    assert b"HERMES_CORE_START_GUARD_FAILURE_V1=" not in successful.stderr
+    assert successful.stdout == b"FIXTURE_NAMESPACE_READY\n"
+    assert successful.stderr == b""
 
     token_row = next(row for row in unit.decode().splitlines()
                      if row.startswith("LoadCredential=") and "session-token" in row)
@@ -3662,12 +3663,19 @@ def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypat
     denied = _exec_start_pre(unit, credential_mutations={token_name: ("bytes", sentinel)},
         expect_success=False, return_result=True)
     assert denied.returncode == 1
+    assert denied.stdout == b"FIXTURE_NAMESPACE_READY\n"
     assert sentinel not in denied.stderr
     rows = [line for line in denied.stderr.splitlines()
             if line.startswith(b"HERMES_CORE_START_GUARD_FAILURE_V1=")]
     assert len(rows) == 1 and len(rows[0]) <= 4096
+    assert denied.stderr == rows[0] + b"\n"
     payload = json.loads(rows[0].partition(b"=")[2])
     assert set(payload) == {"schema", "flags"} and payload["schema"] == 1
+    assert rows[0] + b"\n" == (
+        b"HERMES_CORE_START_GUARD_FAILURE_V1="
+        + json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True, allow_nan=False).encode("ascii")
+        + b"\n")
     flags = payload["flags"]
     expected_flags = {
         "ok", "source_ok", "native_ok", "service_files", "journal_join",
@@ -3678,7 +3686,28 @@ def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypat
     assert set(flags) == expected_flags
     assert all(type(value) is bool or value is None for value in flags.values())
     assert flags["ok"] is False
+    assert flags["active_update_ok"] is None
     assert b"guard-telemetry-secret-sentinel" not in rows[0]
+
+    cohort_row = next(row for row in unit.decode().splitlines()
+                      if row.startswith("LoadCredential=adapter-update-cohort:"))
+    cohort_name = cohort_row.partition("=")[2].partition(":")[0]
+    denied_cohort = _exec_start_pre(unit, credential_mutations={
+        cohort_name: ("bytes", b"{}\n")}, expect_success=False, return_result=True)
+    assert denied_cohort.returncode == 1
+    assert denied_cohort.stdout == b"FIXTURE_NAMESPACE_READY\n"
+    assert len(denied_cohort.stderr.splitlines()) == 1
+    assert denied_cohort.stderr.startswith(b"HERMES_CORE_START_GUARD_FAILURE_V1=")
+    tampered_payload = json.loads(denied_cohort.stderr.partition(b"=")[2])
+    assert set(tampered_payload) == {"schema", "flags"}
+    assert tampered_payload["flags"]["ok"] is False
+    assert all(type(value) is bool or value is None
+               for value in tampered_payload["flags"].values())
+    assert denied_cohort.stderr == (
+        b"HERMES_CORE_START_GUARD_FAILURE_V1="
+        + json.dumps(tampered_payload, sort_keys=True, separators=(",", ":"),
+                     ensure_ascii=True, allow_nan=False).encode("ascii")
+        + b"\n")
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="cohort recipe custody is qualified on the enrolled Pi")
@@ -3704,6 +3733,15 @@ def test_m1_cohort_accepts_only_its_exact_legacy_or_diagnostic_guard_recipe(
         tampered = dict(bound, new_source_recipe_sha256="f" * 64)
         with pytest.raises(core.CoreRuntimeError, match="exact generated recipes"):
             core._cohort_guard_unit(tampered, source=source,
+                backup_generation=cohort["old_adapter_generation"],
+                native_plugin_transition=False)
+        forged_unit_sha = hashlib.sha256(b"forged unit bytes\n").hexdigest()
+        forged_recipe = core._adapter_recipe_sha256(
+            str(source), cohort["new_adapter_generation"], forged_unit_sha, launcher_sha)
+        forged = dict(bound, new_unit_sha256=forged_unit_sha,
+                      new_source_recipe_sha256=forged_recipe)
+        with pytest.raises(core.CoreRuntimeError, match="exact generated recipes"):
+            core._cohort_guard_unit(forged, source=source,
                 backup_generation=cohort["old_adapter_generation"],
                 native_plugin_transition=False)
     with pytest.raises(core.CoreRuntimeError, match="source-cohort unit"):
