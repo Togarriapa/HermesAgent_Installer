@@ -1039,3 +1039,20 @@ on `hermes-jarvis-core.service` twice. The cause remains under native-owner
 review and is not classified as a product or fixture failure. Neither the
 `True` update variants nor restart variants ran. Live source remains `0cb`; no
 adoption occurred.
+
+## Candidate 145 effect results
+
+Candidate 145 (`dbbef8a0bfcd85e0b081e5dd83c709bf2f65a794`), archive SHA-256
+`c3a8e7e8b490a2b8d12235b5160f835cc4cbeaf31a884c71395a30b509c1f4a7`, passed
+read-only A0 readiness and spec/plan validation. Both update variants passed
+in 615.68s; log SHA-256 was
+`366d40067d58346e4226f2e83e69730bdd1a53f91425c5483ec88cffb978e2de`. In the
+restart group, the `False` variant passed and the `True` variant failed after
+374.54s. Its log SHA-256 was
+`b6f21991622ee128e88c0b2ed6f48e2b6ed36728829178d29334d377fb891998` in
+`/var/tmp/hermes-native-a0-dbbef8a0bfcd-20261013T193124Z-3170607/`. The trace
+reached the exact-backup-retain chain `Core 6746/6744 -> restore backup 5461
+-> restore owner generation 5156`, with the underlying failure at
+`_hash_generation_tree` line 1477. The cause remains unclassified pending
+native-owner review. Core `9e70` was unchanged; live source remains `0cb` and
+no adoption occurred.
