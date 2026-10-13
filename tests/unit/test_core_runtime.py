@@ -869,11 +869,13 @@ def test_interrupted_recovery_locks_before_cohort_read_and_releases_on_failure(
     @contextlib.contextmanager
     def observed_lock():
         events.append("lock-enter")
-        with original_lock():
-            assert core._ADAPTER_UPDATE_LOCK_HELD.get()
-            yield
-        assert not core._ADAPTER_UPDATE_LOCK_HELD.get()
-        events.append("lock-exit")
+        try:
+            with original_lock():
+                assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+                yield
+        finally:
+            assert not core._ADAPTER_UPDATE_LOCK_HELD.get()
+            events.append("lock-exit")
 
     def fail_during_protected_read(*, allow_absent=False):
         assert allow_absent is True
