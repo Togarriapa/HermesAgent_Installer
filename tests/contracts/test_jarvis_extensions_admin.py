@@ -702,7 +702,7 @@ function inventory(revision){return{schema:1,revision,readiness:'observed',items
  {kind:'skills',id:'resource-skill-id',name:'resource-helper',label:'Resource helper',source:'bundledResources',originLabel:'Resources (owner overlay)',editable:true,removable:true,sha256:DIGEST,category:'native',actionState:'loaded',archivedVersions:[{restoreId:'listed-id-012345678901',sha256:VERSION}]},
  {kind:'plugins',id:'plugin-id',name:'owner-plugin',label:'Owner plugin',source:'useradded',editable:false,removable:false,version:'1.0',state:'enabled'},
  {kind:'mcps',id:'mcp-id',name:'github',label:'GitHub server',source:'unknown',editable:false,removable:false,transport:'http',enabled:true}]};}
-function view(){const root=new Target();root.selectors=new Map();const list=new Target(),status=new Target(),refresh=new Target('button'),search=new Target('input'),kind=new Target('select'),count=new Target(),empty=new Target('p'),none=new Target('p');kind.value='all';empty.hidden=true;none.hidden=true;root.append(list,status,refresh,search,kind,count,empty,none);
+function view(){const root=new Target();root.selectors=new Map();const list=new Target(),status=new Target(),refresh=new Target('button'),search=new Target('input'),kind=new Target('select'),count=new Target(),empty=new Target('p'),none=new Target('p');kind.value='all';empty.textContent='No native Skills, Plugins, or MCP servers are currently reported.';empty.hidden=true;none.hidden=true;root.append(list,status,refresh,search,kind,count,empty,none);
  for(const [s,n] of [['[data-extension-list]',list],['[data-extension-status]',status],['[data-extension-refresh]',refresh],['[data-inventory-search]',search],['[data-inventory-kind]',kind],['[data-inventory-count]',count],['[data-inventory-empty]',empty],['[data-inventory-no-match]',none]])root.selectors.set(s,n);
  for(const key of ['skill','plugin','mcp']){const form=new Target('form'),input=new Target('input'),submit=new Target('button');form.append(input,submit);root.selectors.set(`[data-add-${key}]`,form);root.append(form);}root.selectors.set('[data-feature-root="extensions"]',root);return{root,list,status,refresh,search,kind,count,empty,none};}
 function api(){const gets=[],posts=[];return{gets,posts,get(path){const d=deferred();gets.push({path,...d});return d.promise;},post(path,body){const d=deferred();posts.push({path,body,...d});return d.promise;}};}
@@ -765,6 +765,7 @@ MOUNT
  console.log('EXTENSIONS_WORKBENCH_HARNESS_COMPLETE');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''.replace('MOUNT', FEATURE_ASSETS.mount_js)
+    assert "No native Skills, Plugins, or MCP servers are currently reported." in FEATURE_ASSETS.view_html
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "extensions-workbench-harness.js"
         path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
