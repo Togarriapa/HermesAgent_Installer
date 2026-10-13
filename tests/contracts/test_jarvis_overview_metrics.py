@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 import tempfile
+from html.parser import HTMLParser
 
 from hermes_installer.remote.jarvis_chat import JarvisChatStore
 from hermes_installer.remote.jarvis_dashboard import build_overview
@@ -178,11 +179,22 @@ def test_overview_reactor_uses_observed_activity_and_keeps_controls_accessible()
 
 def test_overview_reactor_has_authored_static_iris_and_measured_flank_cards():
     html, css = FEATURE_ASSETS.view_html, FEATURE_ASSETS.css
-    assert html.count('class="reactor-iris-blade"') == 6
+    class SelectorParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.classes = []
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            self.classes.extend(attributes.get("class", "").split())
+
+    parser = SelectorParser()
+    parser.feed(html)
+    assert parser.classes.count("reactor-iris-blade") == 6
     for layer in ("reactor-segment-north", "reactor-segment-east", "reactor-segment-south",
                   "reactor-segment-west", "reactor-instrument-track", "reactor-chamber",
                   "reactor-core", "reactor-lens", "reactor-aperture"):
-        assert f'class="{layer}"' in html
+        assert layer in parser.classes
     assert ".reactor-segment{fill:none;stroke:" in css
     iris_rule = css[css.index(".reactor-iris-blade{"):css.index(".reactor-core{")]
     assert "stroke:" in iris_rule and "animation:" not in iris_rule
@@ -201,7 +213,7 @@ def test_overview_command_submission_preserves_text_on_denial_and_recovers():
 let stopped = false, failCommand = false;
 const sent = [], observation = {textContent:''}, button = {disabled:false};
 const commandInput = {value:'', disabled:false};
-const commandForm = {querySelector:() => button};
+const commandForm = {querySelector:() => button, addEventListener(){}, removeEventListener(){}, requestSubmit(){}};
 const api = {command:async text => {sent.push(text); if(failCommand) throw new Error('denied'); return true;}};
 const $ = selector => selector === '[data-observation]' ? observation : null;
 ''' + submit + r'''
