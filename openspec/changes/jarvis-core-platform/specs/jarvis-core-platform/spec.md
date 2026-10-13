@@ -2501,3 +2501,14 @@ Only the fixed current UID0 updater SHALL consume the sealed in-process helper t
 #### Scenario: Direct owner CLI or changed root invocation
 - **WHEN** helper-only import lacks actual root-created private pipe/fixed reviewed runuser lineage or live current Root preparation, or custody/source/replay checks fail
 - **THEN** effects deny/pends before writes; a child cannot validate a portable seal or mint discovery/adoption, and genuine Root dispatch still independently verifies byte effects and current cohort before protected commit.
+
+### Requirement: Named-fleet distinct execution identity
+The read-only ecosystem projection SHALL accept an individually valid completed-message relation between different included execution keys sharing one profile only when all exact Team membership, Mission/revision, endpoint completion and observation-time joins hold. It SHALL reject identical execution keys or changed/missing joins. Native same-profile admission SHALL remain pending until Root reviews and Pi-validates genuine distinct sender/recipient child/admission/source/call/completion identity proof; profile names or fixture nodes SHALL NOT grant communication authority.
+
+#### Scenario: Exact same-profile observed executions
+- **WHEN** two genuinely distinct included completed execution keys share a profile and their retained relation passes every current exact join
+- **THEN** issue #26 projects their directed relation without changing authority, aggregate coverage, freshness or one-time observed-event motion rules; a self-key or mismatched join still denies.
+
+#### Scenario: Staged native recipient lacks reviewed distinct-child proof
+- **WHEN** message preparation provides a source delivery handle without the reviewed exact different native child/execution chain
+- **THEN** issue #27 stays Planned and actual native same-profile communication plus #18 acceptance stays pending; no profile-inequality deletion, mock graph or portable receipt substitutes for genuine Root-held identity and Pi effect/denial/recovery evidence.
