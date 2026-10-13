@@ -136,7 +136,8 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
     return response.status === 204 ? {} : response.json();
   }
   function field(name) { return form.elements.namedItem(name); }
-  const normalizeProjectText = value => value.replace(/^[\s\x1c-\x1f\x85]+|[\s\x1c-\x1f\x85]+$/g, '');
+  const normalizeProjectText = value => value.replace(/^[\t\n\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t\n\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g, '');
+  const validNoteId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,96}$/.test(value);
   function clearPreview(message = '') {
     previewRevision += 1;
     notePreview.hidden = true; previewTitle.textContent = 'Note preview';
@@ -186,7 +187,7 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
   }
   function changeNoteSelection(noteId, add) {
     if (!isCurrent() || savePending || uncertainSave
-        || (add && (!vaultNotes.has(noteId) || selectedNoteIds.size >= 50))) return;
+        || (add && (!validNoteId(noteId) || !vaultNotes.has(noteId) || selectedNoteIds.size >= 50))) return;
     if (add) selectedNoteIds.add(noteId); else selectedNoteIds.delete(noteId);
     selectionRevision += 1;
     clearPreview('Preview again after changing selected notes.');
@@ -202,7 +203,7 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
     form.elements.instructions.value = project ? project.instructions : '';
     form.elements.sharedMemory.value = project ? project.sharedMemory : '';
     selectedNoteIds = new Set(Array.isArray(project && project.obsidianNoteIds)
-      ? project.obsidianNoteIds.filter(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,96}$/.test(id)) : []);
+      ? project.obsidianNoteIds.filter(validNoteId) : []);
     renderSelectedNotes(); renderNoteRows();
     $('[data-editor-title]').textContent = project ? 'Project settings' : 'Create a project';
     save.textContent = project ? 'Save changes' : 'Create project';
@@ -333,7 +334,7 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
       if (!data || !Array.isArray(data.notes)
           || (data.nextCursor !== null && typeof data.nextCursor !== 'string')) throw new Error('Invalid owner note page.');
       const valid = data.notes.filter(note => note && typeof note.noteId === 'string'
-        && /^[A-Za-z0-9_-]{1,96}$/.test(note.noteId) && typeof note.title === 'string');
+        && validNoteId(note.noteId) && typeof note.title === 'string');
       for (const note of valid) vaultNotes.set(note.noteId, note);
       const rows = append ? noteRows.slice() : [];
       const seen = new Set(rows.map(note => note.noteId));
@@ -361,8 +362,7 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
     }
   }
   async function previewNote(noteId) {
-    if (!isCurrent() || savePending || uncertainSave || typeof noteId !== 'string'
-        || !/^[A-Za-z0-9_-]{1,96}$/.test(noteId)) return;
+    if (!isCurrent() || savePending || uncertainSave || !validNoteId(noteId)) return;
     const requestRevision = ++previewRevision;
     const projectId = selected && selected.id || null, projectRevision = selectionRevision;
     const expected = vaultNotes.get(noteId);
@@ -408,10 +408,11 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
   noteBrowse.addEventListener('click', () => { noteQuery.value = ''; void loadNotePage('recent', '', null, false); }, {signal});
   retryNotes.addEventListener('click', () => { void loadNotePage(noteMode, noteSearchText, null, false); }, {signal});
   noteMore.addEventListener('click', () => { void loadNotePage(noteMode, noteSearchText, noteCursor, true); }, {signal});
-  cancel.addEventListener('click', () => {
+  function cancelProjectDraft() {
     if (!isCurrent() || savePending || uncertainSave) return;
     selectProject(selected); text(status, 'Changes discarded.');
-  }, {signal});
+  }
+  cancel.addEventListener('click', cancelProjectDraft, {signal});
   newProject.addEventListener('click', () => { if (!isCurrent() || savePending || uncertainSave) return; selectProject(null); form.elements.title.focus(); }, {signal});
   async function submitSnapshot(snapshot) {
     if (!isCurrent() || savePending) return;
@@ -446,7 +447,7 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
       }
     }
   }
-  form.addEventListener('submit', event => {
+  function submitCurrentProject(event) {
     event.preventDefault(); if (!isCurrent() || savePending || uncertainSave) return;
     const payload = {title:normalizeProjectText(form.elements.title.value),
       instructions:normalizeProjectText(form.elements.instructions.value),
@@ -454,11 +455,12 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
     if (payload.obsidianNoteIds.length > 50) { text(status, 'A project can link at most 50 notes. Remove extra links before saving.'); return; }
     const target = selected;
     if (target) payload.version = target.version;
-    void submitSnapshot({payload, projectId:target && target.id || null,
+    return submitSnapshot({payload, projectId:target && target.id || null,
       path:target ? '/chat/api/projects/' + encodeURIComponent(target.id) : '/chat/api/projects',
       key:key(), revision:selectionRevision});
-  }, {signal});
-  saveRecovery.addEventListener('click', async () => {
+  }
+  form.addEventListener('submit', submitCurrentProject, {signal});
+  async function resolveSaveResult() {
     if (!isCurrent() || savePending || !uncertainSave) return;
     const snapshot = uncertainSave;
     if (!snapshot.projectId) { await submitSnapshot(snapshot); return; }
@@ -488,7 +490,8 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
     } finally {
       if (isCurrent()) { savePending = false; save.disabled = Boolean(uncertainSave); saveRecovery.hidden = !uncertainSave; saveRecovery.disabled = false; }
     }
-  }, {signal});
+  }
+  saveRecovery.addEventListener('click', resolveSaveResult, {signal});
   archive.addEventListener('click', async () => {
     if (!isCurrent() || !selected || savePending || uncertainSave) return;
     if (!window.confirm('Move this project to Trash? Its chats and note links stay saved, Obsidian notes remain in your vault, and project context pauses until you restore it.')) return;
