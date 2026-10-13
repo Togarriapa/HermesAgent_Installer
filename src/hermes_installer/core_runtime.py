@@ -5236,6 +5236,58 @@ def _bind_resources_record_to_starting_journal(record,journal_raw):
  result["core_ownership_sha256"]=hashlib.sha256(journal_raw).hexdigest()
  return result
 
+def _bind_resources_record_to_final_journal(record,final_journal_raw):
+ """Bind only the verified A1 readback to the exact active derivative of J_s."""
+ guarded=_GUARDED_NEW_READ_CONTEXT.get()
+ if (os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+     or guarded is None or guarded.purpose!="resources-readback"
+     or guarded.phase!="bindings-verified" or not _validate_guarded_new_read(guarded)):
+  raise CoreRuntimeError("final Resources binding has no current guarded new-source read")
+ cohort,cohort_raw=_read_adapter_update_cohort()
+ journal_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+ try:
+  starting=json.loads(journal_raw); final=json.loads(final_journal_raw)
+  current_resources=json.loads(resources_raw)
+ except (ValueError,TypeError):
+  raise CoreRuntimeError("final Resources/source join is malformed") from None
+ if (type(cohort) is not dict or cohort.get("phase")!="bindings-verified"
+     or cohort.get("reconstruction",{}).get("phase")!="bindings-verified"
+     or cohort.get("cohort_transaction_id")!=guarded.cohort_transaction_id
+     or hashlib.sha256(cohort_raw).hexdigest()!=guarded.cohort_sha256
+     or hashlib.sha256(journal_raw).hexdigest()!=guarded.starting_journal_sha256
+     or hashlib.sha256(resources_raw).hexdigest()!=guarded.starting_resources_record_sha256
+     or type(starting) is not dict or type(final) is not dict
+     or starting.get("adapter_update_state")!="starting"):
+  raise CoreRuntimeError("final Resources binding does not match the current bindings-verified tuple")
+ expected=dict(starting); expected["adapter_update_state"]="active"
+ if final_journal_raw!=_canonical_json(expected):
+  raise CoreRuntimeError("final Core journal is not the exact active derivative of J_s")
+ source=str(ADAPTER_SOURCE)
+ if (starting.get("state") not in {"installed","active"}
+     or starting.get("adapter_migration_state")!="active"
+     or starting.get("adapter_source")!=source
+     or starting.get("adapter_generation")!=cohort.get("new_adapter_generation")
+     or starting.get("core_source_generation")!=cohort.get("new_core_source_generation")
+     or starting.get("adapter_update_cohort_transaction_id")!=cohort.get("cohort_transaction_id")
+     or starting.get("adapter_update_target_source")!=source
+     or starting.get("adapter_update_target_generation")!=cohort.get("new_adapter_generation")
+     or starting.get("adapter_update_previous_source")!=cohort.get("old_source")
+     or starting.get("unit_sha256")!=cohort.get("new_unit_sha256")
+     or starting.get("launcher_sha256")!=cohort.get("new_launcher_sha256")
+     or type(record) is not dict or type(current_resources) is not dict
+     or record.get("state")!="discovered" or record.get("functional") is not False
+     or record.get("enabled") is not False or record.get("target_verified") is not False
+     or record.get("core_source_generation")!=cohort.get("new_core_source_generation")
+     or record.get("artifact_sha256")!=cohort.get("new_artifact_sha256")
+     or current_resources.get("core_ownership_sha256")!=hashlib.sha256(journal_raw).hexdigest()
+     or {key:value for key,value in record.items() if key!="observed_at_utc"}
+        !={key:value for key,value in current_resources.items() if key!="observed_at_utc"}):
+  raise CoreRuntimeError("final A1 Resources readback differs from the current owned starting receipt")
+ result=dict(record)
+ result["core_ownership_sha256"]=hashlib.sha256(final_journal_raw).hexdigest()
+ return result
+
 def _adapter_update_current_resource_payload(*,overlay_snapshot,reconstruction):
  """Run the fixed native loader and prove A1 while the old process is still held."""
  overlay_record,contents,overlay_raw=overlay_snapshot
@@ -6321,10 +6373,25 @@ def _update_owned_core_adapter_locked():
   recon=dict(cohort["reconstruction"]); recon["phase"]="bindings-verified"
   cohort["reconstruction"]=recon; cohort["reconstruction_sha256"]=hashlib.sha256(_canonical_json(recon)).hexdigest()
   cohort_raw=_write_adapter_update_cohort(cohort,expected_raw=cohort_raw)
-  final={key:value for key,value in starting.items()}
-  final["adapter_update_state"]="active"
-  final_raw=(json.dumps(final,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
-  final_resources=_bind_resources_record_to_starting_journal(actual_resources,final_raw)
+  final_cohort,final_cohort_raw=_read_adapter_update_cohort()
+  final_starting_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+  final_starting_resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,
+   group=ROOT_UID,mode=0o600,maximum=16*1024)
+  if (final_cohort_raw!=cohort_raw or final_starting_raw!=starting_raw
+      or final_starting_resources_raw!=starting_resources_raw):
+   raise CoreRuntimeError("final Resources binding inputs changed before the active transition")
+  final_starting=json.loads(final_starting_raw)
+  final_read=_issue_guarded_new_read(cohort=final_cohort,cohort_raw=final_cohort_raw,
+   record=final_starting,journal_raw=final_starting_raw,
+   resources_raw=final_starting_resources_raw,unit=new_unit,launcher=new_launcher,
+   pidfd=new_pidfd,pid=new_pid,process_identity_sha256=new_process_sha,
+   purpose="resources-readback")
+  state["new_read"]=final_read
+  with _guarded_new_read_scope(final_read,purpose="resources-readback"):
+   final={key:value for key,value in final_starting.items()}
+   final["adapter_update_state"]="active"
+   final_raw=_canonical_json(final)
+   final_resources=_bind_resources_record_to_final_journal(actual_resources,final_raw)
   final_resources_raw=(json.dumps(final_resources,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
   # Record both exact final bytes before replacing either file. The startup
   # gate still admits only J_s/R_s until C reaches committed.

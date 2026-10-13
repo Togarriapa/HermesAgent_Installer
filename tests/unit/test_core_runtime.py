@@ -2256,6 +2256,68 @@ def test_unwritten_initial_primary_rollback_requires_original_soul_inode_and_sig
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
+def test_final_resources_binding_accepts_only_exact_active_derivative_of_verified_starting_tuple(
+        tmp_path, monkeypatch, request):
+    _unit, cohort, journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request)
+    monkeypatch.setattr(core, "ADAPTER_SOURCE", Path(cohort["new_source"]))
+    starting = json.loads(journal_raw)
+    cohort["phase"] = "bindings-verified"
+    reconstruction = dict(cohort["reconstruction"])
+    reconstruction["phase"] = "bindings-verified"
+    cohort["reconstruction"] = reconstruction
+    cohort["reconstruction_sha256"] = hashlib.sha256(
+        core._canonical_json(reconstruction)).hexdigest()
+    cohort_raw = core._canonical_json(cohort)
+    resources = {
+        "schema": 3, "state": "discovered", "functional": False,
+        "enabled": False, "target_verified": False,
+        "core_source_generation": cohort["new_core_source_generation"],
+        "core_ownership_sha256": hashlib.sha256(journal_raw).hexdigest(),
+        "artifact_sha256": cohort["new_artifact_sha256"],
+        "resources_revision": "reviewed-revision", "resources_tree": "a" * 40,
+        "inventory": [{"path": "profiles/master.md", "sha256": "1" * 64}],
+        "observed_at_utc": "2026-10-13T00:00:00Z",
+    }
+    resources_raw = core._canonical_json(resources)
+    final = dict(starting)
+    final["adapter_update_state"] = "active"
+    final_raw = core._canonical_json(final)
+    guard = SimpleNamespace(
+        purpose="resources-readback", phase="bindings-verified",
+        cohort_transaction_id=cohort["cohort_transaction_id"],
+        cohort_sha256=hashlib.sha256(cohort_raw).hexdigest(),
+        starting_journal_sha256=hashlib.sha256(journal_raw).hexdigest(),
+        starting_resources_record_sha256=hashlib.sha256(resources_raw).hexdigest(),
+    )
+    monkeypatch.setattr(core, "_ADAPTER_UPDATE_LOCK_HELD",
+                        SimpleNamespace(get=lambda: True))
+    monkeypatch.setattr(core, "_GUARDED_NEW_READ_CONTEXT",
+                        SimpleNamespace(get=lambda: guard))
+    monkeypatch.setattr(core, "_validate_guarded_new_read", lambda value: value is guard)
+    monkeypatch.setattr(core, "_read_adapter_update_cohort", lambda: (cohort, cohort_raw))
+    monkeypatch.setattr(core, "_projection_file", lambda path, **_kwargs:
+                        journal_raw if path == core.JOURNAL else resources_raw)
+
+    readback = dict(resources, observed_at_utc="2026-10-13T00:00:01Z")
+    bound = core._bind_resources_record_to_final_journal(readback, final_raw)
+    assert bound == dict(readback,
+                         core_ownership_sha256=hashlib.sha256(final_raw).hexdigest())
+    with pytest.raises(core.CoreRuntimeError, match="starting source journal"):
+        core._bind_resources_record_to_starting_journal(readback, final_raw)
+    with pytest.raises(core.CoreRuntimeError, match="exact active derivative"):
+        altered = dict(final, adapter_update_target_generation="f" * 64)
+        core._bind_resources_record_to_final_journal(
+            readback, core._canonical_json(altered))
+    with pytest.raises(core.CoreRuntimeError, match="A1 Resources readback"):
+        altered_readback = dict(readback, inventory=[])
+        core._bind_resources_record_to_final_journal(altered_readback, final_raw)
+    monkeypatch.setattr(core, "_validate_guarded_new_read", lambda _value: False)
+    with pytest.raises(core.CoreRuntimeError, match="current guarded new-source read"):
+        core._bind_resources_record_to_final_journal(readback, final_raw)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
 def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resources(
         tmp_path, monkeypatch, request):
     unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(
