@@ -284,7 +284,7 @@ def test_extensions_feature_asset_uses_only_fixed_routes():
 def test_extensions_mount_unmount_remount_owns_one_submit_and_ignores_late_results():
     harness = r'''
 class Target {
-  constructor() { this.listeners = new Map(); this.children = []; this.disabled = false; this.textContent = ''; }
+  constructor(tagName = 'div') { this.tagName = tagName; this.listeners = new Map(); this.children = []; this.disabled = false; this.textContent = ''; this.value = ''; }
   addEventListener(type, listener, options = {}) {
     if (options.signal && options.signal.aborted) return;
     const entry = {listener, once: options.once === true};
@@ -299,23 +299,35 @@ class Target {
       await entry.listener(event);
     }
   }
-  append(...nodes) { this.children.push(...nodes); }
+  append(...nodes) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
   replaceChildren(...nodes) { this.children = [...nodes]; }
-  remove() { this.removed = true; }
-  querySelector(selector) { return this.selectors.get(selector); }
-  reset() { this.resetCount = (this.resetCount || 0) + 1; }
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter(node => node !== this); this.removed = true; }
+  querySelector(selector) {
+    if (this.selectors instanceof Map && this.selectors.has(selector)) return this.selectors.get(selector);
+    const wanted = selector.toLowerCase();
+    const visit = node => { for (const child of node.children || []) { if (child.tagName === wanted) return child; const found = visit(child); if (found) return found; } return null; };
+    return visit(this);
+  }
+  reset() { this.resetCount = (this.resetCount || 0) + 1; const input = this.querySelector('input'); if (input) input.value = ''; }
 }
 const root = new Target(); root.selectors = new Map();
 const list = new Target(), status = new Target(), refresh = new Target();
-const skillForm = new Target(); skillForm.value = 'web-facts';
+const search = new Target('input'), kindFilter = new Target('select'), inventoryCount = new Target();
+const emptyState = new Target('p'), noMatch = new Target('p'); kindFilter.value='all';
+function makeAddForm(value = '') { const form = new Target('form'), input = new Target('input'), button = new Target('button'); input.value = value; form.append(input, button); return form; }
+const skillForm = makeAddForm('web-facts');
 for (const [selector, element] of [
   ['[data-extension-list]', list], ['[data-extension-status]', status],
   ['[data-extension-refresh]', refresh], ['[data-add-skill]', skillForm],
-  ['[data-add-plugin]', new Target()], ['[data-add-mcp]', new Target()]
+  ['[data-inventory-search]',search], ['[data-inventory-kind]',kindFilter],
+  ['[data-inventory-count]',inventoryCount], ['[data-inventory-empty]',emptyState], ['[data-inventory-no-match]',noMatch],
+  ['[data-add-plugin]', makeAddForm()], ['[data-add-mcp]', makeAddForm()]
 ]) root.selectors.set(selector, element);
+root.append(list, status, refresh, search,kindFilter,inventoryCount,emptyState,noMatch,
+  ...['[data-add-skill]', '[data-add-plugin]', '[data-add-mcp]'].map(selector => root.selectors.get(selector)));
 root.querySelector = (selector) => selector === '[data-feature-root="extensions"]' ? root : Target.prototype.querySelector.call(root, selector);
 global.document = {createElement: () => new Target()};
-global.FormData = class { constructor(form) { this.form = form; } get(key) { return key === 'identifier' ? this.form.value : null; } };
+global.FormData = class { constructor(form) { this.form = form; } get(key) { return key === 'identifier' ? (this.form.querySelector('input') || {}).value || '' : null; } };
 global.window = {prompt: (message) => (message.match(/Type (.+) to confirm/) || [])[1] || null, confirm: () => true};
 global.crypto = {getRandomValues: (bytes) => { bytes.fill(7); return bytes; }};
 global.btoa = (value) => Buffer.from(value, 'binary').toString('base64');
@@ -345,13 +357,15 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
   unmountSecond(); releasePost({status: 'applied'}); await submission; await flush();
   assert.equal(status.textContent, pendingStatus, 'a late mutation result cannot update an unmounted view');
   assert.equal(gets, 2, 'inactive mutation completion does not launch another inventory read');
+  console.log('EXTENSIONS_REMOUNT_HARNESS_COMPLETE');
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 '''
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "extensions-mount-harness.js"
         path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
-        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=15)
     assert result.returncode == 0, result.stderr
+    assert "EXTENSIONS_REMOUNT_HARNESS_COMPLETE" in result.stdout, "remount lifecycle scenarios did not complete"
 
 
 def test_extensions_deferred_actions_keep_exact_source_and_require_readback_recovery():
@@ -390,20 +404,27 @@ function button(root,label) { return all(root).find(node=>node.tagName==='button
 function makeSnapshot(revision) { return {schema:1,revision,readiness:'observed',items:[{
   kind:'skills',id:'owner-skill-id',name:'owner-helper',label:'Owner helper',source:'useradded',
   originLabel:'Hermes home (owner-added)',editable:true,removable:true,loaded:true,category:'native',
+  sha256:'c251e4e41cc0cc6aaed00d812833172df2dbaa5db63d02d3c0a6a1e2c1e15863',
   actionState:'loaded',archivedVersions:[]}]}; }
 function makeRoot() {
   const root=new Target(); root.selectors=new Map();
   const list=new Target(),status=new Target(),refresh=new Target('button'); refresh.textContent='Refresh';
-  root.append(list,status,refresh);
+  const search=new Target('input'),kindFilter=new Target('select'),inventoryCount=new Target(),emptyState=new Target('p'),noMatch=new Target('p'); kindFilter.value='all';
+  root.append(list,status,refresh,search,kindFilter,inventoryCount,emptyState,noMatch);
   root.selectors.set('[data-extension-list]',list); root.selectors.set('[data-extension-status]',status);
   root.selectors.set('[data-extension-refresh]',refresh);
+  root.selectors.set('[data-inventory-search]',search);root.selectors.set('[data-inventory-kind]',kindFilter);
+  root.selectors.set('[data-inventory-count]',inventoryCount);root.selectors.set('[data-inventory-empty]',emptyState);root.selectors.set('[data-inventory-no-match]',noMatch);
   for (const key of ['skill','plugin','mcp']) {
     const form=new Target('form'),input=new Target('input'),submit=new Target('button'); submit.textContent='Add';
     form.append(input,submit); root.selectors.set(`[data-add-${key}]`,form); root.append(form);
   }
   root.selectors.set('[data-feature-root="extensions"]',root);
-  return {root,list,status,refresh};
+  return {root,list,status,refresh,search,kindFilter,inventoryCount,emptyState,noMatch};
 }
+function sourceFile() { return {name:'owner-helper',content:'Captured current skill source',
+  sha256:'c251e4e41cc0cc6aaed00d812833172df2dbaa5db63d02d3c0a6a1e2c1e15863',
+  sourceGeneration:'d'.repeat(64),effective:true}; }
 function makeApi() {
   const gets=[],posts=[];
   return {gets,posts,get(path) { const d=deferred(); gets.push({path,...d}); return d.promise; },
@@ -414,6 +435,7 @@ global.FormData=class { constructor(form) { this.form=form; } get(key) { return 
 global.window={prompt:message=>{const match=message.match(/^Type (.+) to confirm/);return match?match[1]:null;},confirm:()=>true};
 global.crypto={getRandomValues:bytes=>{bytes.fill(5);return bytes;}};
 global.btoa=value=>Buffer.from(value,'binary').toString('base64');
+MOUNT
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
   const view=makeRoot(),api=makeApi(),unmount=mount(view.root,api);
@@ -428,14 +450,14 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
   view.refresh.dispatch('click');
   assert.equal(view.refresh.disabled,true);
   api.gets[1].resolve(makeSnapshot('source-2')); await flush();
-  api.posts[0].resolve({content:'old reviewed source'}); await oldRead;
+  api.posts[0].resolve(sourceFile()); await oldRead;
   assert.equal(all(view.root).filter(node=>node.tagName==='dialog').length,0);
   assert.match(view.status.textContent,/inventory changed while the skill was loading/);
   assert.equal(api.posts.length,1,'a stale file read never becomes an edit request');
 
   // Refreshing while the editor is open must reject its old source, never substitute source-3.
   const openedRead=button(view.root,'Edit skill').dispatch('click');
-  api.posts[1].resolve({content:'source-2 body'}); await openedRead;
+  api.posts[1].resolve(sourceFile()); await openedRead;
   const dialog=all(view.root).find(node=>node.tagName==='dialog');
   assert.ok(dialog && dialog.open);
   view.refresh.dispatch('click'); api.gets[2].resolve(makeSnapshot('source-3')); await flush();
@@ -445,7 +467,7 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
   // One confirmed edit serializes the whole UI; an uncertain outcome waits for explicit readback.
   const currentRead=button(view.root,'Edit skill').dispatch('click');
-  api.posts[2].resolve({content:'source-3 body'}); await currentRead;
+  api.posts[2].resolve(sourceFile()); await currentRead;
   const currentDialog=all(view.root).find(node=>node.tagName==='dialog');
   const area=all(currentDialog).find(node=>node.tagName==='textarea'); area.value='reviewed source-3 edit';
   const save=button(currentDialog,'Save skill').dispatch('click'); await flush();
@@ -469,10 +491,19 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
   // A rejected mutation remains unknown and cannot auto-retry; explicit refresh recovers actions.
   const nextRead=button(view.root,'Edit skill').dispatch('click');
-  api.posts[4].resolve({content:'source-4 body'}); await nextRead;
+  api.posts[4].resolve(sourceFile()); await nextRead;
   const nextDialog=all(view.root).find(node=>node.tagName==='dialog');
+  const nextArea=all(nextDialog).find(node=>node.tagName==='textarea');
+  await button(nextDialog,'Save skill').dispatch('click');
+  assert.equal(api.posts.length,5,'unchanged captured source is refused before POST');
+  nextArea.value='distinct proposed source-4 edit';
   const failingSave=button(nextDialog,'Save skill').dispatch('click'); await flush();
+  assert.equal(api.posts[5].path,'/chat/api/extensions/skills/edit');
+  assert.deepEqual(Object.keys(api.posts[5].body).sort(),['confirmation','content','idempotency_key','item_id','revision']);
+  assert.equal(api.posts[5].body.item_id,'owner-skill-id');
+  assert.equal(api.posts[5].body.content,'distinct proposed source-4 edit');
   assert.equal(api.posts[5].body.revision,'source-4');
+  assert.equal(api.posts.length,6,'only the distinct reviewed edit produces the deferred mutation');
   api.posts[5].reject(new Error('write response lost')); await failingSave;
   assert.match(view.status.textContent,/outcome is unknown/);
   assert.equal(api.gets.length,4,'uncertain write does not launch an automatic read or repeat effect');
@@ -494,13 +525,15 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
   api.posts[7].resolve({content:'late body'}); await lateRead;
   assert.equal(all(view.root).filter(node=>node.tagName==='dialog').length,0);
   assert.equal(view.status.textContent,statusAtUnmount);
+  console.log('EXTENSIONS_SOURCE_REVISION_HARNESS_COMPLETE');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''.replace('MOUNT', FEATURE_ASSETS.mount_js)
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "extensions-source-revision-harness.js"
         path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
-        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=15)
     assert result.returncode == 0, result.stderr
+    assert "EXTENSIONS_SOURCE_REVISION_HARNESS_COMPLETE" in result.stdout, "source revision scenarios did not complete"
 
 
 def test_plugin_settings_form_is_typed_exact_and_revision_bound():
@@ -548,8 +581,10 @@ function validSettings() { return [
 function makeRoot() {
   const root=new Target(); root.selectors=new Map();
   const list=new Target(),status=new Target(),refresh=new Target('button'); refresh.textContent='Refresh';
-  root.append(list,status,refresh);
+  const search=new Target('input'),kindFilter=new Target('select'),inventoryCount=new Target(),emptyState=new Target('p'),noMatch=new Target('p'); kindFilter.value='all';
+  root.append(list,status,refresh,search,kindFilter,inventoryCount,emptyState,noMatch);
   root.selectors.set('[data-extension-list]',list); root.selectors.set('[data-extension-status]',status); root.selectors.set('[data-extension-refresh]',refresh);
+  root.selectors.set('[data-inventory-search]',search);root.selectors.set('[data-inventory-kind]',kindFilter);root.selectors.set('[data-inventory-count]',inventoryCount);root.selectors.set('[data-inventory-empty]',emptyState);root.selectors.set('[data-inventory-no-match]',noMatch);
   for (const key of ['skill','plugin','mcp']) { const form=new Target('form'),input=new Target('input'),submit=new Target('button'); form.append(input,submit); root.selectors.set(`[data-add-${key}]`,form); root.append(form); }
   root.selectors.set('[data-feature-root="extensions"]',root); return {root,list,status,refresh};
 }
@@ -561,7 +596,7 @@ global.crypto={getRandomValues:bytes=>{bytes.fill(5);return bytes;}};
 global.btoa=value=>Buffer.from(value,'binary').toString('base64');
 MOUNT
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
-function editor(view) { return all(view.list).find(node=>node.tagName==='dialog'); }
+function editor(view) { return all(view.root).find(node=>node.tagName==='dialog'); }
 function field(dialog,key) { return all(dialog).find(node=>node.id && node.id===key); }
 function settingInput(dialog,index) { return all(dialog).find(node=>node.id===`extension-setting-${index}`); }
 function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form'); form.dispatch('submit',{preventDefault(){this.prevented=true;}}); }
@@ -640,3 +675,100 @@ function submit(dialog) { const form=all(dialog).find(node=>node.tagName==='form
         result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=15)
     assert result.returncode == 0, result.stderr
     assert "PLUGIN_SETTINGS_HARNESS_COMPLETE" in result.stdout, "deferred plugin settings scenarios did not complete"
+
+
+def test_extensions_inventory_source_review_and_archive_restore_are_exact_and_recoverable():
+    harness = r'''
+class Target {
+  constructor(tagName='div') { this.tagName=tagName; this.listeners=new Map(); this.children=[]; this.disabled=false; this.hidden=false; this.textContent=''; this.value=''; this.attributes={}; this.open=false; }
+  append(...nodes) { for(const node of nodes){node.parent=this;this.children.push(node);} }
+  replaceChildren(...nodes) { this.children=[];this.append(...nodes); }
+  remove() { if(this.parent)this.parent.children=this.parent.children.filter(node=>node!==this);this.removed=true; }
+  setAttribute(key,value) { this.attributes[key]=value; }
+  addEventListener(type,listener,options={}) { if(options.signal&&options.signal.aborted)return;const e={listener,once:options.once===true},rows=this.listeners.get(type)||[];rows.push(e);this.listeners.set(type,rows);if(options.signal)options.signal.addEventListener('abort',()=>this.listeners.set(type,(this.listeners.get(type)||[]).filter(x=>x!==e)),{once:true}); }
+  dispatch(type,event={}) { for(const e of [...(this.listeners.get(type)||[])]){if(e.once)this.listeners.set(type,(this.listeners.get(type)||[]).filter(x=>x!==e));const value=e.listener(event);if(value&&typeof value.then==='function')return value;} }
+  querySelector(selector) { if(this.selectors&&this.selectors.has(selector))return this.selectors.get(selector);const wanted=selector.toLowerCase(),visit=n=>{for(const c of n.children||[]){if(c.tagName===wanted)return c;const r=visit(c);if(r)return r;}return null;};return visit(this); }
+  showModal(){this.open=true;} close(){this.open=false;this.dispatch('close');} focus(){global.document.activeElement=this;} reset(){}
+}
+function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
+function all(node){return[node,...node.children.flatMap(all)];}
+function button(node,label){return all(node).find(n=>n.tagName==='button'&&n.textContent===label);}
+function card(node,label){return all(node).find(n=>n.tagName==='article'&&all(n).some(x=>x.tagName==='h3'&&x.textContent===label));}
+const DIGEST='c251e4e41cc0cc6aaed00d812833172df2dbaa5db63d02d3c0a6a1e2c1e15863',VERSION='f'.repeat(64),RESTORE='restore-token_0123456789';
+const versions65=Array.from({length:65},(_,i)=>({restoreId:`archive-version-${String(i).padStart(2,'0')}`,sha256:i.toString(16).padStart(64,'0')}));
+const versions4097=Array.from({length:4097},(_,i)=>({restoreId:`archive-version-${String(i).padStart(4,'0')}`,sha256:i.toString(16).padStart(64,'0')}));
+function inventory(revision){return{schema:1,revision,readiness:'observed',items:[
+ {kind:'skills',id:'owner-skill-id',name:'owner-helper',label:'Owner helper',source:'useradded',originLabel:'Hermes home (owner-added)',editable:true,removable:true,sha256:DIGEST,category:'native',actionState:'loaded',archivedVersions:[]},
+ {kind:'skills',id:'resource-skill-id',name:'resource-helper',label:'Resource helper',source:'bundledResources',originLabel:'Resources (owner overlay)',editable:true,removable:true,sha256:DIGEST,category:'native',actionState:'loaded',archivedVersions:[{restoreId:'listed-id-012345678901',sha256:VERSION}]},
+ {kind:'plugins',id:'plugin-id',name:'owner-plugin',label:'Owner plugin',source:'useradded',editable:false,removable:false,version:'1.0',state:'enabled'},
+ {kind:'mcps',id:'mcp-id',name:'github',label:'GitHub server',source:'unknown',editable:false,removable:false,transport:'http',enabled:true}]};}
+function view(){const root=new Target();root.selectors=new Map();const list=new Target(),status=new Target(),refresh=new Target('button'),search=new Target('input'),kind=new Target('select'),count=new Target(),empty=new Target('p'),none=new Target('p');kind.value='all';empty.textContent='No native Skills, Plugins, or MCP servers are currently reported.';empty.hidden=true;none.hidden=true;root.append(list,status,refresh,search,kind,count,empty,none);
+ for(const [s,n] of [['[data-extension-list]',list],['[data-extension-status]',status],['[data-extension-refresh]',refresh],['[data-inventory-search]',search],['[data-inventory-kind]',kind],['[data-inventory-count]',count],['[data-inventory-empty]',empty],['[data-inventory-no-match]',none]])root.selectors.set(s,n);
+ for(const key of ['skill','plugin','mcp']){const form=new Target('form'),input=new Target('input'),submit=new Target('button');form.append(input,submit);root.selectors.set(`[data-add-${key}]`,form);root.append(form);}root.selectors.set('[data-feature-root="extensions"]',root);return{root,list,status,refresh,search,kind,count,empty,none};}
+function api(){const gets=[],posts=[];return{gets,posts,get(path){const d=deferred();gets.push({path,...d});return d.promise;},post(path,body){const d=deferred();posts.push({path,body,...d});return d.promise;}};}
+global.document={activeElement:null,createElement:tag=>new Target(tag)};global.FormData=class{constructor(form){this.form=form;}get(){return null;}};
+const confirmations=[];global.window={prompt:m=>{const p=(m.match(/^Type (.+) to confirm/)||[])[1];confirmations.push(p);return p;},confirm:()=>true};global.crypto={getRandomValues:b=>{b.fill(5);return b;}};global.btoa=v=>Buffer.from(v,'binary').toString('base64');
+const flush=()=>new Promise(resolve=>setImmediate(resolve)),source=()=>({name:'owner-helper',content:'Captured current skill source',sha256:DIGEST,sourceGeneration:'d'.repeat(64),effective:false});
+MOUNT
+(async()=>{
+ const v=view(),a=api(),unmount=mount(v.root,a);a.gets[0].resolve(inventory('rev-1'));await flush();
+ assert.equal(v.list.children.length,4);assert.match(v.count.textContent,/4 of 4/);
+ v.search.value='github';await v.search.dispatch('input');assert.equal(v.list.children.length,1);
+ v.search.value='no matching record';await v.search.dispatch('input');assert.equal(v.none.hidden,false);assert.equal(v.list.children.length,0);
+ v.search.value='';v.kind.value='skills';await v.kind.dispatch('change');assert.equal(v.list.children.length,2);
+ const read=button(card(v.list,'Owner helper'),'Edit skill').dispatch('click');assert.equal(a.posts[0].path,'/chat/api/extensions/skills/read');
+ assert.deepEqual(a.posts[0].body,{item_id:'owner-skill-id',revision:'rev-1'});a.posts[0].resolve(source());await read;
+ const edit=all(v.root).find(n=>n.tagName==='dialog'),before=all(edit).find(n=>n.tagName==='pre'),area=all(edit).find(n=>n.tagName==='textarea');
+ assert.equal(before.textContent,'Captured current skill source');assert.equal(area.value,before.textContent);
+ assert.match(all(edit).map(n=>n.textContent).join(' '),new RegExp(`Current SHA-256: ${DIGEST}`));
+ assert.match(all(edit).map(n=>n.textContent).join(' '),/Source generation: d{64}/);assert.match(all(edit).map(n=>n.textContent).join(' '),/Native effective readback: not confirmed/);
+ v.search.value='plugin';await v.search.dispatch('input');assert.equal(v.list.children.length,0);assert.equal(edit.open,true);
+ await button(edit,'Save skill').dispatch('click');assert.equal(a.posts.length,1,'unchanged captured text is refused before POST');
+ area.value='Reviewed owner-approved text';const save=button(edit,'Save skill').dispatch('click');await flush();
+ assert.equal(a.posts[1].path,'/chat/api/extensions/skills/edit');assert.deepEqual(Object.keys(a.posts[1].body).sort(),['confirmation','content','idempotency_key','item_id','revision']);
+ assert.equal(a.posts[1].body.content,'Reviewed owner-approved text');assert.equal(a.posts[1].body.revision,'rev-1');assert.equal(a.posts[1].body.confirmation,'EDIT Owner helper');
+ a.posts[1].resolve({status:'applied',result:{action:'edit'}});await flush();assert.equal(a.gets.length,2);a.gets[1].resolve(inventory('rev-2'));await save;
+ assert.match(v.status.textContent,/current inventory readback completed/);v.search.value='';v.kind.value='skills';await v.search.dispatch('input');await v.kind.dispatch('change');
+ const archiveRead=button(card(v.list,'Resource helper'),'Restore archived version').dispatch('click');assert.equal(a.posts[2].path,'/chat/api/extensions/skills/restore-list');
+ assert.deepEqual(a.posts[2].body,{item_id:'resource-skill-id',revision:'rev-2'});a.posts[2].resolve({skill:'Resource helper',versions:versions65});await archiveRead;
+ const oldDialog=all(v.root).find(n=>n.tagName==='dialog'&&n!==edit),select=all(oldDialog).find(n=>n.tagName==='select');assert.match(all(oldDialog).map(n=>n.textContent).join(' '),/Archive contents and dates are not exposed/);
+ assert.equal(all(select).filter(n=>n.tagName==='option').length,66,'all 65 native archive choices plus the placeholder are rendered');
+ select.value='64';select.dispatch('change');const oldRestore=button(oldDialog,'Review and restore');assert.equal(oldRestore.disabled,false);
+ const otherRead=button(card(v.list,'Owner helper'),'Edit skill').dispatch('click');assert.equal(a.posts[3].path,'/chat/api/extensions/skills/read');a.posts[3].resolve(source());await otherRead;
+ await oldRestore.dispatch('click');assert.equal(a.posts.length,4,'selection change invalidates the archive choice before restore');assert.match(v.status.textContent,/selected skill or inventory changed/);
+ const secondEdit=all(v.root).find(n=>n.tagName==='dialog'&&n!==edit&&n!==oldDialog);button(secondEdit,'Cancel').dispatch('click');button(oldDialog,'Cancel').dispatch('click');
+ const fresh=button(card(v.list,'Resource helper'),'Restore archived version').dispatch('click');assert.equal(a.posts[4].path,'/chat/api/extensions/skills/restore-list');
+ a.posts[4].resolve({skill:'Resource helper',versions:versions65});await fresh;
+ const current=all(v.root).find(n=>n.tagName==='dialog'&&n!==edit),currentSelect=all(current).find(n=>n.tagName==='select');currentSelect.value='64';currentSelect.dispatch('change');
+ const restore=button(current,'Review and restore').dispatch('click');await flush();assert.equal(a.posts.length,6);assert.equal(a.posts[5].path,'/chat/api/extensions/skills/restore');
+ assert.deepEqual(Object.keys(a.posts[5].body).sort(),['confirmation','idempotency_key','item_id','restore_id','restore_sha256','revision']);
+ const exact65=versions65[64];
+ assert.equal(a.posts[5].body.item_id,'resource-skill-id');assert.equal(a.posts[5].body.revision,'rev-2');assert.equal(a.posts[5].body.restore_id,exact65.restoreId);assert.equal(a.posts[5].body.restore_sha256,exact65.sha256);
+ assert.equal(a.posts[5].body.confirmation,`RESTORE Resource helper ${exact65.restoreId}`);assert.equal(confirmations.filter(x=>x===`RESTORE Resource helper ${exact65.restoreId}`).length,1);
+ a.posts[5].resolve({status:'applied',result:{action:'restore'}});await flush();assert.equal(a.gets.length,3);a.gets[2].resolve(inventory('rev-3'));await restore;
+ assert.match(v.status.textContent,/current inventory readback completed/);unmount();
+ const late=view(),la=api(),dispose=mount(late.root,la);la.gets[0].resolve(inventory('late-rev'));await flush();
+ const pending=button(card(late.list,'Resource helper'),'Restore archived version').dispatch('click'),oldStatus=late.status.textContent;dispose();
+ la.posts[0].resolve({skill:'Resource helper',versions:[{restoreId:RESTORE,sha256:VERSION}]});await pending;
+ assert.equal(all(late.root).filter(n=>n.tagName==='dialog').length,0);assert.equal(late.status.textContent,oldStatus);
+ const oversized=view(),oa=api(),oversizedCleanup=mount(oversized.root,oa);oa.gets[0].resolve(inventory('oversized-rev'));await flush();
+ const oversizedRead=button(card(oversized.list,'Resource helper'),'Restore archived version').dispatch('click');
+ oa.posts[0].resolve({skill:'Resource helper',versions:versions4097});await oversizedRead;
+ assert.equal(all(oversized.root).filter(n=>n.tagName==='dialog').length,0);assert.equal(oa.posts.length,1,'4,097 archive rows fail closed without a restore request');
+ assert.match(oversized.status.textContent,/Archived version identities are unavailable or malformed\. Refresh and retry\./);oversizedCleanup();
+ const bad=view(),ba=api(),badCleanup=mount(bad.root,ba);ba.gets[0].resolve(inventory('bad-rev'));await flush();
+ const badRead=button(card(bad.list,'Owner helper'),'Edit skill').dispatch('click');ba.posts[0].resolve({...source(),sha256:'0'.repeat(64)});await badRead;
+ assert.equal(all(bad.root).filter(n=>n.tagName==='dialog').length,0);assert.equal(ba.posts.length,1);
+ assert.match(bad.status.textContent,/provenance or digest is incomplete/);badCleanup();
+ const emptyView=view(),emptyApi=api(),emptyCleanup=mount(emptyView.root,emptyApi);emptyApi.gets[0].resolve({schema:1,revision:'empty',readiness:'observed',items:[]});await flush();
+ assert.equal(emptyView.empty.hidden,false);assert.equal(emptyView.list.children.length,0);assert.match(emptyView.empty.textContent,/No native Skills/);emptyCleanup();
+ console.log('EXTENSIONS_WORKBENCH_HARNESS_COMPLETE');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''.replace('MOUNT', FEATURE_ASSETS.mount_js)
+    assert "No native Skills, Plugins, or MCP servers are currently reported." in FEATURE_ASSETS.view_html
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "extensions-workbench-harness.js"
+        path.write_text("const assert = require('node:assert/strict');\n" + harness, encoding="utf-8")
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert "EXTENSIONS_WORKBENCH_HARNESS_COMPLETE" in result.stdout, "workbench scenarios did not complete"

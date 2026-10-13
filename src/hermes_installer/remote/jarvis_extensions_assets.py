@@ -15,7 +15,14 @@ _VIEW = '''<section class="extensions-page" data-feature-root="extensions" aria-
     <form data-add-plugin><h3>Add a plugin</h3><label>Curated catalog name<input name="catalog_name" maxlength="160" required autocomplete="off"></label><button>Add plugin</button></form>
     <form data-add-mcp><h3>Add an MCP server</h3><label>Official catalog name<input name="catalog_name" maxlength="160" required autocomplete="off"></label><button>Add MCP server</button><p>Credentials and custom commands are not collected here.</p></form>
   </div>
+  <section class="inventory-tools" aria-label="Filter native extension inventory">
+    <label>Search Skills, Plugins, and MCP servers<input type="search" data-inventory-search autocomplete="off"></label>
+    <label>Show<select data-inventory-kind><option value="all">All types</option><option value="skills">Skills</option><option value="plugins">Plugins</option><option value="mcps">MCP servers</option></select></label>
+    <p data-inventory-count role="status" aria-live="polite">Waiting for current inventory.</p>
+  </section>
   <div data-extension-list class="extension-list"></div>
+  <p data-inventory-empty hidden>No native Skills, Plugins, or MCP servers are currently reported.</p>
+  <p data-inventory-no-match hidden>No current inventory records match these filters.</p>
   <p class="extensions-note">Hermes stock skills are read-only. Resources skills are edited as owner overlays; archiving an overlay reveals the pinned base again. Hermes-home owner-added skills can be archived with a recoverable backup. Restore is available for listed archived versions. Custom MCP connection edits are unavailable in the pinned Hermes API.</p>
 </section>'''
 
@@ -24,21 +31,28 @@ _CSS = '''[data-feature-root="extensions"]{max-width:1100px;margin:0 auto;paddin
 [data-feature-root="extensions"] .extensions-kicker{margin:0 0 7px;color:var(--muted,#9bafb4);font-size:.72rem;letter-spacing:.14em}
 [data-feature-root="extensions"] h2{margin:0;font-size:clamp(1.5rem,3vw,2rem)}
 [data-feature-root="extensions"] p{color:var(--muted,#9bafb4);line-height:1.5}
-[data-feature-root="extensions"] button,[data-feature-root="extensions"] input{min-height:42px;padding:9px 12px;border:1px solid var(--border,#38515a);border-radius:9px;background:var(--panel,#0d1d23);color:inherit;font:inherit}
+[data-feature-root="extensions"] button,[data-feature-root="extensions"] input,[data-feature-root="extensions"] select{min-height:42px;padding:9px 12px;border:1px solid var(--border,#38515a);border-radius:9px;background:var(--panel,#0d1d23);color:inherit;font:inherit}
 [data-feature-root="extensions"] button{cursor:pointer}
-[data-feature-root="extensions"] button:focus-visible,[data-feature-root="extensions"] input:focus-visible{outline:2px solid var(--accent,#83d9ca);outline-offset:2px}
+[data-feature-root="extensions"] button:focus-visible,[data-feature-root="extensions"] input:focus-visible,[data-feature-root="extensions"] select:focus-visible{outline:2px solid var(--accent,#83d9ca);outline-offset:2px}
 [data-feature-root="extensions"] .extension-adds{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,235px),1fr));gap:12px;margin:18px 0}
 [data-feature-root="extensions"] form,.extension-card{padding:15px;border:1px solid var(--border,#294047);border-radius:12px;background:var(--panel,#0d1d23)}
 [data-feature-root="extensions"] form h3,.extension-card h3{margin:0 0 10px;font-size:1rem}
 [data-feature-root="extensions"] label{display:grid;gap:6px;margin:8px 0;color:var(--muted,#9bafb4);font-size:.83rem}
 [data-feature-root="extensions"] form button{margin-top:8px}
 [data-feature-root="extensions"] .extension-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));gap:10px}
+[data-feature-root="extensions"] .inventory-tools{display:grid;grid-template-columns:minmax(220px,1fr) minmax(150px,.35fr);align-items:end;gap:12px;margin:18px 0}
+[data-feature-root="extensions"] .inventory-tools label{margin:0}
+[data-feature-root="extensions"] .inventory-tools input,[data-feature-root="extensions"] .inventory-tools select{width:100%}
+[data-feature-root="extensions"] [data-inventory-search],[data-feature-root="extensions"] [data-inventory-kind]{min-width:44px;min-height:44px}
+[data-feature-root="extensions"] [data-inventory-count]{grid-column:1/-1;margin:0;font-size:.82rem}
+[data-feature-root="extensions"] [data-inventory-empty],[data-feature-root="extensions"] [data-inventory-no-match]{padding:18px;border:1px dashed var(--border,#38515a);border-radius:10px}
 [data-feature-root="extensions"] .extension-card p{margin:6px 0;font-size:.86rem;overflow-wrap:anywhere}
 [data-feature-root="extensions"] .extension-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 [data-feature-root="extensions"] .extension-note{font-size:.8rem}
 [data-feature-root="extensions"] dialog{width:min(760px,92vw);border:1px solid #3c858b;border-radius:10px;background:#0b1b20;color:#e4f3f3;padding:16px}
 [data-feature-root="extensions"] dialog::backdrop{background:rgba(0,0,0,.72)}
-[data-feature-root="extensions"] dialog textarea{width:100%;min-height:360px;resize:vertical;border:1px solid #315058;border-radius:6px;background:#061115;color:#e4f3f3;padding:12px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+[data-feature-root="extensions"] dialog textarea,[data-feature-root="extensions"] dialog pre{width:100%;min-height:150px;max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #315058;border-radius:6px;background:#061115;color:#e4f3f3;padding:12px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+[data-feature-root="extensions"] dialog textarea{min-height:260px;resize:vertical}
 [data-feature-root="extensions"] dialog .settings-fields{display:grid;gap:12px;margin:16px 0}
 [data-feature-root="extensions"] dialog .settings-field{display:grid;gap:6px}
 [data-feature-root="extensions"] dialog .settings-field label{color:#d7e7e9;font-size:.9rem}
@@ -48,16 +62,21 @@ _CSS = '''[data-feature-root="extensions"]{max-width:1100px;margin:0 auto;paddin
 [data-feature-root="extensions"] dialog .settings-error{margin:0;color:#ffb0b0;font-size:.82rem}
 [data-feature-root="extensions"] dialog [role="alert"]{padding:10px;border-left:3px solid #e59c58;background:rgba(229,156,88,.1)}
 [data-feature-root="extensions"] dialog .settings-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:16px}
-@media(max-width:600px){[data-feature-root="extensions"] .extensions-head{flex-direction:column}[data-feature-root="extensions"] .extensions-head button{width:100%}}'''
+@media(max-width:600px){[data-feature-root="extensions"] .extensions-head{flex-direction:column}[data-feature-root="extensions"] .extensions-head button{width:100%}[data-feature-root="extensions"] .inventory-tools{grid-template-columns:1fr}}'''
 
-_MOUNT = r'''function mount(container, api) {
+# Keep the reviewed source indented while dropping only line-leading JS whitespace from the fixed browser asset.
+_MOUNT = "\n".join(line.lstrip() for line in r'''function mount(container, api) {
   const root = container.querySelector('[data-feature-root="extensions"]') || container;
   const list = root.querySelector('[data-extension-list]'), status = root.querySelector('[data-extension-status]');
+  const search = root.querySelector('[data-inventory-search]'), kindFilter = root.querySelector('[data-inventory-kind]');
+  const inventoryCount = root.querySelector('[data-inventory-count]'), emptyState = root.querySelector('[data-inventory-empty]');
+  const noMatch = root.querySelector('[data-inventory-no-match]');
   const refresh = root.querySelector('[data-extension-refresh]');
   const lifecycle = new AbortController(), signal = lifecycle.signal, editors = new Set();
   const controls = new Set(), renderedControls = new Set(), settingsDialogControls = new Set();
   const forms = ['[data-add-skill]','[data-add-plugin]','[data-add-mcp]'].map(selector => root.querySelector(selector));
   let active = true, snapshot = null, busy = false, inventoryLoading = false, pendingSkillReads = 0;
+  let selectedSkillId = null, selectedSkillEpoch = 0;
   let settingsDialogOpen = false;
   let recoveryRequired = false, inventoryReadRevision = 0;
   const coreActionsBlocked = () => busy || inventoryLoading || pendingSkillReads > 0 || recoveryRequired || !snapshot;
@@ -82,7 +101,12 @@ _MOUNT = r'''function mount(container, api) {
   function sourceStillCurrent(item, sourceRevision) {
     return !!snapshot && snapshot.revision === sourceRevision && snapshot.items.some(candidate =>
       candidate && candidate.id === item.id && candidate.kind === item.kind
+        && candidate.name === item.name && candidate.sha256 === item.sha256
         && candidate.source === item.source && candidate.editable === item.editable);
+  }
+  function skillSelectionCurrent(item, sourceRevision, selectionEpoch) {
+    return active && selectedSkillId === item.id && selectedSkillEpoch === selectionEpoch
+      && sourceStillCurrent(item,sourceRevision);
   }
   const sensitiveSettingName = /(?:credential|secret|password|token|api[_ -]?key|private[_ -]?key|command|shell|path|file)/i;
   function safeSettingName(value, maximum) {
@@ -293,35 +317,48 @@ _MOUNT = r'''function mount(container, api) {
     if (item.kind === 'skills' && ['useradded','bundledResources'].includes(item.source) && item.editable) {
       const edit=text(actions,'button','Edit skill'); edit.type='button'; edit.addEventListener('click',async()=>{
         if (!active || actionsBlocked()) return;
+        selectedSkillId=item.id; const selectionEpoch=++selectedSkillEpoch;
         pendingSkillReads += 1; status.textContent='Reading current skill source…'; syncControls();
         try {
           const file=await api.post('/chat/api/extensions/skills/read',{item_id:item.id,revision:sourceRevision});
           if (!active) return;
-          if (!sourceStillCurrent(item, sourceRevision)) {
+          if (!skillSelectionCurrent(item,sourceRevision,selectionEpoch)) {
             status.textContent='The inventory changed while the skill was loading. Reopen the current skill before editing.';
+            return;
+          }
+          if (!file || file.name!==item.name || typeof file.content!=='string' || file.content.length>65536
+              || !/^[0-9a-f]{64}$/.test(file.sha256) || file.sha256!==item.sha256
+              || !/^[0-9a-f]{64}$/.test(file.sourceGeneration) || typeof file.effective!=='boolean') {
+            status.textContent='Current skill source provenance or digest is incomplete. Refresh before reviewing a write.';
             return;
           }
           const dialog=document.createElement('dialog'); dialog.setAttribute('aria-labelledby','extension-skill-edit-title');
           const form=document.createElement('form'); form.method='dialog';
           const heading=text(form,'h3',`Edit ${item.label}`); heading.id='extension-skill-edit-title';
-          const area=document.createElement('textarea'); area.value=file.content; area.maxLength=65536; area.rows=22; area.setAttribute('aria-label','Skill instructions'); controls.add(area);
+          const provenance=text(form,'p',`Source: ${item.originLabel||item.source} · Current SHA-256: ${file.sha256} · Source generation: ${file.sourceGeneration} · Native effective readback: ${file.effective?'confirmed':'not confirmed'}`);
+          provenance.className='settings-help';
+          text(form,'p','Review the exact captured source beside the proposed text. This editor is inert; no code or skill is run here.');
+          const beforeLabel=text(form,'h4','Captured source before');
+          const before=document.createElement('pre'); before.setAttribute('aria-label','Exact captured source before edit'); before.textContent=file.content;
+          const area=document.createElement('textarea'); area.value=file.content; area.maxLength=65536; area.rows=16; area.setAttribute('aria-label','Proposed source after edit; inert text editor'); controls.add(area);
           const save=document.createElement('button'); save.type='button'; save.textContent='Save skill'; controls.add(save);
           const cancel=document.createElement('button'); cancel.type='button'; cancel.textContent='Cancel'; controls.add(cancel);
-          form.append(area,save,cancel); dialog.append(form); root.append(dialog);
+          form.append(beforeLabel,before,text(form,'p','Proposed source after'),area,save,cancel); dialog.append(form); root.append(dialog);
           cancel.addEventListener('click',()=>dialog.close(),{signal});
           save.addEventListener('click',async()=>{
-            if (!active || actionsBlocked()) return;
-            if (!sourceStillCurrent(item, sourceRevision)) {
+            if (!skillSelectionCurrent(item,sourceRevision,selectionEpoch) || actionsBlocked()) {
               status.textContent='The inventory changed while this editor was open. Close it and reopen the current skill to review the current source before saving.';
               dialog.close(); dialog.remove(); editors.delete(dialog); return;
             }
-            const content=area.value; dialog.close(); dialog.remove(); editors.delete(dialog);
+            const content=area.value;
+            if (content===file.content) { status.textContent='No source changes to review or save.'; return; }
+            dialog.close(); dialog.remove(); editors.delete(dialog);
             await mutate('/chat/api/extensions/skills/edit',{item_id:item.id,content},`EDIT ${item.label}`,sourceRevision);
           },{signal});
           dialog.addEventListener('close',()=>{
             dialog.remove(); editors.delete(dialog); controls.delete(area); controls.delete(save); controls.delete(cancel);
           },{once:true,signal});
-          editors.add(dialog); status.textContent='Current skill source is loaded for review.'; syncControls(); dialog.showModal(); area.focus();
+          editors.add(dialog); status.textContent='Current skill source, provenance, and before/after text are ready for owner review.'; syncControls(); dialog.showModal(); area.focus();
         } catch (_) {
           if (active && snapshot && snapshot.revision === sourceRevision && !busy && !inventoryLoading)
             status.textContent='Current skill source is unavailable; refresh and retry.';
@@ -339,12 +376,50 @@ _MOUNT = r'''function mount(container, api) {
     if (item.kind==='skills' && Array.isArray(item.archivedVersions) && item.archivedVersions.length
         && (item.source==='bundledResources' || (item.source==='useradded' && !item.editable))) {
       const restore=text(actions,'button','Restore archived version'); restore.type='button'; restore.addEventListener('click',async()=>{
-        const versions=item.archivedVersions;
-        const choices=versions.map((version,index)=>`${index+1}: ${version.sha256.slice(0,12)} · ${version.restoreId.slice(0,12)}`).join('\n');
-        const selected=Number(window.prompt(`Choose the archived version to restore for ${item.label}:\n${choices}`, '1'));
-        if (!Number.isInteger(selected)||selected<1||selected>versions.length) return;
-        const version=versions[selected-1];
-        await mutate('/chat/api/extensions/skills/restore',{item_id:item.id,restore_id:version.restoreId,restore_sha256:version.sha256},`RESTORE ${item.label} ${version.restoreId}`,sourceRevision);
+        if (!active || actionsBlocked()) return;
+        selectedSkillId=item.id; const selectionEpoch=++selectedSkillEpoch;
+        pendingSkillReads += 1; status.textContent='Reading archived version identities…'; syncControls();
+        try {
+          const archive=await api.post('/chat/api/extensions/skills/restore-list',{item_id:item.id,revision:sourceRevision});
+          if (!active) return;
+          if (!skillSelectionCurrent(item,sourceRevision,selectionEpoch)) {
+            status.textContent='The inventory or selected skill changed while archived versions were loading. Refresh and select the current skill.';
+            return;
+          }
+          if (!archive || archive.skill!==item.label || !Array.isArray(archive.versions) || archive.versions.length>4096
+              || archive.versions.some(version=>!version || !/^[A-Za-z0-9_-]{16,96}$/.test(version.restoreId||'')
+                || !/^[0-9a-f]{64}$/.test(version.sha256||'')))
+            throw Error();
+          if (!archive.versions.length) { status.textContent='No archived versions are currently available for this skill.'; return; }
+          const dialog=document.createElement('dialog'); dialog.setAttribute('aria-labelledby','extension-restore-title');
+          const form=document.createElement('form'); form.method='dialog';
+          const heading=text(form,'h3',`Restore ${item.label}`); heading.id='extension-restore-title';
+          text(form,'p','Choose an exact archived identity by restore ID and SHA-256. Archive contents and dates are not exposed by the native interface.');
+          const label=document.createElement('label'); label.textContent='Archived version';
+          const select=document.createElement('select'); select.setAttribute('aria-label','Archived version identity');
+          const placeholder=document.createElement('option'); placeholder.value=''; placeholder.textContent='Choose a version'; select.append(placeholder);
+          archive.versions.forEach((version,index)=>{const option=document.createElement('option');option.value=String(index);option.textContent=`${version.sha256} · ${version.restoreId}`;select.append(option);});
+          label.append(select); text(form,'p','Selection alone does not restore; the next step asks you to confirm the exact restore ID.');
+          const restore=text(form,'button','Review and restore'); restore.type='button'; restore.disabled=true;
+          const cancel=text(form,'button','Cancel'); cancel.type='button'; form.append(label,restore,cancel); dialog.append(form); root.append(dialog);
+          select.addEventListener('change',()=>{restore.disabled=select.value==='' || !skillSelectionCurrent(item,sourceRevision,selectionEpoch);},{signal});
+          cancel.addEventListener('click',()=>dialog.close(),{signal});
+          restore.addEventListener('click',async()=>{
+            if (!skillSelectionCurrent(item,sourceRevision,selectionEpoch) || actionsBlocked()) {
+              status.textContent='The selected skill or inventory changed. Refresh before restoring an archived version.'; dialog.close(); return;
+            }
+            const index=Number(select.value), version=archive.versions[index];
+            if (!Number.isInteger(index) || index<0 || !version) return;
+            dialog.close(); await mutate('/chat/api/extensions/skills/restore',
+              {item_id:item.id,restore_id:version.restoreId,restore_sha256:version.sha256},
+              `RESTORE ${item.label} ${version.restoreId}`,sourceRevision);
+          },{signal});
+          dialog.addEventListener('close',()=>{dialog.remove();editors.delete(dialog);},{once:true,signal});
+          editors.add(dialog); status.textContent='Current archived version identities are ready for exact selection.'; dialog.showModal(); select.focus();
+        } catch (_) {
+          if (active && skillSelectionCurrent(item,sourceRevision,selectionEpoch))
+            status.textContent='Archived version identities are unavailable or malformed. Refresh and retry.';
+        } finally { if (active) { pendingSkillReads=Math.max(0,pendingSkillReads-1); syncControls(); } }
       },{signal});
     }
     if (item.kind === 'plugins' && item.editable) {
@@ -372,9 +447,14 @@ _MOUNT = r'''function mount(container, api) {
   function render() {
     for (const control of renderedControls) controls.delete(control);
     renderedControls.clear(); list.replaceChildren();
-    if (!snapshot || !Array.isArray(snapshot.items)) { syncControls(); return; }
-    const sourceRevision=snapshot.revision;
-    for (const item of snapshot.items) list.append(card(item,sourceRevision));
+    if (!snapshot || !Array.isArray(snapshot.items)) { inventoryCount.textContent='Current inventory unavailable.'; emptyState.hidden=true; noMatch.hidden=true; syncControls(); return; }
+    const sourceRevision=snapshot.revision, query=search.value.trim().toLowerCase(), kind=kindFilter.value;
+    const matches=snapshot.items.filter(item=>(kind==='all'||item.kind===kind)
+      && (!query || [item.label,item.name,item.kind,item.source,item.originLabel,item.category,item.state,item.version,item.transport]
+        .some(value=>typeof value==='string'&&value.toLowerCase().includes(query))));
+    inventoryCount.textContent=`Showing ${matches.length} of ${snapshot.items.length} current native extension records.`;
+    emptyState.hidden=snapshot.items.length!==0; noMatch.hidden=snapshot.items.length===0||matches.length!==0;
+    for (const item of matches) list.append(card(item,sourceRevision));
     syncControls();
   }
   async function load(options = {}) {
@@ -385,7 +465,9 @@ _MOUNT = r'''function mount(container, api) {
       const data=await api.get('/chat/api/extensions');
       if (!active || readRevision !== inventoryReadRevision) return;
       if (!data || data.schema!==1 || !Array.isArray(data.items) || typeof data.revision!=='string') throw Error();
+      const previousRevision=snapshot && snapshot.revision;
       snapshot=data;
+      if (previousRevision && previousRevision!==data.revision) { selectedSkillId=null; selectedSkillEpoch+=1; }
       if (options.explicit === true || options.afterApplied) recoveryRequired=false;
       render();
       const observed=`${data.items.length} current extension records · ${data.readiness}.`;
@@ -396,7 +478,7 @@ _MOUNT = r'''function mount(container, api) {
           : observed;
     } catch (_) {
       if (active && readRevision === inventoryReadRevision) {
-        snapshot=null; recoveryRequired=true; list.replaceChildren();
+        snapshot=null; recoveryRequired=true; list.replaceChildren(); inventoryCount.textContent='Current inventory unavailable.'; emptyState.hidden=true; noMatch.hidden=true;
         status.textContent=options.afterApplied
           ? `${options.afterApplied}, but current inventory readback is unavailable. Refresh before another owner action.`
           : 'Current extension inventory is unavailable.';
@@ -413,9 +495,10 @@ _MOUNT = r'''function mount(container, api) {
   bind('[data-add-skill]','/chat/api/extensions/skills/add','identifier','identifier','ADD');
   bind('[data-add-plugin]','/chat/api/extensions/plugins/add','catalog_name','catalog_name','ADD');
   bind('[data-add-mcp]','/chat/api/extensions/mcps/add','catalog_name','catalog_name','ADD');
+  search.addEventListener('input',render,{signal}); kindFilter.addEventListener('change',render,{signal});
   refresh.addEventListener('click',()=>load({explicit:true}),{signal}); void load();
   return ()=>{active=false;for(const dialog of editors){if(dialog.open)dialog.close();dialog.remove();}lifecycle.abort();editors.clear();list.replaceChildren();};
-}'''
+}'''.splitlines())
 
 _UNMOUNT = "function unmount() {}"
 
