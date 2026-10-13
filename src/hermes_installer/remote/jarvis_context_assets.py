@@ -17,7 +17,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
         '<button type="button" data-refresh>Refresh</button>'
         '<p data-status role="status" aria-live="polite">Choose a conversation to inspect its context.</p>'
         '<section class="context-card" aria-labelledby="context-usage-title"><h2 id="context-usage-title">Context window</h2>'
-        '<p data-usage></p><ul data-categories aria-label="Context tokens by category"></ul></section>'
+        '<p data-usage>Unknown</p><ul data-categories aria-label="Context tokens by category"></ul></section>'
         '<section class="context-card" aria-labelledby="context-session-title"><h2 id="context-session-title">Session status</h2>'
         '<dl><div><dt>Running</dt><dd data-running>Unknown</dd></div><div><dt>Created</dt><dd data-created>Unknown</dd></div>'
         '<div><dt>Last activity</dt><dd data-activity>Unknown</dd></div><div><dt>Tokens reported</dt><dd data-tokens>Unknown</dd></div></dl></section>'
@@ -49,9 +49,17 @@ FEATURE_ASSETS = JarvisFeatureAssets(
   const root = container.querySelector('[data-feature-root="context"]') || container;
   const $ = (selector) => root.querySelector(selector);
   const selector = $('[data-conversation]'), refreshButton = $('[data-refresh]');
-  let stopped = false, selected = '';
+  let stopped = false, selected = '', viewRevision = 0;
   function text(selector, value) { $(selector).textContent = value; }
   function safeCount(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
+  function clearContext() {
+    text('[data-usage]', 'Unknown');
+    $('[data-categories]').replaceChildren();
+    text('[data-running]', 'Unknown'); text('[data-created]', 'Unknown');
+    text('[data-activity]', 'Unknown'); text('[data-tokens]', 'Unknown');
+    text('[data-persona]', 'Verified primary persona source status is pending.');
+    text('[data-workspace]', 'Owned workspace details are pending a reviewed read-only source.');
+  }
   function render(data) {
     const context = data && data.context || {}, status = data && data.status || {};
     text('[data-status]', data && data.state === 'observed' ? 'Context observed from the selected owned session.' : 'Some session context data is unavailable.');
@@ -78,14 +86,19 @@ FEATURE_ASSETS = JarvisFeatureAssets(
   }
   async function load() {
     if (stopped || !selected) return;
-    refreshButton.disabled = true; text('[data-status]', 'Loading owned session context…');
-    try { const result = await api.get(`/chat/api/conversations/${encodeURIComponent(selected)}/context`); if (!stopped) render(result); }
-    catch { if (!stopped) text('[data-status]', 'Owned session context is temporarily unavailable.'); }
-    finally { if (!stopped) refreshButton.disabled = false; }
+    const conversationId = selected, revision = ++viewRevision;
+    const isCurrent = () => !stopped && revision === viewRevision && selected === conversationId;
+    clearContext(); refreshButton.disabled = true;
+    root.setAttribute('aria-busy', 'true'); text('[data-status]', 'Loading owned session context…');
+    try { const result = await api.get(`/chat/api/conversations/${encodeURIComponent(conversationId)}/context`); if (isCurrent()) render(result); }
+    catch { if (isCurrent()) text('[data-status]', 'Owned session context is temporarily unavailable.'); }
+    finally { if (isCurrent()) { refreshButton.disabled = false; root.setAttribute('aria-busy', 'false'); } }
   }
   async function loadConversations() {
+    const revision = viewRevision;
     try {
       const result = await api.get('/chat/api/conversations');
+      if (stopped) return;
       const rows = result && Array.isArray(result.conversations) ? result.conversations : [];
       for (const row of rows) {
         if (!row || typeof row.id !== 'string' || !/^[A-Za-z0-9_-]{24,80}$/.test(row.id)) continue;
@@ -93,9 +106,18 @@ FEATURE_ASSETS = JarvisFeatureAssets(
         option.textContent = typeof row.title === 'string' && row.title ? row.title : 'Jarvis conversation';
         selector.append(option);
       }
-    } catch { if (!stopped) text('[data-status]', 'Your conversations could not be loaded.'); }
+    } catch { if (!stopped && revision === viewRevision && !selected) text('[data-status]', 'Your conversations could not be loaded.'); }
   }
-  function changed() { selected = selector.value; load(); }
+  function changed() {
+    selected = selector.value;
+    ++viewRevision;
+    if (!selected) {
+      clearContext(); refreshButton.disabled = false; root.setAttribute('aria-busy', 'false');
+      text('[data-status]', 'Choose a conversation to inspect its context.');
+      return;
+    }
+    load();
+  }
   selector.addEventListener('change', changed); refreshButton.addEventListener('click', load);
   loadConversations();
   return function cleanup() { stopped = true; selector.removeEventListener('change', changed); refreshButton.removeEventListener('click', load); };

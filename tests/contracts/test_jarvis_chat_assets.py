@@ -311,7 +311,7 @@ class JarvisChatAssetTests(unittest.TestCase):
             'api.post(`/chat/api/conversations/${encodeURIComponent(selectedConversation)}/model-selection`',
             model_mount,
         )
-        self.assertIn("model_id: choice.value, revision: revision.revision,", model_mount)
+        self.assertIn("model_id: selectedModel, revision: selectedRevision.revision,", model_mount)
         self.assertIn("approval_nonce: revision.approval_nonce, idempotency_key: token()", model_mount)
 
     def test_capability_inventory_filter_and_details_are_data_backed(self):

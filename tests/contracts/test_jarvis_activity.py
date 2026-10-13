@@ -10,6 +10,7 @@ from hermes_installer.remote.jarvis_chat import (
     JarvisChatDenied,
     JarvisChatStore,
 )
+from hermes_installer.remote.jarvis_activity_assets import FEATURE_ASSETS
 
 
 def _principal(subject="owner-a", generation="core-generation-a"):
@@ -121,3 +122,117 @@ def test_native_child_correlation_is_private_stable_and_turn_scoped(tmp_path):
     assert len(child_rows[0]["child_ref"]) == 64
     with pytest.raises(JarvisChatDenied, match="turn is unavailable"):
         activity.native_child_events_for_turn("owner-b", turn_id)
+
+
+def test_activity_decision_dom_serializes_exact_review_and_reconciles_observed_status():
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is needed to execute the Activity decision race fixture")
+    harness = r'''
+class Target {
+  constructor() { this.children=[]; this.listeners={}; this.disabled=false; this.hidden=false; this.textContent=''; this.style={}; }
+  addEventListener(name,fn) { this.listeners[name]=fn; }
+  removeEventListener(name) { delete this.listeners[name]; }
+  replaceChildren(...items) { this.children=[...items]; }
+  append(...items) { this.children.push(...items); }
+  contains(node) { return this===node || this.children.some(child=>child.contains?.(node)); }
+  setAttribute() {}
+  fire(name) { return this.listeners[name]?.(); }
+}
+function deferred() { let resolve,reject; const promise=new Promise((a,b)=>{resolve=a;reject=b}); return {promise,resolve,reject}; }
+const selectors=['[data-events]','[data-usage]','[data-empty]','[data-note]','[data-final-effects]','[data-final-effects-empty]','[data-final-effects-note]','[data-refresh]'];
+const nodes=new Map(selectors.map(selector=>[selector,new Target()]));
+const root={querySelector:selector=>nodes.get(selector)};
+global.document={createElement:()=>new Target()};
+let poll, intervalCleared=false, effectRows=[], latestTurn='turn-1'; const posts=[]; let keyCount=0;
+global.window={setInterval(fn){poll=fn;return 91;},clearInterval(id){assert.equal(id,91);intervalCleared=true;}};
+Object.defineProperty(globalThis,'crypto',{configurable:true,writable:true,value:{randomUUID(){keyCount++;return `00000000-0000-4000-8000-${String(keyCount).padStart(12,'0')}`;}}});
+const api={
+ get(path){
+  if(path==='/chat/api/activity?limit=50')return Promise.resolve({events:[{turnId:latestTurn,type:'approval',status:'pending'}]});
+  if(path===`/chat/api/turns/${latestTurn}/usage`)return Promise.resolve({usage:{input:1,output:2,total:3,calls:1,reasoning:0,cost_usd:null}});
+  if(path===`/chat/api/turns/${latestTurn}/final-effects`)return Promise.resolve({turnId:latestTurn,requests:effectRows});
+  throw Error('unexpected GET '+path);
+ },
+ post(path,body){const d=deferred();posts.push({path,body,d});return d.promise;}
+};
+const mount=new Function('return ('+MOUNT+')')();
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+const buttons=()=>nodes.get('[data-final-effects]').children[0]?.children[2]?.children||[];
+const effectsNote=()=>nodes.get('[data-final-effects-note]').textContent;
+const confirmedRowNote=()=>nodes.get('[data-final-effects]').children[0]?.children[1]?.textContent||'';
+async function pollOnce(){await poll();await flush();await flush();}
+(async()=>{
+ const cleanup=mount(root,api); await flush(); await flush(); await flush();
+ const pending={pendingId:'1'.repeat(64),turnId:'turn-1',reviewSha256:'2'.repeat(64),toolName:'write_file',preview:{tool_name:'write_file'},status:'pending'};
+ effectRows=[pending]; await pollOnce();
+ const staleApprove=buttons()[0]; await pollOnce(); await staleApprove.fire('click');
+ assert.equal(posts.length,0,'callback from a replaced row is ignored');
+ const [approve,deny]=buttons();
+ const firstDecision=approve.fire('click'); await flush();
+ await deny.fire('click'); await approve.fire('click');
+ assert.equal(posts.length,1,'opposing and repeated clicks share one decision request');
+ assert.equal(posts[0].path,'/chat/api/turns/turn-1/final-effects/decision');
+ assert.deepEqual(posts[0].body,{pending_id:pending.pendingId,review_sha256:pending.reviewSha256,decision:'approve',idempotency_key:'00000000000040008000000000000001'});
+ assert.equal(approve.disabled,true); assert.equal(deny.disabled,true);
+ posts[0].d.resolve({pendingId:'9'.repeat(64),status:'approved'});
+ await firstDecision; await flush(); await flush();
+ assert.match(effectsNote(),/outcome unknown/i,'mismatched response cannot confirm a decision');
+ assert.equal(buttons()[0].disabled,true); assert.equal(buttons()[1].disabled,true);
+ assert.equal(posts.length,1,'unknown decision is never automatically replayed');
+ effectRows=[pending]; await pollOnce();
+ assert.equal(buttons()[0].disabled,true,'poll redraw retains the unresolved exact review lock');
+ latestTurn='turn-2';
+ const pendingDeny={...pending,pendingId:'3'.repeat(64),reviewSha256:'4'.repeat(64),turnId:latestTurn,status:'pending'};
+ effectRows=[pendingDeny]; await pollOnce();
+ assert.equal(buttons()[0].disabled,false,'an unknown old review does not block a distinct current turn');
+ const denyDecision=buttons()[1].fire('click'); await flush();
+ assert.equal(posts.length,2); posts[1].d.resolve({pendingId:pendingDeny.pendingId,status:'denied'}); await denyDecision;
+ assert.deepEqual(posts[1].body,{pending_id:pendingDeny.pendingId,review_sha256:pendingDeny.reviewSha256,decision:'deny',idempotency_key:'00000000000040008000000000000002'});
+ assert.equal(effectsNote(),'Owner decision confirmed for the exact reviewed request. Tool action completion is separate.');
+ assert.equal(confirmedRowNote(),'Owner decision confirmed: denied. This does not confirm that the tool action completed.');
+ assert.equal(buttons().length,0);
+ effectRows=[]; await pollOnce(); // denied reviews are not returned by the current producer
+ latestTurn='turn-3'; effectRows=[]; await pollOnce();
+ const pendingAccepted={...pending,pendingId:'7'.repeat(64),reviewSha256:'8'.repeat(64),turnId:latestTurn,status:'pending'};
+ effectRows=[pendingAccepted]; await pollOnce();
+ const acceptedDecision=buttons()[0].fire('click'); await flush();
+ assert.equal(posts.length,3);
+ await pollOnce(); assert.equal(buttons()[0].disabled,true,'poll redraw keeps the same exact decision locked while submit is pending');
+ posts[2].d.resolve({pendingId:pendingAccepted.pendingId,status:'approved'}); await acceptedDecision;
+ assert.equal(effectsNote(),'Owner decision confirmed for the exact reviewed request. Tool action completion is separate.');
+ assert.equal(confirmedRowNote(),'Owner decision confirmed: approved. This does not confirm that the tool action completed.');
+ assert.equal(buttons().length,0,'exact POST status confirms the decision while keeping effect completion separate');
+ effectRows=[]; await pollOnce(); // spent review is no longer returned by the producer
+ latestTurn='turn-4';
+ const pendingUnknown={...pending,pendingId:'9'.repeat(64),reviewSha256:'a'.repeat(64),turnId:latestTurn,status:'pending'};
+ effectRows=[pendingUnknown]; await pollOnce();
+ assert.equal(buttons()[0].disabled,false,'confirmed approve followed by an empty spent read does not deadlock a new review');
+ const lostDecision=buttons()[0].fire('click'); await flush();
+ assert.equal(posts.length,4); posts[3].d.reject(Error('response lost')); await lostDecision;
+ assert.match(effectsNote(),/outcome unknown/i);
+ await pollOnce(); assert.equal(buttons()[0].disabled,true,'unknown key locks only its exact review');
+
+ latestTurn='turn-5';
+ const pendingUnmount={...pending,pendingId:'5'.repeat(64),reviewSha256:'6'.repeat(64),turnId:latestTurn,status:'pending'};
+ effectRows=[pendingUnmount]; await pollOnce();
+ assert.equal(buttons()[0].disabled,false,'unknown key does not block a distinct review');
+ const unmountedDecision=buttons()[0].fire('click'); await flush();
+ assert.equal(posts.length,5);
+ const beforeUnmount=effectsNote(); cleanup(); posts[4].d.reject(Error('late response')); await unmountedDecision;
+ assert.equal(effectsNote(),beforeUnmount,'late decision failure cannot update an unmounted view');
+ assert.equal(intervalCleared,true);
+ assert.equal(posts.length,5,'unmount does not replay an unresolved decision');
+})().then(()=>{console.log('ACTIVITY_DECISION_HARNESS_COMPLETE');})
+ .catch(error=>{console.error(error);process.exitCode=1;});
+'''.replace('MOUNT', FEATURE_ASSETS.mount_js)
+    with tempfile.TemporaryDirectory() as temporary:
+        script = Path(temporary) / "activity-decision-race.js"
+        script.write_text("const assert=require('node:assert/strict');\n" + harness, encoding="utf-8")
+        result = subprocess.run(["node", str(script)], capture_output=True, text=True, check=False, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "ACTIVITY_DECISION_HARNESS_COMPLETE" in result.stdout
