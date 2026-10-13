@@ -689,6 +689,9 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
     home = admin_home / ".hermes"
     admin_home.mkdir(mode=0o700)
     home.mkdir(mode=0o700)
+    prior_soul = b"# Existing owner instructions\nKeep these bytes before adoption.\n"
+    (home / "SOUL.md").write_bytes(prior_soul)
+    (home / "SOUL.md").chmod(0o600)
     monkeypatch.setattr(core, "HOME", admin_home)
     monkeypatch.setattr(core, "HERMES_HOME", home)
     monkeypatch.setattr(native, "_JARVIS_HOME", home)
@@ -725,6 +728,62 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
     assert core.read_current_resources_discovery(
         core_source_generation=current_record["core_source_generation"]
     )["resources_state"] == "discovered"
+
+    # Cohort unit tests cover the filesystem/journal effects, while native
+    # Hermes-loader and Core-provider proofs are qualified separately. Keep
+    # those calls explicit and local to this controlled fixture; never contact
+    # the host admin environment, a live provider, or the running Core service.
+    readback_calls = []
+
+    def fixture_native_readback(manifest, generation_files, active_prompt,
+                                 *, expected_managed_block_sha256=None):
+        from hermes_installer.registry.primary_prompt import render_managed_block
+
+        bundled_prompt = generation_files["registry/profiles/hermes/SOUL.md"]
+        managed_block = render_managed_block(bundled_prompt)
+        active_sha = hashlib.sha256(active_prompt).hexdigest()
+        bundled_sha = hashlib.sha256(bundled_prompt).hexdigest()
+        if expected_managed_block_sha256 is None:
+            assert managed_block not in active_prompt
+        else:
+            assert hashlib.sha256(managed_block).hexdigest() == expected_managed_block_sha256
+            assert managed_block in active_prompt
+        readback_calls.append((active_sha, expected_managed_block_sha256))
+        return {
+            "hermes_revision": core.COMMIT,
+            "python_version": "3.14.7",
+            "profile_id": "default",
+            "profile_identity_loaded": True,
+            "loaded_skill_count": len(manifest["skill_members"]),
+            "loaded_skill_inventory_sha256": hashlib.sha256(
+                core.native_inventory_bytes(manifest, generation_files)).hexdigest(),
+            "active_primary_prompt_sha256": active_sha,
+            "native_loaded_primary_prompt_sha256": active_sha,
+            "bundled_primary_prompt_sha256": bundled_sha,
+            "active_prompt_matches_bundled_primary": active_sha == bundled_sha,
+            "managed_prompt_block_sha256": expected_managed_block_sha256,
+            "effective_prompt_contains_managed_block": expected_managed_block_sha256 is not None,
+            "effective_prompt_truncated": False,
+            "native_effective_prompt_sha256": active_sha,
+            "native_effective_prompt_chars": len(active_prompt.decode("utf-8")),
+        }
+
+    def fixture_startup_proof():
+        context = core._ADAPTER_STARTUP_COHORT_CONTEXT.get()
+        assert isinstance(context, dict)
+        assert context["cohort"].get("phase") == "source-starting"
+        assert context["pidfd"] is not None and context["pid"] == 424242
+        assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+        readback_calls.append(("startup-provider-fixture", context["cohort"]["cohort_transaction_id"]))
+        return SimpleNamespace(state="fixture-provider-proof-not-live-evidence")
+
+    def deny_host_subprocess(*_args, **_kwargs):
+        raise AssertionError("cohort fixture attempted an unapproved host subprocess")
+
+    monkeypatch.setattr(core, "_root_native_readback", fixture_native_readback)
+    monkeypatch.setattr(core, "_prove_new_cohort_startup_chat", fixture_startup_proof)
+    monkeypatch.setattr(core.subprocess, "run", deny_host_subprocess)
+    return readback_calls
 
 
 def _fixed_service_path_identity():
