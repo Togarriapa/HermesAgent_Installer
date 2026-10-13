@@ -215,6 +215,22 @@ def test_overview_presence_stops_when_hidden_or_offline_until_fresh_readback():
     assert "markCoreStale('offline')" in js
 
 
+def test_overview_projects_only_real_shared_jarvis_interaction_states():
+    css, js = FEATURE_ASSETS.css, FEATURE_ASSETS.mount_js
+    assert "function projectAssistantPresence(state)" in js
+    assert "['listening','thinking','speaking','error'].includes(state) ? state : null" in js
+    assert "document.getElementById('assistant-hud')?.dataset.state" in js
+    assert "assistantHudObserver.observe(assistantHud, {attributes:true, attributeFilter:['data-state']})" in js
+    assert "if (assistantHudObserver) assistantHudObserver.disconnect()" in js
+    assert "stage.dataset.assistantState = assistantState || 'none'" in js
+    assert '[data-assistant-state="thinking"] .reactor-orbit-outer' in css
+    assert '[data-assistant-state="listening"] .reactor-orbit-outer' in css
+    assert '[data-assistant-state="speaking"] .reactor-orbit-inner' in css
+    assert '[data-assistant-state="error"] .reactor-core' in css
+    assert "Needs attention · Jarvis reported an interaction error." in js
+    assert "stage.dataset.assistantState = 'none'" in js
+
+
 def test_overview_ecosystem_uses_named_root_observations_and_cancels_stale_views():
     html, css, js = FEATURE_ASSETS.view_html, FEATURE_ASSETS.css, FEATURE_ASSETS.mount_js
     assert 'data-ecosystem-card' in html and 'data-handoff-graph' in html
