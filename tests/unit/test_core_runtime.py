@@ -58,9 +58,22 @@ def _bounded_cohort_exception_sites():
     importer_outcomes = []
     routine = {"GeneratorExit", "StopIteration", "StopAsyncIteration"}
     allowed = {"core_runtime.py", "manual_jarvis_skills.py", "resources_skill_overlay.py"}
+    filename_kinds = {}
+
+    def filename_kind(filename):
+        # Trace every line only in the three reviewed modules. Returning None
+        # at call time leaves stdlib, pytest, and archive-library frames alone.
+        kind = filename_kinds.get(filename)
+        if kind is None:
+            kind = filename.rsplit("/", 1)[-1]
+            filename_kinds[filename] = kind
+        return kind
 
     def trace(frame, event, arg):
-        if (event == "return" and Path(frame.f_code.co_filename).name == "core_runtime.py"
+        if event == "call":
+            return trace if filename_kind(frame.f_code.co_filename) in allowed else None
+        kind = filename_kinds.get(frame.f_code.co_filename)
+        if (event == "return" and kind == "core_runtime.py"
                 and frame.f_code.co_name == "_run_same_materialization_import"):
             values = frame.f_locals
             process = values.get("process")
@@ -73,11 +86,10 @@ def _bounded_cohort_exception_sites():
                 importer_outcomes.append({"returncode": process.returncode,
                                           "stdout": stdout,
                                           "stderr_bytes": len(stderr)})
-        if event == "exception" and Path(frame.f_code.co_filename).name in allowed:
+        if event == "exception" and kind in allowed:
             exception_type = type(arg[1]).__name__
             if exception_type not in routine:
-                site = (Path(frame.f_code.co_filename).name,
-                        frame.f_code.co_name, frame.f_lineno, exception_type)
+                site = (kind, frame.f_code.co_name, frame.f_lineno, exception_type)
                 if len(sites) < 80:
                     sites.append(site)
                 if not first_substantive and exception_type != "CoreRuntimeError":
