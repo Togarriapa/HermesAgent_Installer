@@ -57,11 +57,12 @@ def _bounded_cohort_exception_sites():
     first_substantive = []
     importer_outcomes = []
     routine = {"GeneratorExit", "StopIteration", "StopAsyncIteration"}
-    allowed = {"core_runtime.py", "manual_jarvis_skills.py", "resources_skill_overlay.py"}
+    allowed = {"core_runtime.py", "manual_jarvis_skills.py",
+               "resources_skill_overlay.py", "primary_prompt_manager.py"}
     filename_kinds = {}
 
     def filename_kind(filename):
-        # Trace every line only in the three reviewed modules. Returning None
+        # Trace every line only in the reviewed cohort modules. Returning None
         # at call time leaves stdlib, pytest, and archive-library frames alone.
         kind = filename_kinds.get(filename)
         if kind is None:
