@@ -17,9 +17,23 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
           <circle class="reactor-dial" cx="120" cy="120" r="116"/>
           <circle class="reactor-orbit reactor-orbit-outer" cx="120" cy="120" r="111"/>
           <circle class="reactor-orbit reactor-orbit-inner" cx="120" cy="120" r="93"/>
+          <path class="reactor-segment reactor-segment-north" d="M120 10A110 110 0 0 1 211 58"/>
+          <path class="reactor-segment reactor-segment-east" d="M230 120A110 110 0 0 1 174 215"/>
+          <path class="reactor-segment reactor-segment-south" d="M120 230A110 110 0 0 1 28 175"/>
+          <path class="reactor-segment reactor-segment-west" d="M10 120A110 110 0 0 1 65 29"/>
+          <circle class="reactor-instrument-track" cx="120" cy="120" r="83"/>
           <circle class="reactor-chamber" cx="120" cy="120" r="75"/>
+          <g class="reactor-iris" aria-hidden="true">
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z"/>
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z" transform="rotate(60 120 120)"/>
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z" transform="rotate(120 120 120)"/>
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z" transform="rotate(180 120 120)"/>
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z" transform="rotate(240 120 120)"/>
+            <path class="reactor-iris-blade" d="M120 62C137 56 153 63 163 77C147 70 134 73 120 84Z" transform="rotate(300 120 120)"/>
+          </g>
           <circle class="reactor-core" cx="120" cy="120" r="57"/>
           <circle class="reactor-lens" cx="120" cy="120" r="43"/>
+          <circle class="reactor-aperture" cx="120" cy="120" r="7"/>
           <path class="reactor-axis" d="M120 2v12m0 212v12M2 120h12m212 0h12"/>
           <path class="reactor-ticks" d="M120 24v10m0 172v10M24 120h10m172 0h10M52 52l8 8m120 120 8 8m0-136-8 8M60 180l-8 8"/>
           <circle class="reactor-node" cx="120" cy="4" r="2.5"/><circle class="reactor-node" cx="236" cy="120" r="2.5"/>
@@ -173,8 +187,13 @@ _CSS += """
 [data-feature-root="overview"] .reactor-dial{stroke:rgba(146,203,208,.3);stroke-width:.8;stroke-dasharray:1 3}
 [data-feature-root="overview"] .reactor-orbit-outer{stroke:rgba(78,222,231,.8);stroke-width:1.1;stroke-dasharray:2 5}
 [data-feature-root="overview"] .reactor-orbit-inner{stroke:rgba(121,232,237,.58);stroke-width:1.1;stroke-dasharray:38 8 4 9}
+[data-feature-root="overview"] .reactor-segment{fill:none;stroke:rgba(136,231,235,.72);stroke-width:1;stroke-linecap:round;vector-effect:non-scaling-stroke}
+[data-feature-root="overview"] .reactor-segment-east,[data-feature-root="overview"] .reactor-segment-west{stroke:rgba(103,190,202,.58);stroke-dasharray:1 2}
+[data-feature-root="overview"] .reactor-instrument-track{fill:none;stroke:rgba(122,221,227,.24);stroke-width:.7;stroke-dasharray:1 4;vector-effect:non-scaling-stroke}
 [data-feature-root="overview"] .reactor-chamber{fill:rgba(5,26,33,.65);stroke:rgba(138,239,241,.84);stroke-width:1.3;stroke-dasharray:88 10 17 8}
+[data-feature-root="overview"] .reactor-iris-blade{fill:rgba(71,207,216,.12);stroke:rgba(146,236,239,.66);stroke-width:.8;vector-effect:non-scaling-stroke}
 [data-feature-root="overview"] .reactor-core{fill:rgba(39,193,204,.08);stroke:rgba(155,245,246,.83);stroke-width:1.2;filter:drop-shadow(0 0 11px rgba(67,222,231,.34))}
+[data-feature-root="overview"] .reactor-aperture{fill:rgba(185,255,255,.82);stroke:rgba(255,255,255,.9);stroke-width:.8;filter:drop-shadow(0 0 7px rgba(67,222,231,.72));vector-effect:non-scaling-stroke}
 [data-feature-root="overview"] .reactor-lens{fill:rgba(43,198,208,.06);stroke:rgba(119,235,239,.46);stroke-width:.8;vector-effect:non-scaling-stroke}
 [data-feature-root="overview"] .reactor-axis{fill:none;stroke:rgba(89,212,222,.34);stroke-width:.9;vector-effect:non-scaling-stroke}
 [data-feature-root="overview"] .reactor-ticks{fill:none;stroke:rgba(160,233,236,.5);stroke-width:1.1;vector-effect:non-scaling-stroke}
@@ -327,7 +346,13 @@ _CSS += """
 [data-feature-root="overview"] .command-centre-shell>.overview-stage,[data-feature-root="overview"] .command-centre-shell>.command-panel{position:relative;z-index:1}
 [data-feature-root="overview"] .command-centre-shell>.overview-stage{min-height:clamp(500px,48vw,650px);padding:clamp(.3rem,1.3vw,1.1rem) clamp(.2rem,1vw,.9rem) 1.4rem;gap:clamp(1rem,2.6vw,3rem)}
 [data-feature-root="overview"] .command-centre-shell .reactor-figure{width:clamp(285px,31vw,410px)}
-[data-feature-root="overview"] .command-centre-shell .overview-readout{padding:1.15rem 0}
+[data-feature-root="overview"] .command-centre-shell .overview-rail{gap:.55rem;align-content:center}
+[data-feature-root="overview"] .command-centre-shell .overview-readout{position:relative;overflow:hidden;padding:.9rem 1rem;border:1px solid rgba(112,218,225,.18);border-radius:12px;background:linear-gradient(145deg,rgba(14,47,56,.76),rgba(6,23,30,.8));box-shadow:inset 0 1px rgba(235,255,255,.045),0 10px 24px rgba(0,0,0,.12)}
+[data-feature-root="overview"] .command-centre-shell .overview-readout:before{position:absolute;top:0;left:1rem;width:2.4rem;height:1px;content:"";background:rgba(111,234,238,.68)}
+[data-feature-root="overview"] .command-centre-shell .overview-readout:last-child{border-bottom:1px solid rgba(112,218,225,.18)}
+[data-feature-root="overview"] .command-centre-shell .overview-readout>span{font-size:.65rem;letter-spacing:.11em}
+[data-feature-root="overview"] .command-centre-shell .overview-readout strong{margin:.35rem 0;font-size:clamp(1.4rem,2.2vw,2rem)}
+[data-feature-root="overview"] .command-centre-shell .overview-readout small{font-size:.66rem}
 [data-feature-root="overview"] .command-centre-shell .command-panel{max-width:1050px;margin:0 auto;padding:clamp(1rem,2vw,1.5rem);border-color:rgba(100,231,237,.3);background:linear-gradient(115deg,rgba(5,20,27,.98),rgba(8,31,39,.96));box-shadow:0 18px 38px rgba(0,0,0,.22),inset 0 1px rgba(222,255,255,.05)}
 [data-feature-root="overview"] .command-centre-shell .command-form{min-height:68px}
 [data-feature-root="overview"] .command-centre-shell .command-form textarea{font-size:1.02rem}
