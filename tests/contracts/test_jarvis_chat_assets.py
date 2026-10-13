@@ -227,6 +227,8 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('event.key !== "Escape"', client)
         self.assertIn('summary.focus();', client)
         self.assertIn('if (!manageMenu?.open || manageMenu.contains(event.target)) return;', client)
+        self.assertIn('const restoreFocus = manageMenu.contains(document.activeElement);', client)
+        self.assertIn('if (restoreFocus) manageMenu.querySelector("summary")?.focus();', client)
         self.assertIn('byId("voice-entry").addEventListener("click", () => { void openVoiceControls(); });', client)
 
         _registry_type, registry = reviewed_chat_asset("/chat/assets/features.js")

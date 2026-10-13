@@ -2000,8 +2000,10 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   const manageMenu = document.querySelector(".manage-group");
   document.addEventListener("click", (event) => {
     if (!manageMenu?.open || manageMenu.contains(event.target)) return;
+    const restoreFocus = manageMenu.contains(document.activeElement);
     manageMenu.open = false;
     manageMenu.querySelector("summary")?.setAttribute("aria-expanded", "false");
+    if (restoreFocus) manageMenu.querySelector("summary")?.focus();
   });
   function focusSelectedViewHeading(view) {
     const panel = [...document.querySelectorAll("[data-view-panel]")]
