@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import subprocess
 import tempfile
@@ -12,7 +13,7 @@ from hermes_installer.remote.jarvis_chat import JarvisChatDenied
 from hermes_installer.remote.jarvis_profiles_admin import (
     JarvisProfileAdmin, ProfileAdminDescriptor, ProfileAdminFile,
     ProfileAdminWriteResult, reviewed_profiles_admin_feature,
-    RootProfileAdminContext,
+    RootProfileAdminContext, _same_current_root_admin_snapshot,
 )
 
 
@@ -24,6 +25,18 @@ def _context(revision: int = 1, digest: str | None = None) -> RootProfileAdminCo
     return RootProfileAdminContext("active", True, revision, digest or _sha(f"admin-{revision}"),
         _sha("owner"), _sha("token"), _sha("config"), "c" * 64,
         "d" * 64, "e" * 64, time.monotonic() + 5)
+
+
+def test_fresh_root_status_does_not_replace_or_extend_captured_request_deadline():
+    captured = _context()
+    fresh = dataclasses.replace(captured, expires_monotonic=captured.expires_monotonic + 2)
+    original_deadline = captured.expires_monotonic
+    assert _same_current_root_admin_snapshot(captured, fresh) is True
+    assert captured.expires_monotonic == original_deadline
+    assert _same_current_root_admin_snapshot(
+        dataclasses.replace(captured, expires_monotonic=time.monotonic() - 1), fresh) is False
+    assert _same_current_root_admin_snapshot(
+        captured, dataclasses.replace(fresh, revision=fresh.revision + 1)) is False
 
 
 class _Provider:

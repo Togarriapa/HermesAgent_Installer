@@ -119,6 +119,20 @@ class RootProfileAdminContext:
     expires_monotonic: float
 
 
+def _same_current_root_admin_snapshot(captured: Any, fresh: Any) -> bool:
+    """Compare current authority while retaining the original request deadline."""
+    if (type(captured) is not RootProfileAdminContext
+            or type(fresh) is not RootProfileAdminContext
+            or captured.authorized is not True or fresh.authorized is not True
+            or time.monotonic() >= captured.expires_monotonic
+            or time.monotonic() >= fresh.expires_monotonic):
+        return False
+    fields = ("state", "revision", "record_sha256", "owner_subject_sha256",
+        "token_fingerprint_sha256", "config_sha256", "core_generation",
+        "parent_nonce", "parent_proof_sha256")
+    return all(getattr(captured, field) == getattr(fresh, field) for field in fields)
+
+
 class JarvisProfileAdminProvider(Protocol):
     """Trusted source adapter; implementations must enforce native path custody.
 
@@ -215,11 +229,14 @@ class CoreGatewayProfileAdminProvider:
         response = self._call(action="admin-status", access_jwt=access_jwt,
                               accepted_ingress=accepted_ingress)
         scope = response["admin_scope"]
+        expires = min(float(scope["expires_monotonic"]), accepted_ingress.expires_monotonic)
+        if time.monotonic() >= expires:
+            raise JarvisChatDenied("original profile ingress expired")
         return RootProfileAdminContext(scope["state"], scope["authorized"], scope["revision"],
             scope["record_sha256"], scope["owner_subject_sha256"],
             scope["token_fingerprint_sha256"], scope["config_sha256"],
             scope["core_generation"], scope["parent_nonce"], scope["parent_proof_sha256"],
-            float(scope["expires_monotonic"]))
+            expires)
 
     def current_admin_scope(self, admin_context: RootProfileAdminContext) -> tuple[int, str]:
         if type(admin_context) is not RootProfileAdminContext or admin_context.expires_monotonic <= time.monotonic():
@@ -753,8 +770,7 @@ async def _current_owner(request: Any, service: JarvisChatService,
                 accepted_ingress=accepted), timeout=3.0)
         except Exception:
             raise JarvisChatDenied("current Root administrator status is unavailable") from None
-        if (type(fresh) is not RootProfileAdminContext or fresh != admin_context
-                or fresh.authorized is not True or time.monotonic() >= fresh.expires_monotonic):
+        if not _same_current_root_admin_snapshot(admin_context, fresh):
             raise JarvisChatDenied("original administrator status changed")
 
     assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])

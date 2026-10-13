@@ -93,6 +93,14 @@ def test_profile_admin_child_denies_foreign_action_peer_or_registration(wrong):
             core_gateway_inspector._consume_profile_admin_child(**kwargs)
 
 
+def test_profile_admin_status_deadline_is_absolute_and_clamped_to_short_jwt_and_parent():
+    principal = SimpleNamespace(expires_at=105.0)
+    with patch.object(core_gateway_inspector.time, "monotonic", return_value=1000.0), \
+         patch.object(core_gateway_inspector.time, "time", return_value=100.0):
+        assert core_gateway_inspector._absolute_jwt_deadline(1100.0, principal) == 1005.0
+        assert core_gateway_inspector._absolute_jwt_deadline(1003.0, principal) == 1003.0
+
+
 def _derive_profile_admin_fixture(*, parent_expiry=None):
     now = time.monotonic()
     expiry = parent_expiry if parent_expiry is not None else now + 4.0

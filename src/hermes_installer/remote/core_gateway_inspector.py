@@ -534,6 +534,17 @@ _PROFILE_ADMIN_ACTIONS = frozenset({"list", "read", "write", "skills-list",
     "skill-restore", "skill-restore-list"})
 
 
+def _absolute_jwt_deadline(root_deadline: float, principal: Any) -> float:
+    """Convert the verified JWT wall expiry to Root monotonic time, clamped to parent."""
+    jwt_deadline = time.monotonic() + max(0.0, principal.expires_at - time.time())
+    return min(root_deadline, jwt_deadline)
+
+
+def _valid_profile_admin_child_deadline(value: Any, *, root_parent_deadline: float) -> bool:
+    """Validate Root's absolute child against its parent; Root also clamps JWT."""
+    return type(value) in {int, float} and time.monotonic() < value <= root_parent_deadline
+
+
 def _current_profile_admin_status(config: CoreGatewayConfig, *, request: dict[str, Any],
                                   caller_pid: int, caller_uid: int, caller_gid: int,
                                   peer_pid: int, peer_uid: int, peer_gid: int,
@@ -617,8 +628,7 @@ def derive_profile_admin_ingress(config: CoreGatewayConfig, *, request: dict[str
         raise CoreInspectionDenied("original administrator scope is unavailable")
     # Send one absolute same-host monotonic deadline, clamped to both the
     # original retained parent and this independently verified JWT.
-    jwt_deadline = time.monotonic() + max(0.0, principal.expires_at - time.time())
-    expires = min(parent.expires_monotonic, jwt_deadline)
+    expires = _absolute_jwt_deadline(parent.expires_monotonic, principal)
     now = time.monotonic()
     if now >= expires:
         raise CoreInspectionDenied("original profile ingress is expired")
@@ -2662,8 +2672,7 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
     deadline = min(time.monotonic() + MAX_PROOF_SECONDS, retained.expires_monotonic)
     principal = validate_access_jwt(request.get("access_jwt"),
         policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
-    # Retained accepted ingress is already bounded by the verified JWT.
-    status_deadline = retained.expires_monotonic
+    status_deadline = _absolute_jwt_deadline(retained.expires_monotonic, principal)
     if action == "admin-status":
         status_fields = {"schema", "op", "action", "nonce", "peer_pid", "peer_uid", "peer_gid",
             "access_jwt", "core_generation", "ingress_nonce", "ingress_proof_sha256"}
@@ -6304,10 +6313,14 @@ class CoreGatewayInspector:
                     or not _is_hash(derived.get("child_proof_sha256"))
                     or derived["revision"] != admin_context["revision"]
                     or derived["record_sha256"] != admin_context["record_sha256"]
-                    or type(derived["expires_monotonic"]) not in {int, float}
-                    or time.monotonic() >= derived["expires_monotonic"]
-                    or derived["expires_monotonic"] > admin_context["expires_monotonic"]):
+                    or not _valid_profile_admin_child_deadline(
+                        derived["expires_monotonic"],
+                        root_parent_deadline=proof.expires_monotonic)):
                 raise CoreGatewayDenied("Root profile child issuance is malformed or stale")
+            if (time.monotonic() >= deadline
+                    or accepted_ingress.verify_current(self._config) is not True
+                    or time.monotonic() >= admin_context["expires_monotonic"]):
+                raise CoreGatewayDenied("original accepted profile ingress expired during child issuance")
             body.update({"child_nonce": derived["child_nonce"],
                          "child_proof_sha256": derived["child_proof_sha256"]})
         result = _profile_admin_root_call(self._config, packet=body, nonce=nonce, deadline=deadline)

@@ -1285,6 +1285,94 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProfileAdminSingletonHttpTests(unittest.IsolatedAsyncioTestCase):
+    def test_status_context_caps_to_earlier_accepted_expiry_without_rejecting_root_child(self):
+        from hermes_installer.remote.jarvis_profiles_admin import CoreGatewayProfileAdminProvider
+
+        config = _config()
+        accepted = _accepted_observation(config, now=time.monotonic(), lease_seconds=1.0)
+        proof = accepted.root_observation
+        self.assertLess(accepted.expires_monotonic, proof.expires_monotonic)
+        scope = {"state": "active", "authorized": True, "revision": 5,
+            "record_sha256": "a" * 64,
+            "owner_subject_sha256": hashlib.sha256(
+                accepted.principal.subject.encode("utf-8")).hexdigest(),
+            "token_fingerprint_sha256": accepted.principal.token_fingerprint,
+            "config_sha256": config.config_sha256,
+            "core_generation": accepted.core_generation,
+            "parent_nonce": proof.nonce, "parent_proof_sha256": proof.proof_sha256,
+            "purpose": "profiles-native-skills",
+            "expires_monotonic": proof.expires_monotonic}
+        provider = CoreGatewayProfileAdminProvider(config)
+        with patch.object(provider, "_call", return_value={"data": {"state": "current"},
+                                                            "admin_scope": scope}):
+            context = provider.admin_status(access_jwt="unused-in-mocked-call",
+                                            accepted_ingress=accepted)
+        self.assertEqual(context.expires_monotonic, accepted.expires_monotonic)
+        # A genuine Root child may outlive this earlier local lease; the next
+        # client call still checks the immutable accepted/context deadline.
+        self.assertTrue(core_gateway_inspector._valid_profile_admin_child_deadline(
+            accepted.expires_monotonic + 0.1,
+            root_parent_deadline=proof.expires_monotonic))
+
+    def test_inspector_sdk_accepts_root_child_later_than_local_context_but_keeps_call_deadline(self):
+        config = _config()
+        token = "earlier-accepted-expiry-token"
+        base = _accepted_observation(config, now=time.monotonic(), lease_seconds=1.0)
+        principal = dataclasses.replace(base.principal,
+            token_fingerprint=hashlib.sha256(token.encode("ascii")).hexdigest())
+        claim = core_gateway._accepted_claim_digest(principal=principal,
+            jwt_expiry=base.jwt_expires_monotonic, root_proof=base.root_observation,
+            peer=(base.peer_pid, base.peer_uid, base.peer_gid),
+            listener=(base.listener_device, base.listener_inode),
+            issued=base.issued_monotonic, expiry=base.expires_monotonic,
+            core_generation=base.core_generation, config_sha256=base._config_sha256)
+        accepted = dataclasses.replace(base, principal=principal, _claim_sha256=claim)
+        proof = accepted.root_observation
+        local_deadline = accepted.expires_monotonic
+        self.assertLess(local_deadline, proof.expires_monotonic)
+        context = {"revision": 5, "record_sha256": "a" * 64,
+            "owner_subject_sha256": hashlib.sha256(principal.subject.encode()).hexdigest(),
+            "token_fingerprint_sha256": principal.token_fingerprint,
+            "config_sha256": config.config_sha256,
+            "core_generation": accepted.core_generation,
+            "parent_nonce": proof.nonce, "parent_proof_sha256": proof.proof_sha256,
+            "expires_monotonic": local_deadline}
+        calls = []
+
+        def root_call(_config, *, packet, nonce, deadline):
+            calls.append((packet["op"], deadline))
+            if packet["op"] == "derive-profile-admin-ingress":
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "child_nonce": "b" * 64, "child_proof_sha256": "c" * 64,
+                    "action": "list", "revision": 5, "record_sha256": "a" * 64,
+                    "expires_monotonic": proof.expires_monotonic}
+            scope = {"state": "active", "authorized": True, "revision": 5,
+                "record_sha256": "a" * 64,
+                "owner_subject_sha256": context["owner_subject_sha256"],
+                "token_fingerprint_sha256": context["token_fingerprint_sha256"],
+                "config_sha256": context["config_sha256"],
+                "core_generation": context["core_generation"],
+                "parent_nonce": proof.nonce, "parent_proof_sha256": proof.proof_sha256,
+                "purpose": "profiles-native-skills",
+                "expires_monotonic": proof.expires_monotonic}
+            return {"schema": 1, "nonce": nonce, "ok": True, "action": "list",
+                "result": {"data": [{"profile_id": "hermes"}], "admin_scope": scope}}
+
+        socket_stat = SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660,
+            st_uid=0, st_gid=config.gateway_gid)
+        with patch.object(core_gateway, "_read_config_current"), \
+             patch.object(core_gateway.CoreAcceptedIngressObservation,
+                          "verify_current", return_value=True), \
+             patch.object(core_gateway_inspector.os, "lstat", return_value=socket_stat), \
+             patch.object(core_gateway_inspector, "_profile_admin_root_call", side_effect=root_call):
+            result = core_gateway_inspector.CoreGatewayInspector(config).owner_profile_admin(
+                token, accepted, action="list", admin_context=context)
+        self.assertEqual(result["data"], [{"profile_id": "hermes"}])
+        self.assertEqual([item[0] for item in calls], [
+            "derive-profile-admin-ingress", "owner-profile-admin"])
+        self.assertTrue(all(deadline <= local_deadline for _op, deadline in calls))
+        self.assertLess(time.monotonic(), local_deadline)
+
     async def test_profiles_fail_closed_under_email_union_without_narrowing_family_reads(self):
         from hermes_installer.remote.core_gateway_inspector import CoreGatewayInspector
         from hermes_installer.remote.jarvis_ecosystem import install_jarvis_ecosystem_routes

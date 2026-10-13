@@ -361,7 +361,9 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
 
     async def verify_admin_current(request: Any) -> None:
         """Recheck Root scope for this request after waits and before bytes/effects."""
-        from .jarvis_profiles_admin import RootProfileAdminContext
+        from .jarvis_profiles_admin import (
+            RootProfileAdminContext, _same_current_root_admin_snapshot,
+        )
         captured = request.get("profile_admin_context")
         accepted = request.get("core_ingress")
         if (type(captured) is not RootProfileAdminContext or captured.authorized is not True
@@ -370,8 +372,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
         fresh = await asyncio.wait_for(asyncio.to_thread(
             skill_provider(request).admin_status, access_jwt=access_jwt(request),
             accepted_ingress=accepted), timeout=3.0)
-        if (type(fresh) is not RootProfileAdminContext or fresh != captured
-                or fresh.authorized is not True or time.monotonic() >= fresh.expires_monotonic):
+        if not _same_current_root_admin_snapshot(captured, fresh):
             raise JarvisChatDenied("original administrator status changed")
 
     async def inventory(request: Any) -> dict[str, Any]:
