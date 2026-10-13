@@ -711,6 +711,21 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
     os.chmod(home, 0o700)
     os.chmod(admin_home, 0o700)
 
+    # The migrated adapter recipe embeds HOME paths. Rebuild its complete
+    # journaled service files after selecting the isolated fixture home, before
+    # the later helper rebind asks the production reader to verify that recipe.
+    active_record = core._journal()
+    active_source = Path(active_record["adapter_source"])
+    active_unit = core._unit(adapter_source=active_source)
+    active_launcher = core._launcher(adapter_source=active_source)
+    core._atomic_replace(core.UNIT, active_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
+    core._atomic_replace(core.LAUNCHER, active_launcher, 0o755, core.ROOT_UID, core.ROOT_UID)
+    active_record.update({
+        "unit_sha256": hashlib.sha256(active_unit).hexdigest(),
+        "launcher_sha256": hashlib.sha256(active_launcher).hexdigest(),
+    })
+    core._replace_journal(active_record)
+
     # Keep the receipt and immutable CAS tied to the actual prior-helper bytes.
     current_record = core._write_resources_discovery()
     current_record.update({
