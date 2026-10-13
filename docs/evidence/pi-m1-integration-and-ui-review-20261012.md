@@ -406,6 +406,52 @@ Primary journal remained absent during and after v97. Source/tools match v96,
 whose170 checks were not repeated; broader changed fixture qualification and
 full update/recovery acceptance remain pending.
 
+The v105 candidate `f989ba66e50a4eee7bc707f57d156fb4f5f9be08`
+compiled on the Pi and passed strict specs/plan validation. Archive SHA-256
+`030a0ad6e818ef521d7a12c545024e4232f8998cf612636f84106aa5a071f7b5`.
+The new quick runner case executed the real private namespace/admin guard,
+emitted namespace-ready, and then the unchanged generated guard returned1.
+Result: one failure,55 deselected in0.54s; the recipe stopped before expensive
+update/recovery replay. Sol and Luna independently found production guard
+drift: the closed cohort-key set omits `native_plugin_transition`, backup
+membership still assumes9 instead of the exact conditional9/11 set, and the
+generated canonicalizer encodes a literal backslash-n rather than a newline.
+These require a reviewed source correction; fixture rows and expected success
+are retained. A bounded Sol review also found three stale test assumptions in
+interruption injection, rollback start ordering and the two-phase reload
+witness; their test-only correction is separate. Actual deployment, positive
+startup guard and recovery qualification remain pending.
+
+The v104 candidate `70c87e740d6d6cceeb146b32629fdc3afa00846e`
+compiled on the Pi and passed strict specs/plan validation. Archive SHA-256
+`8062e5f8d3934086c39555d0aae7ce5cdc405d729292560fed97479083619791`.
+The unchanged107 adopter/lifecycle checks were not repeated. Broader Core
+qualification again stopped at one failure and three passes,33 deselected
+in295.62s. Complete update returned successfully and the exact new unit and
+journaled unit digest matched. Its newly added real startup-guard execution
+was blocked before invocation by the fixture's blanket host-subprocess deny.
+The pending test-only runner correction captures the original subprocess
+runner before that deny and passes it only to the existing isolated
+unshare/admin guard helper; updater subprocesses remain denied and fixed live
+unit/launcher before-after identity checks remain mandatory. Positive guard,
+remaining success assertions and recovery qualification are still pending.
+The Pi Connect browser session reconnected as admin and authorized sudo
+restored the Root shell; no test result was discarded or rerun for reconnect.
+
+The v103 candidate `448aab6b4b6b0b398f3a7644c220071de53ebe70`
+compiled on the Pi and passed strict specs/plan validation. Archive SHA-256
+`3c26cf6ab9ba00b68f7f8185ef27eccac1910cbfbf90d9d23d492d89946da799`.
+The affected native adopter/lifecycle group passed107 tests in0.44s. The
+broader Core update/recovery group stopped at its first failure: three passes,
+one failure,33 deselected in297.28s. Complete controlled update returned its
+success result and passed the new journal/source/selection/launcher checks;
+the fixture then incorrectly required the new source-specific unit bytes to
+equal the prior unit. The pending test-only correction must require exact new
+unit and digest, positive new-unit startup guard, negative old-unit guard,
+and preserved old unit in the immutable backup. The rest of that positive
+case and the selected recovery cases remain unqualified. No new live source
+deployment follows this intermediate updater result.
+
 The v102 candidate `1de46f19219790842b02cd4dfd0be947ef08cf0b`
 compiled on the Pi and passed strict specs/plan validation, including the
 Managed OAuth research-only refinement. Archive SHA-256
