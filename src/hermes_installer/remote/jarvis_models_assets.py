@@ -206,7 +206,12 @@ _MOUNT_JS = r'''function mount(root, api, context = {}) {
       if (active && selectedConversation === conversation.value && resultRevision === settingsReadRevision
           && result && result.state === "unknown-pending") status(messages["unknown-pending"]);
     } catch (_) {
-      if (isCurrent()) status("Selection was not confirmed. Refresh model status before making another selection.");
+      if (isCurrent()) {
+        revision = null; snapshot = null;
+        choice.disabled = true; apply.disabled = true;
+        choice.replaceChildren(new Option("Re-select the conversation to refresh model status", ""));
+        status("Selection was not confirmed. Re-select this conversation to load a fresh revision before trying again.");
+      }
     } finally {
       selectionPending = false;
       if (active) updateApply();
