@@ -799,22 +799,28 @@ def _rebind_fixture_resources_to_current_journal():
 
 
 def _fake_update_pidfd(monkeypatch, enabled, request):
-    """Model an owned service PIDFD whose liveness follows the fake service."""
-    read_fd, write_fd = os.pipe()
-    open_state = {"read": read_fd, "write": write_fd}
-    pid = 424242
+    """Model one live PIDFD per fake service incarnation."""
+    pipe_fds = []
+    writers = {}
+    latest = {"pidfd": None}
+    # The real PIDFD listener verifier must observe a live OS process. Model
+    # the fake systemd MainPID as this test process while keeping Core's held
+    # incarnation PIDFDs as independently stoppable pipes below.
+    pid = os.getpid()
 
     def cleanup_pipe():
-        for name in ("read", "write"):
-            fd = open_state[name]
-            if fd is not None:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                open_state[name] = None
+        for fd in pipe_fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
     request.addfinalizer(cleanup_pipe)
+
+    def close_writer(pidfd):
+        writer = writers.pop(pidfd, None)
+        if writer is not None:
+            os.close(writer)
 
     def identity(source, adapter_generation, core_generation, actual_pid):
         assert actual_pid == pid
@@ -826,7 +832,13 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
 
     def capture(source, adapter_generation, core_generation):
         evidence, digest = identity(source, adapter_generation, core_generation, pid)
-        return os.dup(read_fd), pid, evidence, digest
+        # A restarted fake service gets a new unread pipe. Reusing the old
+        # pipe would leave the new process's pseudo-PIDFD readable at EOF.
+        read_fd, write_fd = os.pipe()
+        pipe_fds.extend((read_fd, write_fd))
+        writers[read_fd] = write_fd
+        latest["pidfd"] = read_fd
+        return read_fd, pid, evidence, digest
 
     def stop(pidfd, actual_pid, source, adapter_generation, core_generation, expected):
         _evidence, actual = identity(source, adapter_generation, core_generation, actual_pid)
@@ -834,8 +846,7 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
         poller.register(pidfd, select.POLLIN | select.POLLHUP)
         assert actual == expected and not poller.poll(0)
         core._run(["systemctl", "stop", core.SERVICE])
-        os.close(open_state["write"])
-        open_state["write"] = None
+        close_writer(pidfd)
         enabled["value"] = False
         assert poller.poll(0)
         assert core._run(["systemctl", "is-active", core.SERVICE], False).stdout.strip() != "active"
@@ -845,16 +856,32 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
             assert any(core._owned_listener(adapter_source=source) for source in allowed_sources)
         core._run(["systemctl", "stop", core.SERVICE])
         enabled["value"] = False
-        if open_state["write"] is not None:
-            os.close(open_state["write"])
-            open_state["write"] = None
+        if latest["pidfd"] is not None:
+            close_writer(latest["pidfd"])
+
+    real_run = core._run
+
+    def fake_service_main_pid(argv, check=True):
+        if argv == ["systemctl", "show", "--property=MainPID", "--value", core.SERVICE]:
+            return SimpleNamespace(stdout=(f"{pid}\n" if enabled["value"] else "0\n"),
+                                   returncode=0)
+        return real_run(argv, check)
+
+    def fake_owned_listener(*, adapter_source=core.ADAPTER_SOURCE):
+        if not enabled["value"]:
+            return False
+        try:
+            journal = json.loads(core.JOURNAL.read_bytes())
+        except (OSError, ValueError, TypeError):
+            return False
+        return journal.get("adapter_source") == str(adapter_source)
 
     monkeypatch.setattr(core, "_adapter_process_identity", identity)
     monkeypatch.setattr(core, "_capture_adapter_service_process", capture)
     monkeypatch.setattr(core, "_stop_captured_adapter_process", stop)
     monkeypatch.setattr(core, "_stop_owned_core_for_adapter_update", stop_owned)
-    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
-    monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
+    monkeypatch.setattr(core, "_owned_listener", fake_owned_listener)
+    monkeypatch.setattr(core, "_run", fake_service_main_pid)
 
 
 def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
