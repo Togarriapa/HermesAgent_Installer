@@ -2647,3 +2647,15 @@ The installer SHALL wait for the exact protected prior adapter source when resto
 #### Scenario: Default current-source wait remains strict
 - **WHEN** ordinary current-source startup uses the default wait or a recovery listener does not match its explicit expected source
 - **THEN** defaults still check the current module source, and mismatch produces the original bounded refusal. Pi contracts execute the real wait and preserve source-aware predicate and actual restoration coverage; source review and exact pin qualification precede acceptance.
+
+### Requirement: Bounded suppressed qualification context frames
+The installer SHALL retain sanitized bounded cause/context source frames for fixed CLI qualification failures while preserving the existing origin schema, main-only tracing, exception-value redaction and execution gates.
+
+#### Scenario: Recovery suppresses an original failure
+- **WHEN** the verified entry frame receives a failure whose underlying cause or context was suppressed by recovery
+- **THEN** diagnostics retain the outer exception type and at most12 source-relative path/function/line frames across at most four exception objects, following cause otherwise context with cycle handling; no values, locals or raw output are exposed.
+- **AND** truncation is not complete first-cause proof, successful CLI execution discards the origin, and existing strict report schema, trace reset, source custody and deadlines remain unchanged.
+
+#### Scenario: Meaningful context fidelity precedes another actual retry
+- **WHEN** bounded context projection is added after candidate149 restored-old-state recovery
+- **THEN** Pi contracts exercise actual suppressed nested failure locations, private-value omission, cycle/depth bounds, successful-origin removal and unchanged main-only callback behavior before Root uses the exact tool for a new apply. Original update cause and actual adoption remain unaccepted until returned evidence.

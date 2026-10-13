@@ -239,3 +239,7 @@ Actual candidate146 adoption failed in fixed Root qualification and explicit jou
 ### R0201/#35 recovery listener source correction
 
 Actual candidate149 recovery restored prior files and started the old adapter, then failed the listener wait because that wait implicitly expected the incoming module's source. The subsequent explicit prior-source PIDFD check already expresses the correct intended identity. Refine existing exact-prior recovery to pass the retained validated prior adapter source to the real bounded wait. Preserve all custody/currentness, immutable backup and unit recipe guards, the 30-second wait, and all other current-source waits. Current recovery/restoration outcomes remain separate Root evidence; this refinement does not authorize executing old adapter source in the incoming controller.
+
+### R0201/#35 bounded suppressed failure context
+
+Candidate149's valid CLI report retained the outer Core recovery error but not the suppressed underlying failure locations. Before another actual apply, refine existing entry-only diagnostics to inspect the exception's bounded cause/context chain and retain sanitized source frames. Keep the existing origin schema and report validator, no exception values or raw output, no broader execution tracing, and no timing/authority change. This supplies diagnostic evidence only; actual149's original update cause remains unknown until observed.
