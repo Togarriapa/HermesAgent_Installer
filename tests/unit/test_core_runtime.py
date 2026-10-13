@@ -1354,7 +1354,7 @@ def _fake_update_pidfd(monkeypatch, enabled, request):
 
 
 def _prepare_cohort_resource_materialization(
-        tmp_path, monkeypatch, request, *, registered_obsidian=False):
+        tmp_path, monkeypatch, request, *, registered_obsidian=False, owner_overlay=False):
     """Install a real old-helper generation and bind its receipt to the current journal."""
     from hermes_installer.registry import manual_jarvis_skills as native
     from hermes_installer.remote import obsidian_owner_lifecycle as obsidian
@@ -1434,6 +1434,31 @@ def _prepare_cohort_resource_materialization(
         native._zip_write(package, "manual_stage_jarvis_skills.py", previous_helper)
     old_archive = stream.getvalue()
     old_sha = hashlib.sha256(old_archive).hexdigest()
+    old_base_archive, old_base_sha = old_archive, old_sha
+    if owner_overlay:
+        from hermes_installer.registry import resources_skill_overlay as transform
+
+        skill_id = manifest["skill_members"][0]["skill_id"]
+        overlay_content = f"---\nname: {skill_id}\n---\ncontrolled owner overlay\n".encode("utf-8")
+        old_archive, old_sha = transform.build_effective_artifact(
+            old_base_archive, skill_id, overlay_content)
+        manifest, files = native._read_artifact(old_archive, old_sha)
+        content_sha = hashlib.sha256(overlay_content).hexdigest()
+        overlay_record = {
+            "schema": 1,
+            "base_artifact_sha256": old_base_sha,
+            "skills": {skill_id: {
+                "content_sha256": content_sha,
+                "archive_sha256": old_sha,
+            }},
+        }
+        overlay_root = core.RESOURCES_SKILL_OVERLAYS
+        overlay_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        overlay_raw = native._canonical_json(overlay_record)
+        core._atomic_replace(overlay_root / "active.json", overlay_raw,
+            0o600, core.ROOT_UID, core.ROOT_UID)
+        core._atomic_replace(overlay_root / (content_sha + ".bin"), overlay_content,
+            0o600, core.ROOT_UID, core.ROOT_UID)
 
     # _hash_generation_tree enforces real root-owned ancestors and the exact
     # admin-owned .hermes subtree; keep the fixture inside a private root path.
@@ -1502,13 +1527,31 @@ def _prepare_cohort_resource_materialization(
 
     # Keep the receipt and immutable CAS tied to the actual prior-helper bytes.
     current_record = core._write_resources_discovery()
+    ownership_sha = core._hash_generation_tree(home, manifest, files, old_sha)
+    skill_inventory = native._canonical_json([
+        {"skill_id": row["skill_id"],
+         "sha256": hashlib.sha256(files[row["archive_path"]]).hexdigest()}
+        for row in sorted(manifest["skill_members"], key=lambda item: item["skill_id"])
+    ])
+    active_prompt_sha = hashlib.sha256(prior_soul).hexdigest()
+    bundled_prompt_sha = hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest()
+    effective_overlay = manifest["effective_overlay"]
     current_record.update({
         "artifact_sha256": old_sha,
-        "ownership_manifest_sha256": hashlib.sha256(
-            native._canonical_json(manifest)).hexdigest(),
+        "ownership_manifest_sha256": ownership_sha,
+        "loaded_skill_inventory_sha256": hashlib.sha256(skill_inventory).hexdigest(),
+        "active_primary_prompt_sha256": active_prompt_sha,
+        "bundled_primary_prompt_sha256": bundled_prompt_sha,
+        "active_prompt_matches_bundled_primary": active_prompt_sha == bundled_prompt_sha,
+        "effective_overlay": {key: effective_overlay.get(key) for key in (
+            "overlay_id", "approval_commit", "sha256", "upstream_revision", "upstream_tree",
+            "source_declarations", "compiled_profiles", "compiled_bundle")},
     })
     core._atomic_replace(core.RESOURCES_CAS / (old_sha + ".zip"), old_archive,
                          0o600, core.ROOT_UID, core.ROOT_UID)
+    if owner_overlay:
+        core._atomic_replace(core.RESOURCES_CAS / (old_base_sha + ".zip"), old_base_archive,
+                             0o600, core.ROOT_UID, core.ROOT_UID)
     core._atomic_replace(
         core.RESOURCES_RECORD,
         (json.dumps(current_record, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"),
@@ -1709,12 +1752,14 @@ def _fixed_service_path_identity():
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update proof requires the real root actor")
+@pytest.mark.parametrize("owner_overlay", [False, True])
 def test_incoming_adapter_verifies_old_a0_without_relaxing_public_discovery(
-        tmp_path, monkeypatch, request):
+        tmp_path, monkeypatch, request, owner_overlay):
     calls, enabled, _launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
-    _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
+    _prepare_cohort_resource_materialization(
+        tmp_path, monkeypatch, request, owner_overlay=owner_overlay)
     _rebind_migrated_fixture_to_prior_generation()
     calls_before = list(calls)
 
@@ -1733,14 +1778,16 @@ def test_incoming_adapter_verifies_old_a0_without_relaxing_public_discovery(
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update proof requires the real root actor")
 @pytest.mark.parametrize("tamper", [
     "receipt", "inventory", "tree", "soul", "aba", "cas", "cas-custody", "owner",
-    "journal", "overlay", "overlay-content",
+    "journal", "overlay", "overlay-content", "overlay-appearance",
 ])
 def test_incoming_adapter_old_a0_proof_denies_tamper_before_effects(
         tmp_path, monkeypatch, request, tamper):
     calls, enabled, _launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
-    _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
+    _prepare_cohort_resource_materialization(
+        tmp_path, monkeypatch, request,
+        owner_overlay=tamper in {"overlay", "overlay-content"})
     _rebind_migrated_fixture_to_prior_generation()
     calls_before = list(calls)
     receipt_path = core.RESOURCES_RECORD
@@ -1810,13 +1857,23 @@ def test_incoming_adapter_old_a0_proof_denies_tamper_before_effects(
             changed_identity_path = core.RESOURCES_SKILL_OVERLAYS / (digest + ".bin")
             changed_identity_bytes = changed_identity_path.read_bytes()
             changed_identity_path.write_bytes(changed_identity_bytes + b"foreign")
+        elif tamper == "overlay-appearance":
+            overlay_root = core.RESOURCES_SKILL_OVERLAYS
+            overlay_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            changed_identity_path = overlay_root / "active.json"
+            changed_identity_bytes = None
+            changed_identity_path.write_bytes(core._canonical_json({
+                "schema": 1,
+                "base_artifact_sha256": inputs["old_artifact"],
+                "skills": {},
+            }))
         with pytest.raises(core.CoreRuntimeError):
             _verify_adapter_a0_migration_proof(inputs)
         if changed_path is not None and changed_bytes is not None:
             changed_path.write_bytes(changed_bytes)
         if changed_mode is not None:
             changed_path.chmod(changed_mode)
-        if changed_identity_path is not None:
+        if changed_identity_path is not None and changed_identity_bytes is not None:
             changed_identity_path.write_bytes(changed_identity_bytes)
     core._atomic_replace(receipt_path, original_receipt,
         0o600, core.ROOT_UID, core.ROOT_UID)
