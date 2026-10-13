@@ -34,6 +34,8 @@ _MOUNT_JS = r'''function mount(root, api, context = {}) {
   let active = true;
   let revision = null;
   let snapshot = null;
+  let settingsReadRevision = 0;
+  let selectionPending = false;
   const query = (selector) => root.querySelector(selector);
   const put = (selector, value) => { const node = query(selector); if (node) node.textContent = value; };
   const status = (value) => put("[data-models-status]", value);
@@ -56,7 +58,7 @@ _MOUNT_JS = r'''function mount(root, api, context = {}) {
   put("[data-models-catalog]", "Choose a conversation to load its current model state.");
   status("Loading your conversations.");
   function updateApply() {
-    apply.disabled = !(snapshot && revision && snapshot.selectionAvailability === "available"
+    apply.disabled = selectionPending || !(snapshot && revision && snapshot.selectionAvailability === "available"
       && safeId(conversation.value) && safeModel(choice.value));
   }
   function token() {
@@ -64,13 +66,24 @@ _MOUNT_JS = r'''function mount(root, api, context = {}) {
     return Array.from(bytes, (part) => part.toString(16).padStart(2, "0")).join("");
   }
   async function refreshSettings() {
+    const id = conversation.value, readRevision = ++settingsReadRevision;
+    const isCurrent = () => active && readRevision === settingsReadRevision && id === conversation.value;
     revision = null; snapshot = null; choice.disabled = true; apply.disabled = true;
     choice.replaceChildren(new Option("Loading model selection…", ""));
-    const id = conversation.value;
-    if (!safeId(id)) return;
+    put("[data-models-provider]", "Pending verification");
+    put("[data-models-model]", "Pending verification");
+    put("[data-models-account]", "Unknown");
+    put("[data-models-selection]", "Not observed");
+    put("[data-models-catalog]", "Loading the selected conversation's model state.");
+    if (!safeId(id)) {
+      status("Choose a conversation to inspect and change its model.");
+      updateApply();
+      return;
+    }
+    status("Loading current settings for the selected conversation.");
     try {
       const data = await api.get(`/chat/api/conversations/${encodeURIComponent(id)}/model-settings`);
-      if (!active || id !== conversation.value) return;
+      if (!isCurrent()) return;
       if (!data || data.status !== "observed" || !Array.isArray(data.models) || data.models.length !== 9)
         throw new Error("invalid model settings");
       snapshot = data;
@@ -123,7 +136,7 @@ _MOUNT_JS = r'''function mount(root, api, context = {}) {
       status("Current sanitized settings are loaded for your selected conversation.");
       updateApply();
     } catch (_) {
-      if (!active || id !== conversation.value) return;
+      if (!isCurrent()) return;
       revision = null; snapshot = null;
       choice.replaceChildren(); choice.add(new Option("Unavailable", ""));
       choice.disabled = true;
@@ -131,6 +144,8 @@ _MOUNT_JS = r'''function mount(root, api, context = {}) {
       put("[data-models-account]", "Unknown"); put("[data-models-selection]", "Not observed");
       put("[data-models-catalog]", "Native model settings are unavailable; no change was made.");
       status("Current model settings are unavailable.");
+    } finally {
+      if (isCurrent()) updateApply();
     }
   }
   async function loadConversations() {
@@ -163,16 +178,22 @@ _MOUNT_JS = r'''function mount(root, api, context = {}) {
   conversation.addEventListener("change", refreshSettings);
   choice.addEventListener("change", updateApply);
   const handleApply = async () => {
-    if (!snapshot || !revision || apply.disabled) return;
-    apply.disabled = true;
-    status("Submitting a session-scoped model selection.");
+    if (selectionPending || !snapshot || !revision || apply.disabled) return;
     const selectedConversation = conversation.value;
+    const selectedModel = choice.value;
+    const selectedRevision = revision;
+    const readRevision = settingsReadRevision;
+    const isCurrent = () => active && selectedConversation === conversation.value
+      && readRevision === settingsReadRevision;
+    selectionPending = true;
+    updateApply();
+    status("Submitting a session-scoped model selection.");
     try {
       const result = await api.post(`/chat/api/conversations/${encodeURIComponent(selectedConversation)}/model-selection`, {
-        model_id: choice.value, revision: revision.revision,
-        approval_nonce: revision.approval_nonce, idempotency_key: token()
+        model_id: selectedModel, revision: selectedRevision.revision,
+        approval_nonce: selectedRevision.approval_nonce, idempotency_key: token()
       });
-      if (!active || selectedConversation !== conversation.value) return;
+      if (!isCurrent()) return;
       const messages = {
         "selected-for-session": "Hermes accepted this model for the selected conversation. Future route execution has not been observed.",
         "deferred-next-turn": "Hermes queued this model for the next turn in the selected conversation.",
@@ -180,9 +201,15 @@ _MOUNT_JS = r'''function mount(root, api, context = {}) {
         "unknown-pending": "The native result is unknown; the request was not retried. Refresh status before trying again."
       };
       status(messages[result && result.state] || "The native selection result is unknown.");
-      await refreshSettings();
+      const readback = refreshSettings(), resultRevision = settingsReadRevision;
+      await readback;
+      if (active && selectedConversation === conversation.value && resultRevision === settingsReadRevision
+          && result && result.state === "unknown-pending") status(messages["unknown-pending"]);
     } catch (_) {
-      if (active) status("Selection was not confirmed. Refresh model status before making another selection.");
+      if (isCurrent()) status("Selection was not confirmed. Refresh model status before making another selection.");
+    } finally {
+      selectionPending = false;
+      if (active) updateApply();
     }
   };
   apply.addEventListener("click", handleApply);
