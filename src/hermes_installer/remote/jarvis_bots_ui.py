@@ -47,6 +47,7 @@ _MOUNT = r'''function mount(container, api, state) {
   let unresolvedPauseRevision = null;
   const pauseApprovals = new Map();
   const click = async (event) => {
+    if (!active) return;
     const sectionButton = event.target.closest("[data-bots-section]");
     const refreshButton = event.target.closest("[data-bots-refresh]");
     const pauseButton = event.target.closest("[data-schedule-pause]");
@@ -62,24 +63,20 @@ _MOUNT = r'''function mount(container, api, state) {
       const idempotencyKey = Array.from(keyBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
       pauseApprovals.delete(id);
       unresolvedPauseRevision = approval.revision;
-      let result = { status: "pending" };
+      const actionSection = selected;
+      const actionRequest = ++requestSerial;
+      const isActionCurrent = () => active && selected === actionSection && requestSerial === actionRequest;
       try {
-        result = await api.post("/chat/api/schedules/" + encodeURIComponent(id) + "/pause", {
+        await api.post("/chat/api/schedules/" + encodeURIComponent(id) + "/pause", {
           revision: approval.revision,
           approval_nonce: approval.nonce,
           idempotency_key: idempotencyKey,
         });
       } catch (_) {
-        result = { status: "pending" };
+        // Keep the one-use revision spent; a current Schedules read is the recovery path.
       }
-      if (!active) return;
-      if (result.status === "paused") unresolvedPauseRevision = null;
+      if (!isActionCurrent()) return;
       await load();
-      if (!active) return;
-      const status = container.querySelector("[data-bots-status]");
-      status.textContent = result.status === "paused"
-        ? "Pause was confirmed by the current Hermes core."
-        : "Pause result is pending or could not be confirmed. Refresh to inspect current core status.";
       return;
     }
     if (sectionButton) {
@@ -174,26 +171,31 @@ _MOUNT = r'''function mount(container, api, state) {
   const load = async () => {
     if (!active) return;
     const serial = ++requestSerial;
+    const section = selected;
+    const isCurrent = () => active && serial === requestSerial && selected === section;
     pauseApprovals.clear();
     const status = container.querySelector("[data-bots-status]");
     status.textContent = "Loading current status…";
     try {
-      const path = selected === "channels" ? "/chat/api/channels"
-        : selected === "schedules" ? "/chat/api/schedules" : "/chat/api/bots";
+      const path = section === "channels" ? "/chat/api/channels"
+        : section === "schedules" ? "/chat/api/schedules" : "/chat/api/bots";
       let snapshot = await api.get(path);
-      if (selected === "bots") {
+      if (!isCurrent()) return;
+      if (section === "bots") {
         try {
           const roster = await api.get("/chat/api/bot-rooms");
+          if (!isCurrent()) return;
           snapshot = { ...snapshot, bot_roster: roster };
         } catch (_) {
+          if (!isCurrent()) return;
           snapshot = { ...snapshot, bot_roster: { profiles: [], pending_reasons: [
             "Owner-enrolled Bot readiness is unavailable until its protected roster endpoint is connected."
           ] } };
         }
       }
-      if (active && serial === requestSerial) render(snapshot);
+      if (isCurrent()) render(snapshot);
     } catch (_) {
-      if (active && serial === requestSerial) {
+      if (isCurrent()) {
         status.textContent = unresolvedPauseRevision
           ? "Pause result is unconfirmed and current status could not be read. Refresh before trying another action."
           : "Status could not be read. Try refreshing after core connectivity returns.";
