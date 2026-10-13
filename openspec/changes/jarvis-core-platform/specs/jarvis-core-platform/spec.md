@@ -2540,3 +2540,14 @@ Profiles backend and authoritative Inspector SHALL independently require exactly
 - **WHEN** the single configured approved principal uses existing reviewed global operations with current original ingress/Core/source and exact preview/CAS
 - **THEN** existing finite positive behavior and failure/recovery remain without minting an original-admin role; ordinary approved family chat, owner Projects and read-only Experts catalog/ecosystem remain unchanged under multiple-email configurations.
 - **AND** issue#33 requires exact Pi backend/Inspector positive, direct-bypass denial and family-chat/Experts preservation plus affected/full-shell UI revision before adoption; full original-admin/multi-email global writes stay pending#21 and no account/allowlist or authority producer changes follow.
+
+### Requirement: Interrupted recovery owns the existing adapter lock
+Interrupted Core recovery SHALL acquire the existing adapter-update lock before retained journal reads or effects when called unlocked. Already-held callers SHALL reuse a private locked implementation without nested acquisition or releasing their lock. Root custody/currentness/CAS/backup/native transition/receipt checks SHALL remain unchanged; no assurance flag or unlocked effect SHALL substitute.
+
+#### Scenario: Unlocked genuine startup recovers an interrupted cohort
+- **WHEN** root_setup reaches install_or_resume and interrupted recovery without an outer adapter lock
+- **THEN** the entrypoint acquires the existing protected sorted lock set, re-reads current retained journals under lock and performs exact prior native/owner/Resources/service restoration using unchanged proof and receipts; Root Pi qualifies the new exact Source/hash rather than reusing old-source acceptance.
+
+#### Scenario: Already-held recovery or failed retained proof
+- **WHEN** an updater already holds the lock, or nonroot/changed lock custody/backup/currentness/native receipt prevents recovery
+- **THEN** the private locked path neither nests nor releases its caller's lock; invalid proof denies before effects and retains protected recovery evidence, and an unlocked entrypoint releases only its own acquisition on success/failure. Exact restoration/effect and negative guards require meaningful Pi contracts.
