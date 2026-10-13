@@ -362,14 +362,26 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     monkeypatch.setattr(core, "LIBEXEC_DIR", libexec)
     monkeypatch.setattr(core, "TOKEN", etc / "jarvis-core" / "session-token")
     monkeypatch.setattr(core, "JOURNAL", var / "core-runtime" / "ownership.json")
+    monkeypatch.setattr(core, "RESOURCES_MIGRATION_RECORD",
+                        var / "core-runtime" / "resources-migration-backup.json")
     monkeypatch.setattr(core, "ADAPTER_UPDATE_COHORT",
                         var / "core-runtime" / "adapter-update-cohort.json")
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS",
                         var / "core-runtime" / "adapter-update-backups")
+    monkeypatch.setattr(core, "ADAPTER_MIGRATION_BACKUP",
+                        var / "core-runtime" / "adapter-migration-backup")
     monkeypatch.setattr(core, "RESOURCES_RECORD",
                         var / "core-runtime" / "resources-discovery.json")
     monkeypatch.setattr(core, "RESOURCES_CAS",
                         var / "core-runtime" / "resources-cas")
+    monkeypatch.setattr(core, "PRIMARY_PROMPT_JOURNAL",
+                        var / "core-runtime" / "primary-prompt-ownership.json")
+    monkeypatch.setattr(core, "PRIMARY_PROMPT_BACKUPS",
+                        var / "core-runtime" / "primary-prompt-backups")
+    monkeypatch.setattr(core, "RESOURCES_SKILL_OVERLAYS",
+                        var / "core-runtime" / "resources-skill-overlays")
+    monkeypatch.setattr(core, "NATIVE_ADOPTION_INGRESS_BACKUP",
+                        var / "core-runtime" / "native-adoption-ingress-backup.json")
     monkeypatch.setattr(core, "UNIT", unit_dir / core.SERVICE)
     monkeypatch.setattr(core, "LAUNCHER", libexec / "hermes-jarvis-core-launcher")
     monkeypatch.setattr(core, "HOME", home.parent)
@@ -381,6 +393,22 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
         (core.UNIT, "unit_sha256", os.getuid(), os.getuid(), 0o644),
         (core.LAUNCHER, "launcher_sha256", os.getuid(), os.getuid(), 0o755),
         (core.TOKEN, "token_sha256", os.getuid(), os.getgid(), 0o640)))
+    fixture_root = tmp_path.resolve()
+    controlled_write_paths = (
+        core.ETC_INSTALLER, core.VAR_LIB_INSTALLER, core.SYSTEMD_UNIT_DIR,
+        core.LIBEXEC_DIR, core.TOKEN, core.JOURNAL, core.RESOURCES_RECORD,
+        core.RESOURCES_CAS, core.RESOURCES_MIGRATION_RECORD,
+        core.PRIMARY_PROMPT_JOURNAL, core.PRIMARY_PROMPT_BACKUPS,
+        core.RESOURCES_SKILL_OVERLAYS, core.ADAPTER_MIGRATION_BACKUP,
+        core.ADAPTER_UPDATE_BACKUPS, core.ADAPTER_UPDATE_COHORT,
+        core.NATIVE_ADOPTION_INGRESS_BACKUP,
+    )
+    outside = [str(path) for path in controlled_write_paths
+               if not path.resolve().is_relative_to(fixture_root)]
+    if outside:
+        raise AssertionError(f"Core fixture write paths escaped tmp_path: {outside}")
+    if not core.HERMES_HOME.resolve().is_relative_to(fixture_root):
+        raise AssertionError("initial Core fixture Hermes home is outside tmp_path")
     monkeypatch.setattr(core.os, "geteuid", lambda: 0)
 
     class Account:
