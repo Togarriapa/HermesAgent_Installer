@@ -2365,6 +2365,11 @@ R0140/R0200..R0203 SHALL qualify protected text/foreground voice and opt-in indi
 - **THEN** treat its application-spanning duration, single-user device registration and unsupported Binding Cookie as qualification constraints. Current enabled Binding Cookie/no enrolled WARP clients prevent presenting it as operational native pairing; preserve verified30-day web convenience and current protection, with no research-only global toggle, enrollment or cookie removal.
 - **AND** renewable individually revocable native Android/tablet continuity remains pending actual compatibility/account/device/refresh/revocation proof, including shared-device account change. No hourly/daily prompts in normal qualified paired use remains the target; M1 and all existing owner/turn/lease gates continue independently.
 
+#### Scenario: Managed OAuth candidate lacks device-revocation qualification
+- **WHEN** a user-based OAuth/refresh route is proposed for native Android/tablet continuity
+- **THEN** require supported account/client/redirect/PKCE discovery, preserved current browser protection/allowlist, verified signed-assertion identity and actual finite gateway compatibility. Qualify bounded refresh, device credential/storage boundary and individually scoped revocation including residual access tokens and original turn/lease deadlines; storage separation alone is not device binding.
+- **AND** absent per-grant/identity/device proof keeps native pairing unavailable, with existing web/PWA preserved. No global toggle, account enablement, broader auth schema, cookie copying, revived turn or final-action authority follows research. Maximum duration/feature status remain unverified until account evidence; M1 and all eight OPEN groups continue.
+
 #### Scenario: Unsupported hotword, uncertain speaker or offline device
 - **WHEN** native role/recognition/background support is unqualified, speaker identity is uncertain or current network/authentication is absent
 - **THEN** the feature remains unavailable with practical text/foreground fallback and exact next gate; no private persona selection, silent consequential queue or final authority derives from voice/device familiarity.
