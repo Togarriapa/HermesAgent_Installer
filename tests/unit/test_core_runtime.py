@@ -5,6 +5,7 @@ performed separately on the enrolled Pi.
 """
 import hashlib
 import contextlib
+import ctypes
 import io
 import json
 import os
@@ -183,6 +184,55 @@ exec "$runuser_bin" -u admin -- "$@"
             child.unlink()
         cred_dir.rmdir()
         cred_view.rmdir()
+
+
+def _bind_private_fixed_hermes_home(source, request):
+    """Bind a disposable owner tree at the real fixed path inside a private mount namespace."""
+    if os.geteuid() != 0 or not hasattr(os, "unshare"):
+        raise AssertionError("the owner-import fixture requires Root mount-namespace support")
+    target = Path("/home/admin/.hermes")
+    if target.is_symlink() or not target.is_dir():
+        raise AssertionError("fixed Hermes home is unavailable for the private bind fixture")
+    source_info = source.lstat()
+    target_info = target.lstat()
+    if (stat.S_ISLNK(source_info.st_mode) or not stat.S_ISDIR(source_info.st_mode)
+            or source_info.st_uid != target_info.st_uid or source_info.st_gid != target_info.st_gid
+            or stat.S_IMODE(source_info.st_mode) != 0o700):
+        raise AssertionError("temporary Hermes home does not match fixed owner custody")
+    before = os.stat("/proc/self/ns/mnt").st_ino
+    os.unshare(getattr(os, "CLONE_NEWNS", 0x00020000))
+    if os.stat("/proc/self/ns/mnt").st_ino == before:
+        raise AssertionError("owner-import fixture did not enter a private mount namespace")
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    mount = libc.mount
+    mount.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+                      ctypes.c_ulong, ctypes.c_void_p)
+    mount.restype = ctypes.c_int
+    umount2 = libc.umount2
+    umount2.argtypes = (ctypes.c_char_p, ctypes.c_int)
+    umount2.restype = ctypes.c_int
+
+    def require_mount(result, action):
+        if result != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error), action)
+
+    # Keep every mount in this test's namespace; do not propagate it to the Pi.
+    require_mount(mount(None, b"/", None, 0x4000 | 0x40000, None), "private root mounts")
+    require_mount(mount(os.fsencode(source), os.fsencode(target), None, 0x1000, None),
+                  "temporary Hermes home bind")
+
+    def cleanup():
+        if umount2(os.fsencode(target), 0) != 0:
+            error = ctypes.get_errno()
+            raise AssertionError(f"could not unmount the private Hermes fixture: {error}")
+
+    request.addfinalizer(cleanup)
+    if (os.stat(source).st_dev, os.stat(source).st_ino) != (
+            os.stat(target).st_dev, os.stat(target).st_ino):
+        umount2(os.fsencode(target), 0)
+        raise AssertionError("fixed Hermes home does not resolve to the disposable tree")
 
 
 def _resource_receipt(*, prompt_matches=False):
@@ -790,6 +840,12 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
     os.chown(admin_home, account.pw_uid, account.pw_gid)
     os.chmod(home, 0o700)
     os.chmod(admin_home, 0o700)
+    _bind_private_fixed_hermes_home(home, request)
+    fixed_home = Path("/home/admin")
+    fixed_hermes_home = fixed_home / ".hermes"
+    monkeypatch.setattr(core, "HOME", fixed_home)
+    monkeypatch.setattr(core, "HERMES_HOME", fixed_hermes_home)
+    monkeypatch.setattr(native, "_JARVIS_HOME", fixed_hermes_home)
 
     # The migrated adapter recipe embeds HOME paths. Rebuild its complete
     # journaled service files after selecting the isolated fixture home, before
