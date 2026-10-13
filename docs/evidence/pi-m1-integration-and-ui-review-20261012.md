@@ -59,6 +59,18 @@ limited to9 members; transition backups contain exactly11. The candidate is
 not admitted for staging/apply until the conditional consumer and all failed
 checks are repaired and verified. Production remains on the old source.
 
+The v71 candidate `b615af1a213500b1538bb56a5ddb8b04c1e6e757` compiled
+on the Pi and passed strict specs/plan validation. First group1 failed/155
+passed in12.74s; expanded Core group4 failed/14 passed in2.06s. Archive
+SHA-256 `499b59357d231a9cb1082b0d933f0c6b3a9557c92e5eed06ede5ba7ec96f5ffa`.
+The conditional11-member setter/backup checks and initial-primary repair
+passed. The report tamper fixture shared a mutable dictionary with its
+comparison field, so its mutation changed both sides; the corrected fixture
+retains independent fields and the prior protected-report denial assertion.
+Four old Core fixtures now reach the genuine Resources cohort snapshot but
+do not supply its required discovery state/source joins. Those positive
+cycle fixtures remain pending repair; no production proof is weakened.
+
 The v69 specification-only candidate
 `6b4621209a11895ce9f7894013ce034e1bdb3b05` compiled on the Pi and passed
 strict specs/plan validation. Archive SHA-256
