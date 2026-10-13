@@ -2437,6 +2437,29 @@ def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resource
     assert _exec_start_pre(unit, expect_success=True) == 0
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="unit recipe stability is qualified on the enrolled Pi")
+def test_core_service_unit_bytes_are_stable_across_fresh_hash_seeds():
+    source = Path("/opt/hermes-installer-core-fixture/src")
+    expected = b"".join(core._unit(adapter_source=source, cohort_gate=True,
+        backup_generation="a" * 64, native_plugin_transition=transition)
+        for transition in (False, True))
+    repository = Path(__file__).resolve().parents[2]
+    code = (
+        "from pathlib import Path; import sys; from hermes_installer import core_runtime as core; "
+        "sys.stdout.buffer.write(b''.join(core._unit(adapter_source=Path('/opt/hermes-installer-core-fixture/src'), "
+        "cohort_gate=True, backup_generation='a'*64, native_plugin_transition=mode) "
+        "for mode in (False, True)))"
+    )
+    for seed in ("1", "2"):
+        environment = dict(os.environ)
+        environment["PYTHONHASHSEED"] = seed
+        environment["PYTHONPATH"] = str(repository / "src")
+        result = subprocess.run([sys.executable, "-c", code], cwd=repository,
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+        assert result.stdout == expected
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
 def test_m1_boot_gate_checks_actual_backup_manifest_members_and_admin_execution(
         tmp_path, monkeypatch, request):
