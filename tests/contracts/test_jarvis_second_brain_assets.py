@@ -80,7 +80,7 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn("data-graph-notes", FEATURE_ASSETS.view_html)
         self.assertIn("Notes in this map", FEATURE_ASSETS.view_html)
         self.assertIn("const graphNotes=$('[data-graph-notes]')", FEATURE_ASSETS.mount_js)
-        self.assertIn("graphNotes.append(button)", FEATURE_ASSETS.mount_js)
+        self.assertIn("item.append(button);graphNotes.append(item)", FEATURE_ASSETS.mount_js)
         self.assertIn("graphNotes.querySelectorAll('button[data-note-id]')", FEATURE_ASSETS.mount_js)
         self.assertIn("button.addEventListener('click',()=>openNote(node.noteId))", FEATURE_ASSETS.mount_js)
 
@@ -127,7 +127,7 @@ const selectors = ['[data-status]','[data-note-list]','[data-note-body]','[data-
 const root=new Element(), els=new Map(selectors.map(s=>[s,new Element()])); root.querySelector=s=>els.get(s) || null;
 global.document={createElement:t=>new Element(t),createElementNS:(ns,t)=>new Element(t)};
 MOUNT
-const nodes=[{noteId:'A',title:'Incoming',tags:['Research']},{noteId:'B',title:'Center',tags:['Research','Pinned']},{noteId:'C',title:'Outgoing',tags:['Ops']},{noteId:'D',title:'Unrelated',tags:['Ops']}];
+const nodes=[{noteId:'A',title:'Incoming',tags:['Research']},{noteId:'B',title:'Center',tags:['Research','Pinned']},{noteId:'C',title:'Outgoing',tags:['Ops']},{noteId:'D',title:'Unrelated',tags:['Ops']},{noteId:'E',title:'Isolated note',tags:['Archive']}];
 const graph={nodes,edges:[{fromNoteId:'A',toNoteId:'B',kind:'wikilink'},{fromNoteId:'B',toNoteId:'C',kind:'markdown'},{fromNoteId:'C',toNoteId:'D',kind:'wikilink'}],unresolved:[{fromNoteId:'B',label:'Missing page'}],partial:true,scanned:7};
 const note=(id)=>({noteId:id,title:id,markdown:'<script>inert</script> **plain**',updatedAt:'2026-10-13T00:00:00Z',contentSha256:'abc'});
 const requests=[]; let foreign=false, fail=false, deferred=[];
@@ -137,7 +137,11 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const ids=()=>els.get('[data-graph-scene]').querySelectorAll('.brain-node').map(n=>n.dataset.noteId).sort();
 (async()=>{
  await flush();
- assert.deepEqual(ids(),['A','B','C','D']);
+ assert.deepEqual(ids(),['A','B','C','D','E']);
+ const isolated=els.get('[data-graph-notes]').querySelectorAll('button[data-note-id]').find(b=>b.dataset.noteId==='E');
+ assert(isolated,'isolated vault note is included in the accessible list alternative');
+ assert.equal(graph.edges.some(e=>e.fromNoteId==='E'||e.toNoteId==='E'),false,'fixture note has no graph edges');
+ isolated.dispatch('click'); await flush(); assert(requests.some(p=>p.endsWith('/notes/E')),'isolated note opens through the real note read route');
  const layout=__secondBrainHarness.graphLayout(nodes.slice(0,3),graph.edges.slice(0,2),'B');
  assert.deepEqual(layout.get('B'),{x:500,y:310});
  __secondBrainHarness.focusNeighborhood('B');
@@ -145,7 +149,7 @@ const ids=()=>els.get('[data-graph-scene]').querySelectorAll('.brain-node').map(
  assert.equal(els.get('[data-graph-scene]').querySelectorAll('.brain-edge').length,2,'focused map keeps actual incoming and outgoing edges');
  assert.match(els.get('[data-graph-status]').textContent,/partial coverage/);
  assert.match(els.get('[data-graph-status]').textContent,/7 notes scanned/);
- els.get('[data-graph-reset]').dispatch('click'); assert.deepEqual(ids(),['A','B','C','D']);
+ els.get('[data-graph-reset]').dispatch('click'); assert.deepEqual(ids(),['A','B','C','D','E']);
  const center=els.get('[data-graph-notes]').querySelectorAll('button[data-note-id]').find(b=>b.dataset.noteId==='B'); center.dispatch('click'); await flush();
  assert(requests.some(p=>p.endsWith('/notes/B'))); assert(requests.some(p=>p.endsWith('/notes/B/links')));
  assert.equal(els.get('[data-note-body]').textContent,'<script>inert</script> **plain**','Markdown remains text, not executable HTML');
