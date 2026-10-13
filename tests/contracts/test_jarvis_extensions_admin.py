@@ -755,7 +755,7 @@ MOUNT
  const oversizedRead=button(card(oversized.list,'Resource helper'),'Restore archived version').dispatch('click');
  oa.posts[0].resolve({skill:'Resource helper',versions:versions4097});await oversizedRead;
  assert.equal(all(oversized.root).filter(n=>n.tagName==='dialog').length,0);assert.equal(oa.posts.length,1,'4,097 archive rows fail closed without a restore request');
- assert.match(oversized.status.textContent,/archived version identities are unavailable or malformed/);oversizedCleanup();
+ assert.match(oversized.status.textContent,/Archived version identities are unavailable or malformed\. Refresh and retry\./);oversizedCleanup();
  const bad=view(),ba=api(),badCleanup=mount(bad.root,ba);ba.gets[0].resolve(inventory('bad-rev'));await flush();
  const badRead=button(card(bad.list,'Owner helper'),'Edit skill').dispatch('click');ba.posts[0].resolve({...source(),sha256:'0'.repeat(64)});await badRead;
  assert.equal(all(bad.root).filter(n=>n.tagName==='dialog').length,0);assert.equal(ba.posts.length,1);
