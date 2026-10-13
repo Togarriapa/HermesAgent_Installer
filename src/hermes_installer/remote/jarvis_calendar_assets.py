@@ -37,7 +37,7 @@ _MOUNT = r'''function mount(container, api, state) {
   const refresh = root.querySelector('[data-calendar-refresh]');
   const select = root.querySelector('[data-calendar-select]');
   const disable = root.querySelector('[data-calendar-disable]');
-  let active = true, serial = 0, displayTimezone;
+  let active = true, serial = 0, displayTimezone, selectionPending = false;
   const isCurrent = token => active && token === serial;
   function clearDisplay() {
     events.replaceChildren(); empty.hidden = true; source.textContent = ''; source.hidden = true;
@@ -49,6 +49,7 @@ _MOUNT = r'''function mount(container, api, state) {
       {dateStyle:'medium', timeStyle:'short', ...(displayTimezone ? {timeZone:displayTimezone} : {})}).format(date);
   };
   async function load() {
+    if (!active || selectionPending) return;
     const current = ++serial;
     refresh.disabled = true; status.textContent = 'Loading verified calendar events…';
     clearDisplay();
@@ -105,11 +106,13 @@ _MOUNT = r'''function mount(container, api, state) {
     } finally { if (isCurrent(current)) refresh.disabled = false; }
   }
   async function setSelection(action) {
+    if (!active || selectionPending) return;
+    selectionPending = true;
     const current = ++serial;
     // Consent transitions immediately revoke the currently displayed projection. An
     // in-flight read or selection response can no longer repopulate it.
     clearDisplay();
-    select.disabled = true; disable.disabled = true;
+    refresh.disabled = true; select.disabled = true; disable.disabled = true;
     if (action === 'enable') disable.hidden = false;
     else { disable.hidden = true; select.hidden = false; }
     status.textContent = action === 'enable' ? 'Confirming the selected read-only Calendar connection…' : 'Removing Calendar dashboard consent…';
@@ -127,6 +130,8 @@ _MOUNT = r'''function mount(container, api, state) {
       if (action === 'disable') {
         disable.hidden = true; select.hidden = false; status.textContent = 'Calendar dashboard consent was removed.';
       } else {
+        selectionPending = false;
+        refresh.disabled = false;
         select.disabled = false; disable.disabled = false;
         void load();
       }
@@ -135,7 +140,12 @@ _MOUNT = r'''function mount(container, api, state) {
       if (action === 'enable') disable.hidden = true;
       status.textContent = error && error.message && error.message !== 'selection-unavailable'
         ? error.message : 'No current protected Calendar connection is available. Complete the root-managed Google Calendar enrollment, then retry.';
-    } finally { if (isCurrent(current)) { select.disabled = false; disable.disabled = false; } }
+    } finally {
+      if (isCurrent(current)) {
+        selectionPending = false; refresh.disabled = false;
+        select.disabled = false; disable.disabled = false;
+      }
+    }
   }
   const enableSelection = () => setSelection('enable');
   const disableSelection = () => setSelection('disable');
