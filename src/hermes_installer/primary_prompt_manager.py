@@ -454,7 +454,13 @@ def adopt_primary_prompt_for_starting_cohort(custody) -> dict[str, Any]:
     _require_initial_custody(core, custody)
     if os.geteuid() != core.ROOT_UID:
         raise PrimaryPromptAdoptionError("requires the fixed Linux root actor")
-    _check_root_context(core, require_listener=False)
+    # During source-starting, ordinary journal reads are intentionally denied.
+    # Verify the installed root context only inside the already-sealed narrow
+    # starting-cohort scope; this does not grant the general journal reader a
+    # bypass or authorize listener-dependent reads.
+    with _initial_scope(core, custody):
+        _require_initial_custody(core, custody)
+        _check_root_context(core, require_listener=False)
     _require_initial_custody(core, custody)
     _ensure_dirs(core)
 

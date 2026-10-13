@@ -1,4 +1,5 @@
 """Managed primary SOUL block custody and native effective-readback checks."""
+import contextlib
 import hashlib
 import json
 import os
@@ -62,6 +63,44 @@ def test_starting_cohort_adoption_and_rollback_reject_unissued_custody_before_ef
         manager.rollback_primary_prompt_for_starting_cohort(custody)
 
     assert effects == []
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="initial-cohort root admission requires root")
+def test_starting_cohort_root_context_check_runs_inside_sealed_scope(monkeypatch, tmp_path):
+    from hermes_installer import core_runtime as core
+
+    custody = object()
+    events = []
+    scoped = {"active": False}
+    monkeypatch.setattr(manager, "_require_initial_custody",
+                        lambda _core, _custody: events.append("custody"))
+    monkeypatch.setattr(manager, "_ensure_dirs", lambda _core: events.append("ensure-dirs"))
+    monkeypatch.setattr(manager, "_check_root_context",
+                        lambda _core, *, require_listener: (
+                            events.append(("root-context", scoped["active"], require_listener))))
+    monkeypatch.setattr(core, "PRIMARY_PROMPT_BACKUPS", tmp_path)
+
+    @contextlib.contextmanager
+    def sealed_scope(_core, _custody):
+        assert not scoped["active"]
+        scoped["active"] = True
+        events.append("scope-enter")
+        try:
+            yield
+        finally:
+            events.append("scope-exit")
+            scoped["active"] = False
+
+    monkeypatch.setattr(manager, "_initial_scope", sealed_scope)
+    monkeypatch.setattr(manager, "_adopt_primary_prompt_for_starting_cohort_locked",
+                        lambda _core, _custody: "adopted")
+
+    assert manager.adopt_primary_prompt_for_starting_cohort(custody) == "adopted"
+    assert ("root-context", True, False) in events
+    assert events.index("scope-enter") < events.index(("root-context", True, False))
+    assert events.index(("root-context", True, False)) < events.index("scope-exit")
+    assert events.count("custody") == 3
+    assert events.index("scope-exit") < events.index("ensure-dirs")
 
 
 def test_atomic_admin_replace_preserves_file_identity_contract_and_refuses_stale_prefix(tmp_path, monkeypatch):
