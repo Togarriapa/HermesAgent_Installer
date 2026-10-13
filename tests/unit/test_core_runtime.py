@@ -1350,6 +1350,20 @@ def _assert_registered_obsidian_fixture_preserved(fixture):
     assert actual_files == fixture["vault_files"]
 
 
+def _assert_registered_obsidian_snapshot(fixture):
+    if fixture is None:
+        return
+    journal = core._journal()
+    snapshot = core._snapshot_adapter_update_bindings(
+        core_source_generation=journal["core_source_generation"])
+    assert snapshot["obsidian_registration_state"] == "registered"
+    assert snapshot["obsidian_registration"] == fixture["registration_bytes"]
+    assert snapshot["obsidian_registration_sha256"] == hashlib.sha256(
+        fixture["registration_bytes"]).hexdigest()
+    assert snapshot["obsidian_vault_tree_sha256"] == core._obsidian_vault_tree_sha256(
+        fixture["vault_root"])
+
+
 def _fixed_service_path_identity():
     """Read the Pi-owned targets that the generated guard treats as fixed."""
     paths = ((Path("/etc/systemd/system/hermes-jarvis-core.service"), 0o644),
@@ -1459,13 +1473,7 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     prepared = _prepare_cohort_resource_materialization(
         tmp_path, monkeypatch, request, registered_obsidian=registered_obsidian)
     _readback_calls, obsidian_fixture = prepared
-    cohort, _cohort_raw = core._read_adapter_update_cohort()
-    if obsidian_fixture is not None:
-        assert cohort["obsidian_registration_state"] == "registered"
-        assert cohort["obsidian_registration_sha256"] == hashlib.sha256(
-            obsidian_fixture["registration_bytes"]).hexdigest()
-        assert cohort["obsidian_vault_tree_sha256"] == core._obsidian_vault_tree_sha256(
-            obsidian_fixture["vault_root"])
+    _assert_registered_obsidian_snapshot(obsidian_fixture)
     memory = core.HERMES_HOME / "memories" / "owner.md"
     memory.parent.mkdir(parents=True)
     memory.write_text("existing owner memory")
@@ -1511,6 +1519,14 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
 
     updated = json.loads(core.JOURNAL.read_text())
     assert "updated to the verified adapter generation" in result
+    cohort, _cohort_raw = core._read_adapter_update_cohort()
+    if obsidian_fixture is not None:
+        assert cohort["phase"] == "committed"
+        assert cohort["obsidian_registration_state"] == "registered"
+        assert cohort["obsidian_registration_sha256"] == hashlib.sha256(
+            obsidian_fixture["registration_bytes"]).hexdigest()
+        assert cohort["obsidian_vault_tree_sha256"] == core._obsidian_vault_tree_sha256(
+            obsidian_fixture["vault_root"])
     assert updated["adapter_source"] == str(core.ADAPTER_SOURCE)
     assert updated["state"] == "installed"
     assert updated["adapter_generation"] == "a" * 64
@@ -1550,6 +1566,9 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     assert core.TOKEN.read_bytes() == token
     assert memory.read_text() == "existing owner memory"
     backup = core.ADAPTER_UPDATE_BACKUPS / prior["adapter_generation"]
+    if obsidian_fixture is not None:
+        assert (backup / "obsidian-registration.json").read_bytes() == (
+            obsidian_fixture["registration_bytes"])
     assert (backup / "launcher").read_bytes() == prior_launcher
     assert (backup / "unit").read_bytes() == prior_unit
     assert json.loads((backup / "journal.json").read_bytes()) == prior
@@ -1592,13 +1611,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
     prepared = _prepare_cohort_resource_materialization(
         tmp_path, monkeypatch, request, registered_obsidian=registered_obsidian)
     _readback_calls, obsidian_fixture = prepared
-    cohort, _cohort_raw = core._read_adapter_update_cohort()
-    if obsidian_fixture is not None:
-        assert cohort["obsidian_registration_state"] == "registered"
-        assert cohort["obsidian_registration_sha256"] == hashlib.sha256(
-            obsidian_fixture["registration_bytes"]).hexdigest()
-        assert cohort["obsidian_vault_tree_sha256"] == core._obsidian_vault_tree_sha256(
-            obsidian_fixture["vault_root"])
+    _assert_registered_obsidian_snapshot(obsidian_fixture)
     _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
@@ -1617,6 +1630,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
     def fail_first_restart():
         attempts["wait"] += 1
         if attempts["wait"] == 1:
+            attempts["starting_cohort"], _cohort_raw = core._read_adapter_update_cohort()
             raise core.CoreRuntimeError("injected adapter update restart failure")
     monkeypatch.setattr(core, "_wait_for_listener", fail_first_restart)
     update_call_start = len(_calls)
@@ -1629,7 +1643,18 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
     assert core.UNIT.read_bytes() == unit
     assert core.TOKEN.read_bytes() == token
     assert enabled["value"]
+    if obsidian_fixture is not None:
+        cohort = attempts["starting_cohort"]
+        assert cohort["phase"] in {"source-starting", "bindings-verified"}
+        assert cohort["obsidian_registration_sha256"] == hashlib.sha256(
+            obsidian_fixture["registration_bytes"]).hexdigest()
+        assert cohort["obsidian_vault_tree_sha256"] == core._obsidian_vault_tree_sha256(
+            obsidian_fixture["vault_root"])
     _assert_registered_obsidian_fixture_preserved(obsidian_fixture)
+    if obsidian_fixture is not None:
+        backup = core.ADAPTER_UPDATE_BACKUPS / json.loads(prior)["adapter_generation"]
+        assert (backup / "obsidian-registration.json").read_bytes() == (
+            obsidian_fixture["registration_bytes"])
     assert attempts["wait"] == 2
     ordered = [call[0] for call in _calls[update_call_start:]]
     restore_index = ordered.index(("native-plugin", "restore"))
