@@ -10,6 +10,7 @@ import io
 import json
 import os
 import pwd
+import re
 import select
 import shlex
 import shutil
@@ -367,7 +368,7 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
                 "_guard_diag_state={}\n"
                 "def _guard_emit(values):\n"
                 " result={name:values[name] for name in ('ok','cp_ok','rp_ok','backup_ok','initial_ok','keys_ok','transition_ok','cohort_ok','starting','reconstruction_ok','source_ok','native_ok','starting_ok','active_update_ok','phase_ok') if type(values.get(name)) is bool}\n"
-                " result['base_ok']=_guard_diag_state.get('base_ok') if type(_guard_diag_state.get('base_ok')) is bool else None\n"
+                " if type(_guard_diag_state.get('base_ok')) is bool: result['base_ok']=_guard_diag_state['base_ok']\n"
                 " if values.get('phase') in ('source-starting','bindings-verified','committed'): result['phase']=values['phase']\n"
                 " def check(name,fn):\n"
                 "  try: result[name]=bool(fn())\n"
@@ -448,8 +449,22 @@ exec "$runuser_bin" -u admin -- "$@"
             outcome = "succeed" if expect_success else "fail closed"
             stderr = result.stderr.decode("utf-8", errors="replace").strip()
             diagnostic_summary = None
+            diagnostic_meta = None
             if diagnostic_result is not None:
                 diagnostic_stdout = diagnostic_result.stdout.decode("utf-8", errors="replace")
+                diagnostic_stderr = diagnostic_result.stderr.decode("utf-8", errors="replace")
+                error_match = re.search(r"(?m)^([A-Za-z]+(?:Error|Exception))(?::|$)",
+                                        diagnostic_stderr)
+                line_match = re.search(r"(?m)^\s*File \"<string>\", line ([0-9]+)",
+                                       diagnostic_stderr)
+                diagnostic_meta = {
+                    "exit": diagnostic_result.returncode,
+                    "namespace_ready": diagnostic_stdout.startswith("FIXTURE_NAMESPACE_READY\n"),
+                    "guard_emitted": any(row.startswith("GUARD_DIAGNOSTIC=")
+                                          for row in diagnostic_stdout.splitlines()),
+                    "stderr_type": error_match.group(1) if error_match else None,
+                    "stderr_line": int(line_match.group(1)) if line_match else None,
+                }
                 for row in diagnostic_stdout.splitlines():
                     if row.startswith("GUARD_DIAGNOSTIC="):
                         try:
@@ -475,7 +490,8 @@ exec "$runuser_bin" -u admin -- "$@"
                 f"generated ExecStartPre should {outcome}; exit={result.returncode}; "
                 f"stderr={'<suppressed>' if diagnostic else (stderr or '<empty>')}; "
                 f"stdout={'<suppressed>' if diagnostic else (result.stdout.decode('utf-8', errors='replace').strip() or '<empty>')}"
-                + (f"; guard_flags={diagnostic_summary!r}" if diagnostic else "")
+                + (f"; guard_flags={diagnostic_summary!r}; diagnostic_meta={diagnostic_meta!r}"
+                   if diagnostic else "")
             )
         return result.returncode
     finally:
@@ -2662,6 +2678,25 @@ def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resource
     assert _exec_start_pre(unit, expect_success=False) != 0
     core.RESOURCES_RECORD.write_bytes(resources_raw)
     assert _exec_start_pre(unit, expect_success=True) == 0
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
+def test_m1_guard_diagnostic_runs_only_after_original_guard_denies(
+        tmp_path, monkeypatch, request):
+    unit, _cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request)
+    token_row = next(row for row in unit.decode().splitlines()
+                     if row.startswith("LoadCredential=") and "session-token" in row)
+    credential_name = token_row.partition("=")[2].partition(":")[0]
+    with pytest.raises(AssertionError, match="generated ExecStartPre should succeed") as caught:
+        _exec_start_pre(
+            unit, credential_mutations={credential_name: ("bytes", b"invalid fixture token\n")},
+            expect_success=True, diagnostic=True)
+    message = str(caught.value)
+    assert "exit=" in message and "guard_flags={" in message
+    assert "'namespace_ready': True" in message
+    assert "'guard_emitted': True" in message
+    assert "invalid fixture token" not in message
 
 
 def _native_plugin_starting_fixture(tmp_path, monkeypatch, request):
