@@ -539,6 +539,112 @@ def test_adapter_refresh_row_is_closed_and_core_join_is_all_or_none():
     assert not adopt._valid_adapter_refresh_row(row)
 
 
+def test_adapter_refresh_join_accepts_eleven_members_only_for_actual_core_transition(
+        monkeypatch):
+    old_plugin = {"plugin.yaml": b"fixed manifest", "__init__.py": b"old module"}
+    new_plugin = {"plugin.yaml": b"fixed manifest", "__init__.py": b"new module"}
+    old_hashes = {name: hashlib.sha256(data).hexdigest()
+                  for name, data in old_plugin.items()}
+    new_hashes = {name: hashlib.sha256(data).hexdigest()
+                  for name, data in new_plugin.items()}
+    transition = {
+        "schema": 1, "purpose": "fixed-native-resources-plugin",
+        "old_adapter_generation": "f" * 64, "new_adapter_generation": "9" * 64,
+        "plugin_selection_sha256": "c" * 64,
+        "old_members": old_hashes, "new_members": new_hashes,
+    }
+    previous = {
+        "adapter_generation": "f" * 64, "adapter_source": OLD_SOURCE.decode(),
+        "core_source_generation": "1" * 64, "plugin_selection_sha256": "c" * 64,
+    }
+    previous_raw = (json.dumps(previous, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    row = _adapter_refresh_row()
+    row["old_core_journal_sha256"] = hashlib.sha256(previous_raw).hexdigest()
+    current = {
+        "adapter_generation": "9" * 64, "adapter_source": NEW_SOURCE.decode(),
+        "core_source_generation": "1" * 64, "plugin_selection_sha256": "c" * 64,
+        "adapter_migration_state": "active", "adapter_update_state": "active",
+        "adapter_update_previous_source": OLD_SOURCE.decode(),
+        "adapter_update_cohort_transaction_id": "a" * 32,
+    }
+    cohort = {
+        "cohort_transaction_id": "a" * 32, "phase": "committed",
+        "old_source": OLD_SOURCE.decode(), "new_source": NEW_SOURCE.decode(),
+        "old_adapter_generation": "f" * 64, "new_adapter_generation": "9" * 64,
+        "old_core_source_generation": "1" * 64, "new_core_source_generation": "1" * 64,
+        "native_plugin_transition": transition,
+    }
+    contents = {name: name.encode() for name in adopt._ADAPTER_BACKUP_BASE_MEMBERS}
+    contents["journal.json"] = previous_raw
+    contents["plugin-selection.json"] = (
+        b'{"schema":1,"selection_sha256":"' + b"c" * 64 + b'"}\n')
+    for name, backup_name in adopt._NATIVE_PLUGIN_BACKUP_NAMES.items():
+        contents[backup_name] = old_plugin[name]
+    reference = {
+        "path": "/var/lib/hermes-installer/core-runtime/adapter-update-backups/" + "f" * 64,
+        "source_generation": "f" * 64,
+        "files": {name: hashlib.sha256(data).hexdigest()
+                  for name, data in contents.items()},
+    }
+    cohort_raw = (json.dumps(cohort, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+    class Core:
+        @staticmethod
+        def _read_active_adapter_runtime():
+            return current, b"current journal", {}
+
+        @staticmethod
+        def _read_adapter_update_cohort():
+            return cohort, cohort_raw
+
+        @staticmethod
+        def _adapter_update_backup_reference(_cohort):
+            return reference
+
+        @staticmethod
+        def _read_adapter_update_backup(_reference):
+            return previous, contents
+
+        @staticmethod
+        def _read_installed_native_resources_plugin_members():
+            return SimpleNamespace(members=new_plugin)
+
+    ingress = {
+        "candidate_sha": "b" * 40, "state": "units-switched",
+        "adapter_refresh": row,
+    }
+    ingress_raw = (json.dumps(ingress, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    writes = []
+    monkeypatch.setattr(adopt, "_read_fixed", lambda *_args, **_kwargs: (
+        ingress_raw, SimpleNamespace(st_mode=stat.S_IFREG | 0o600)))
+    monkeypatch.setattr(adopt, "_atomic_fixed", lambda _path, raw, **_kwargs: writes.append(raw))
+
+    result = adopt._set_adapter_refresh_core_join(
+        Core(), "b" * 40, reference, cohort["cohort_transaction_id"],
+        hashlib.sha256(cohort_raw).hexdigest())
+    assert adopt._valid_adapter_refresh_row(result)
+    assert result["core_update_backup_reference"] == reference
+    assert json.loads(writes[0])["adapter_refresh"]["core_update_cohort_sha256"] == (
+        hashlib.sha256(cohort_raw).hexdigest())
+    joined = adopt._verify_current_adapter_refresh_join(Core(), result)
+    assert joined[2] == reference
+
+    writes.clear()
+    bad_transition = {**transition, "old_members": {
+        **old_hashes, "__init__.py": "e" * 64}}
+    cohort["native_plugin_transition"] = bad_transition
+    cohort_raw = (json.dumps(cohort, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    with pytest.raises(RuntimeError, match="join is not current"):
+        adopt._set_adapter_refresh_core_join(
+            Core(), "b" * 40, reference, cohort["cohort_transaction_id"],
+            hashlib.sha256(cohort_raw).hexdigest())
+    assert writes == []
+
+    malformed = _adapter_refresh_row(committed=True)
+    malformed["core_update_backup_reference"]["files"]["arbitrary.py"] = "a" * 64
+    assert not adopt._valid_adapter_refresh_row(malformed)
+
+
 def test_adapter_refresh_switch_stops_exact_old_peer_before_fixed_file_writes(
         monkeypatch, tmp_path):
     old_gateway = _unit("core_gateway")
@@ -1450,7 +1556,8 @@ def test_untrusted_qualification_failure_report_cannot_replace_last_failure(
     monkeypatch.setattr(adopt.subprocess, "run", lambda *_args, **_kwargs:
                         SimpleNamespace(returncode=4, stdout=raw, stderr=b""))
 
-    with pytest.raises(RuntimeError, match="report is not verified"):
+    with pytest.raises(RuntimeError,
+                       match=r"fixed Core adapter qualification (report is not verified|did not verify)"):
         adopt._run_core_refresh_qualification("b" * 40, "c" * 64, tool, identity)
     assert failure.read_bytes() == b"prior protected report"
 

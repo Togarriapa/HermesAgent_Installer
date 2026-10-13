@@ -742,6 +742,83 @@ def _run_core_refresh_qualification(candidate_sha: str, archive_sha: str,
     raise RuntimeError("fixed Core adapter qualification did not verify")
 
 
+def _verify_adapter_refresh_plugin_backup(core_runtime, old_record: dict,
+                                          current_record: dict, cohort: dict,
+                                          reference: dict, prior: dict,
+                                          contents: dict) -> None:
+    """Join an optional 11-member backup only to its actual protected Core row."""
+    expected = set(_ADAPTER_BACKUP_BASE_MEMBERS)
+    transition = cohort.get("native_plugin_transition")
+    if transition is not None:
+        if not _valid_native_plugin_transition(transition):
+            raise RuntimeError("Core native plugin transition row is malformed")
+        expected.update(_NATIVE_PLUGIN_BACKUP_NAMES.values())
+    files = reference.get("files") if type(reference) is dict else None
+    if (type(files) is not dict or set(files) != expected or set(contents) != expected
+            or any(type(files[name]) is not str
+                   or re.fullmatch(r"[0-9a-f]{64}", files[name]) is None
+                   or type(contents[name]) is not bytes
+                   or hashlib.sha256(contents[name]).hexdigest() != files[name]
+                   for name in expected)):
+        raise RuntimeError("Core adapter backup member set differs from its transition")
+    if (prior.get("adapter_generation") != old_record.get("adapter_generation")
+            or prior.get("adapter_source") != old_record.get("adapter_source")
+            or prior.get("core_source_generation") != old_record.get("core_source_generation")
+            or contents.get("journal.json") is None
+            or reference.get("source_generation") != old_record.get("adapter_generation")):
+        raise RuntimeError("Core adapter backup does not bind the retained old tuple")
+    try:
+        saved_old_record = json.loads(contents["journal.json"], object_pairs_hook=_unique_pairs)
+    except Exception:
+        raise RuntimeError("Core adapter backup journal is malformed") from None
+    if saved_old_record != old_record:
+        raise RuntimeError("Core adapter backup journal differs from the retained old tuple")
+    if (cohort.get("phase") != "committed"
+            or cohort.get("old_source") != old_record.get("adapter_source")
+            or cohort.get("old_adapter_generation") != old_record.get("adapter_generation")
+            or cohort.get("old_core_source_generation") != old_record.get("core_source_generation")
+            or cohort.get("new_source") != current_record.get("adapter_source")
+            or cohort.get("new_adapter_generation") != current_record.get("adapter_generation")
+            or cohort.get("new_core_source_generation")
+               != current_record.get("core_source_generation")
+            or current_record.get("core_source_generation")
+               != old_record.get("core_source_generation")
+            or current_record.get("adapter_migration_state") != "active"
+            or current_record.get("adapter_update_state") != "active"
+            or current_record.get("adapter_update_previous_source")
+               != old_record.get("adapter_source")
+            or current_record.get("adapter_update_cohort_transaction_id")
+               != cohort.get("cohort_transaction_id")):
+        raise RuntimeError("Core adapter backup does not match the committed source tuple")
+    try:
+        selection = json.loads(contents["plugin-selection.json"], object_pairs_hook=_unique_pairs)
+    except Exception:
+        raise RuntimeError("Core adapter backup plugin selection is malformed") from None
+    selection_sha = old_record.get("plugin_selection_sha256")
+    if (selection != {"schema": 1, "selection_sha256": selection_sha}
+            or current_record.get("plugin_selection_sha256") != selection_sha):
+        raise RuntimeError("Core adapter backup changed native plugin selection")
+    if transition is None:
+        return
+    if (transition["old_adapter_generation"] != old_record.get("adapter_generation")
+            or transition["new_adapter_generation"] != current_record.get("adapter_generation")
+            or transition["plugin_selection_sha256"] != selection_sha):
+        raise RuntimeError("Core native plugin transition differs from the old/new adapter tuple")
+    old_members = {
+        name: hashlib.sha256(contents[_NATIVE_PLUGIN_BACKUP_NAMES[name]]).hexdigest()
+        for name in _NATIVE_PLUGIN_MEMBER_NAMES
+    }
+    installed = core_runtime._read_installed_native_resources_plugin_members()
+    installed_members = dict(installed.members)
+    if (set(installed_members) != set(_NATIVE_PLUGIN_MEMBER_NAMES)
+            or any(type(value) is not bytes for value in installed_members.values())):
+        raise RuntimeError("installed native plugin snapshot is not the fixed pair")
+    new_members = {name: hashlib.sha256(installed_members[name]).hexdigest()
+                   for name in _NATIVE_PLUGIN_MEMBER_NAMES}
+    if transition["old_members"] != old_members or transition["new_members"] != new_members:
+        raise RuntimeError("Core native plugin transition does not match retained and installed bytes")
+
+
 def _verify_adapter_refresh_commit(core_runtime, candidate_source: Path,
                                    old_record: dict, old_raw: bytes,
                                    old_files: dict, snapshots: dict) -> tuple[dict, dict, str]:
@@ -765,6 +842,8 @@ def _verify_adapter_refresh_commit(core_runtime, candidate_source: Path,
         raise RuntimeError("current committed Core cohort differs from the adapter refresh")
     reference = core_runtime._adapter_update_backup_reference(cohort)
     previous, contents = core_runtime._read_adapter_update_backup(reference)
+    _verify_adapter_refresh_plugin_backup(
+        core_runtime, old_record, record, cohort, reference, previous, contents)
     if (contents.get("journal.json") != old_raw
             or previous != old_record
             or contents.get("unit") != old_files.get(core_runtime.UNIT)
@@ -999,6 +1078,8 @@ def _verify_current_adapter_refresh_join(core_runtime, row: dict) -> tuple[dict,
     reference = core_runtime._adapter_update_backup_reference(cohort)
     prior, contents = core_runtime._read_adapter_update_backup(reference)
     digest = hashlib.sha256(cohort_raw).hexdigest()
+    _verify_adapter_refresh_plugin_backup(
+        core_runtime, prior, record, cohort, reference, prior, contents)
     if (record.get("adapter_update_state") != "active"
             or cohort.get("phase") != "committed"
             or cohort.get("old_source") != row["old_core_adapter_source"]
@@ -1161,6 +1242,11 @@ def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
             return "rolled-back"
         if current_cohort.get("phase") != "committed":
             raise RuntimeError("joined adapter refresh is in an unexpected Core recovery phase")
+        # Validate the live Core row, full manifest, retained plugin members,
+        # and installed new pair before any ingress stop during resume.
+        committed = _verify_current_adapter_refresh_join(core_runtime, row)
+    else:
+        committed = None
     gateway, _ = _read_fixed(FIXED_UNITS[GATEWAY], uid=0, gid=0, mode=0o644,
                              maximum=64 * 1024)
     inspector, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0, mode=0o644,
@@ -1193,11 +1279,10 @@ def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
         _retire_current_refresh_inspector(expected_source, observer_socket)
     elif _unit_state(INSPECTOR) not in {"inactive", "failed"}:
         raise RuntimeError("Inspector state is not stable for refresh resume")
-    committed = None
-    try:
+    if joined:
+        # Recheck after closing ingress so a concurrent Core tuple change cannot
+        # turn the earlier pre-effect read into stale authority.
         committed = _verify_current_adapter_refresh_join(core_runtime, row)
-    except Exception:
-        committed = None
     if committed is None:
         old_record, old_raw, old_files, snapshots = _recover_adapter_refresh_core_for_resume(
             core_runtime, candidate_sha, row)
@@ -1209,7 +1294,7 @@ def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
         cohort, reference, cohort_sha = _verify_adapter_refresh_commit(
             core_runtime, expected_source, old_record, old_raw, old_files, snapshots)
         _verify_adapter_refresh_bindings(core_runtime, snapshots, old_record)
-        _set_adapter_refresh_core_join(candidate_sha, reference,
+        _set_adapter_refresh_core_join(core_runtime, candidate_sha, reference,
                                        cohort["cohort_transaction_id"], cohort_sha)
     else:
         cohort, _raw, reference, contents, cohort_sha = committed
@@ -1217,7 +1302,7 @@ def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
         old_record = json.loads(contents["journal.json"], object_pairs_hook=_unique_pairs)
         _verify_adapter_refresh_bindings(core_runtime, snapshots, old_record)
         if row["core_update_backup_reference"] is None:
-            _set_adapter_refresh_core_join(candidate_sha, reference,
+            _set_adapter_refresh_core_join(core_runtime, candidate_sha, reference,
                                            cohort["cohort_transaction_id"], cohort_sha)
     _set_backup_state("migrated")
     old_identity = ((row["old_observer_device"], row["old_observer_inode"])
@@ -1362,6 +1447,17 @@ def _rollback_adapter_refresh(candidate_sha: str, expected_source: Path,
             {value["new_config_sha256"], value["old_config_sha256"],
              value.get("post_core_config_sha256")}):
         raise RuntimeError("fixed adapter refresh ingress differs from retained snapshots")
+    joins = tuple(row[key] for key in (
+        "core_update_backup_reference", "core_update_cohort_transaction_id",
+        "core_update_cohort_sha256"))
+    if all(item is not None for item in joins):
+        current_cohort, _ = core_runtime._read_adapter_update_cohort()
+        if current_cohort.get("phase") == "committed":
+            _verify_current_adapter_refresh_join(core_runtime, row)
+        elif current_cohort.get("phase") != "rolling-back":
+            raise RuntimeError("joined adapter refresh Core tuple is not rollback-current")
+    elif any(item is not None for item in joins):
+        raise RuntimeError("adapter refresh Core recovery join is incomplete")
     _set_backup_state("recovery-required")
     for name in (TUNNEL, GATEWAY):
         _run("systemctl", "stop", name, check=False)
@@ -1460,7 +1556,7 @@ def _apply_adapter_refresh(candidate_sha: str, expected_source: Path,
         cohort, reference, cohort_sha = _verify_adapter_refresh_commit(
             core_runtime, expected_source, core_record, core_raw, core_files, snapshots)
         _verify_adapter_refresh_bindings(core_runtime, snapshots, core_record)
-        _set_adapter_refresh_core_join(candidate_sha, reference,
+        _set_adapter_refresh_core_join(core_runtime, candidate_sha, reference,
                                        cohort["cohort_transaction_id"], cohort_sha)
         _set_backup_state("migrated")
         phase = "bind config to current journaled Core"
@@ -2072,17 +2168,18 @@ def _valid_adapter_refresh_row(row) -> bool:
     cohort_sha = row.get("core_update_cohort_sha256")
     if reference is None and txid is None and cohort_sha is None:
         return True
+    legacy_members = set(_ADAPTER_BACKUP_BASE_MEMBERS)
+    transitioned_members = legacy_members | set(_NATIVE_PLUGIN_BACKUP_NAMES.values())
     if (type(reference) is not dict or set(reference) != {"path", "source_generation", "files"}
             or type(reference.get("path")) is not str
             or type(reference.get("source_generation")) is not str
             or re.fullmatch(r"[0-9a-f]{64}", reference["source_generation"]) is None
+            or reference["source_generation"] != row["old_core_adapter_generation"]
             or reference["path"] != "/var/lib/hermes-installer/core-runtime/adapter-update-backups/"
                                     + reference["source_generation"]
             or type(reference.get("files")) is not dict
-            or set(reference["files"]) != {"journal.json", "unit", "launcher",
-                                           "plugin-selection.json", "resources-record.json",
-                                           "overlay-record.json", "primary-record.json",
-                                           "obsidian-registration.json", "cohort.json"}
+            or frozenset(reference["files"]) not in {frozenset(legacy_members),
+                                                     frozenset(transitioned_members)}
             or any(type(v) is not str or re.fullmatch(r"[0-9a-f]{64}", v) is None
                    for v in reference["files"].values())
             or type(txid) is not str or re.fullmatch(r"[0-9a-f]{32}", txid) is None
@@ -2091,7 +2188,7 @@ def _valid_adapter_refresh_row(row) -> bool:
     return True
 
 
-def _set_adapter_refresh_core_join(candidate_sha: str, reference: dict,
+def _set_adapter_refresh_core_join(core_runtime, candidate_sha: str, reference: dict,
                                    transaction_id: str, cohort_sha256: str) -> dict:
     """Persist only independently read-back committed Core recovery joins."""
     raw, info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0, mode=0o600, maximum=128 * 1024)
@@ -2105,6 +2202,22 @@ def _set_adapter_refresh_core_join(candidate_sha: str, reference: dict,
                 or row["core_update_cohort_transaction_id"] is not None
                 or row["core_update_cohort_sha256"] is not None):
             raise ValueError
+        current_record, _current_journal, _current_files = core_runtime._read_active_adapter_runtime()
+        cohort, cohort_raw = core_runtime._read_adapter_update_cohort()
+        actual_reference = core_runtime._adapter_update_backup_reference(cohort)
+        prior, contents = core_runtime._read_adapter_update_backup(actual_reference)
+        if (actual_reference != reference
+                or cohort.get("cohort_transaction_id") != transaction_id
+                or hashlib.sha256(cohort_raw).hexdigest() != cohort_sha256
+                or cohort.get("phase") != "committed"
+                or hashlib.sha256(contents["journal.json"]).hexdigest()
+                   != row["old_core_journal_sha256"]
+                or prior.get("adapter_source") != row["old_core_adapter_source"]
+                or prior.get("adapter_generation") != row["old_core_adapter_generation"]
+                or prior.get("core_source_generation") != row["old_core_source_generation"]):
+            raise ValueError
+        _verify_adapter_refresh_plugin_backup(
+            core_runtime, prior, current_record, cohort, actual_reference, prior, contents)
         row["core_update_backup_reference"] = reference
         row["core_update_cohort_transaction_id"] = transaction_id
         row["core_update_cohort_sha256"] = cohort_sha256

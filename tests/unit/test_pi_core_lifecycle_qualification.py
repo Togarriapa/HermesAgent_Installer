@@ -212,6 +212,7 @@ def _backup_fixture():
                      b',"path":"fixed","source_generation":"' + b"a" * 64 + b'"}}')
     after = {"journal": after_journal, "token_sha256": raw["token_sha256"],
              "adapter_generation": "b" * 64,
+             "plugin_selection_sha256": raw["plugin_selection_sha256"],
              "native_plugin_members": old_plugin_members,
              "native_plugin_members_sha256": raw["native_plugin_members_sha256"],
              "native_plugin_transition": None,
