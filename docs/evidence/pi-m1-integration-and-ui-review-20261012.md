@@ -56,6 +56,18 @@ protected history and atomically replace the slot with a complete successor;
 uncertain or changed prior records still refuse before effects. This source
 work is separate from a successful live successor update.
 
+The staged v66 actual target apply reached the fixed Root Core qualification
+subprocess, returned4 and automatically restored the prior Core and ingress.
+Fresh readback verified all four units active on0cb, local allowlist cardinality1,
+and no remaining active ingress transaction. The original completed snapshot
+is retained byte-for-byte at its digest-addressed history entry
+`0297abdbc9d2dcceb25d4d68146d3a2fde79677309468ab957ca0e7f4bd2289c`,
+root:root0600. A fresh actual qualification before-snapshot passed. The failed
+subprocess report did not expose its exact caught CLI failure location, so
+bounded source-location-only diagnostics are being added before further target
+qualification. No new Core, primary adoption, provider completion or added-user
+login acceptance follows from this recovered attempt.
+
 On2026-10-13, fresh Cloudflare connector GETs verified the exact Jarvis hostname,
 both application and allow-policy durations720h, three approved email entries,
 and retained HttpOnly/binding-cookie protection. Existing issued tokens retain
