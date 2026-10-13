@@ -1086,12 +1086,14 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
         managed_block = render_managed_block(bundled_prompt)
         active_sha = hashlib.sha256(active_prompt).hexdigest()
         bundled_sha = hashlib.sha256(bundled_prompt).hexdigest()
-        if expected_managed_block_sha256 is None:
-            assert managed_block not in active_prompt
-        else:
-            assert hashlib.sha256(managed_block).hexdigest() == expected_managed_block_sha256
-            assert managed_block in active_prompt
-        readback_calls.append((active_sha, expected_managed_block_sha256))
+        contains_managed_block = managed_block in active_prompt
+        actual_managed_block_sha256 = (
+            hashlib.sha256(managed_block).hexdigest() if contains_managed_block else None
+        )
+        if expected_managed_block_sha256 is not None:
+            assert actual_managed_block_sha256 == expected_managed_block_sha256
+            assert contains_managed_block
+        readback_calls.append((active_sha, actual_managed_block_sha256))
         return {
             "hermes_revision": core.COMMIT,
             "python_version": "3.14.7",
@@ -1104,8 +1106,8 @@ def _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request):
             "native_loaded_primary_prompt_sha256": active_sha,
             "bundled_primary_prompt_sha256": bundled_sha,
             "active_prompt_matches_bundled_primary": active_sha == bundled_sha,
-            "managed_prompt_block_sha256": expected_managed_block_sha256,
-            "effective_prompt_contains_managed_block": expected_managed_block_sha256 is not None,
+            "managed_prompt_block_sha256": actual_managed_block_sha256,
+            "effective_prompt_contains_managed_block": contains_managed_block,
             "effective_prompt_truncated": False,
             "native_effective_prompt_sha256": active_sha,
             "native_effective_prompt_chars": len(active_prompt.decode("utf-8")),
@@ -2478,6 +2480,26 @@ def test_root_native_readback_checks_current_loader_results_against_owned_bytes(
     assert receipt["loaded_skill_count"] == 396
     assert receipt["active_primary_prompt_sha256"] == hashlib.sha256(active_prompt).hexdigest()
     assert receipt["native_loaded_primary_prompt_sha256"] == "b" * 64
+
+    from hermes_installer.registry.primary_prompt import render_managed_block
+    managed_block = render_managed_block(files["registry/profiles/hermes/SOUL.md"])
+    active_with_block = b"preserved owner prefix\n" + managed_block
+    active_with_block_sha = hashlib.sha256(active_with_block).hexdigest()
+    block_sha = hashlib.sha256(managed_block).hexdigest()
+    payload["loaded"] = skills
+    payload["digests"]["profile:default"] = active_with_block_sha
+    payload.update({
+        "profile_file_sha256": active_with_block_sha,
+        "managed_prompt_block_sha256": block_sha,
+        "effective_prompt_contains_managed_block": True,
+        "native_effective_prompt_sha256": active_with_block_sha,
+        "native_effective_prompt_chars": len(active_with_block.decode("utf-8")),
+        "expected_managed_block_sha256": block_sha,
+    })
+    receipt = core._root_native_readback(
+        manifest, files, active_with_block, expected_managed_block_sha256=block_sha)
+    assert receipt["managed_prompt_block_sha256"] == block_sha
+    assert receipt["effective_prompt_contains_managed_block"] is True
 
     payload["loaded"] = skills[:-1]
     with pytest.raises(core.CoreRuntimeError, match="did not match") as error:
