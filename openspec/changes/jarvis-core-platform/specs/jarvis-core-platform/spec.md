@@ -2555,3 +2555,29 @@ Interrupted Core recovery SHALL acquire the existing adapter-update lock before 
 #### Scenario: Exact lock-owning recovery source integration
 - **WHEN** Root integrates reviewed issue#35 Core source b0dbfde1e401027d91564ad94a3468236c493491
 - **THEN** the sole changed native-adapter Core-file pin equals independently verified SHA-256 `0dac9c434b5c9af0a7dc07dbecd1a8e9546951e1fa08a6786a04d49761394af5`; other members stay exact, mismatched bytes deny, and new-source Pi recovery effect/denial qualification remains required without relabelling prior source-bound proofs.
+
+### Requirement: Native device pairing preserves owner and revocation boundaries
+Native pairing SHALL use an independently verified current owner and device-bound renewable credential with individual revocation. Device status SHALL derive from authoritative sanitized readback. Ordinary web chat and original turn deadlines SHALL remain unchanged. Missing provider, key-binding or revoke proof SHALL leave pairing unavailable; a preference or bearer encryption alone SHALL NOT establish device trust.
+
+#### Scenario: Personal-device enrollment, renewal and independent revoke
+- **WHEN** an owner explicitly enrolls a qualified personal device and later restarts, renews or revokes that installation
+- **THEN** actual protected custody, key binding, expiry and provider/ingress checks govern every admission; another permitted device can remain usable while the revoked device denies within reviewed residual-token/active-turn bounds.
+- **AND** exact immutable issuer/audience/subject continuity preserves current chats/Projects; any required versioned owner migration needs explicit custody/CAS/backup/recovery review before implementation. Browser720h convenience does not prove native pairing.
+
+#### Scenario: Shared device, uncertain renewal and current-source gates
+- **WHEN** a shared tablet logs out or changes account, or renewal/revoke readback is lost, expired, foreign or replayed
+- **THEN** prior-owner transient content/audio clears, current owner data remains isolated and uncertain credentials/effects are not silently retried or resurrected; fresh authentication/readback provides recovery without granting global administration.
+- **AND** issue#41 stays Planned until Root reviews exact provider/operation/record/DTO/ingress/storage contracts and Pi strict specs/plan passes; actual target qualification is separate. Planning authorizes no cloud setting/account mutation.
+
+### Requirement: Native foreground Android voice sends only reviewed current input
+The Android companion SHALL provide owned text chat, foreground PTT to editable transcript and explicit Send, plus current own-reply read-aloud and Stop. Native permission, recognition and synthesis states SHALL be observed. Background, lock, account change or revocation SHALL clear capture/audio and prior-owner transient content. Unsupported services SHALL preserve text fallback; uncertain/offline input SHALL NOT automatically submit.
+
+#### Scenario: Native foreground capture and reply playback
+- **WHEN** an identified authorized phone/tablet build supports the selected native recognizer/TTS and the current owner explicitly captures, reviews and sends text or plays a current completed reply
+- **THEN** actual native lifecycle events drive state; processing disclosure/consent precedes capture, one exact finite protected turn is submitted, and Stop interrupts capture/playback without a duplicate send.
+- **AND** issue#42 depends on#41's qualified native auth/transport, an explicitly reviewed Android package/build/source owner and authorized build environment. Existing browser#19 is fallback and does not prove native audio or assistant-role support.
+
+#### Scenario: Android lifecycle denial and explicit recovery
+- **WHEN** permissions/engine/language fail, the app leaves foreground or locks, owner/conversation/reply changes, native callbacks arrive late or transport outcome is uncertain
+- **THEN** stale capture/send/render/audio is denied, unsent drafts remain visibly unsent, and explicit fresh permission/authentication/current readback restores usable text/voice without automatic recording or uncertain-turn replay.
+- **AND** Root Pi backend evidence and actual per-build Pixel10/HonorX5bPlus/tablet audio/lifecycle/accessibility plus candidate-bound affected/full-flow UX revision precede acceptance; assistant-role/hotword/background/HA/ROM/notifications remain separate open obligations.
