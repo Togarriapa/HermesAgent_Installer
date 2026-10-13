@@ -515,35 +515,46 @@ def _success_checks(before: dict[str, Any], after: dict[str, Any], candidate_src
     }
 
 
-def _root_setup_exception_origin(exc_type: type, tb, candidate_src: Path) -> dict | None:
+def _root_setup_exception_origin(exc: BaseException, candidate_src: Path) -> dict | None:
+    exc_type = type(exc)
     name = getattr(exc_type, "__name__", None)
     if (not isinstance(name, str)
             or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name) is None):
         return None
     frames = []
-    visited = 0
-    while tb is not None and visited < 128 and len(frames) < 12:
-        visited += 1
-        frame = tb.tb_frame
-        try:
-            filename = os.path.abspath(frame.f_code.co_filename)
-            relative = os.path.relpath(filename, str(candidate_src))
-            relative_path = Path(relative)
-            function = frame.f_code.co_name
-            line = tb.tb_lineno
-            if (relative == "." or os.path.isabs(relative)
-                    or any(part in {"", ".", ".."} for part in relative_path.parts)
-                    or re.fullmatch(r"[A-Za-z0-9_./-]{1,512}", relative) is None
-                    or not isinstance(function, str)
-                    or re.fullmatch(r"[A-Za-z0-9_<>.$-]{1,256}", function) is None
-                    or type(line) is not int or line < 1):
-                tb = tb.tb_next
-                continue
-            frames.append({"source_relative_path": relative_path.as_posix(),
-                           "function": function, "line": line})
-        except (OSError, ValueError, TypeError):
-            pass
-        tb = tb.tb_next
+    seen = set()
+    current = exc
+    while current is not None and len(seen) < 4 and len(frames) < 12:
+        identity = id(current)
+        if identity in seen:
+            break
+        seen.add(identity)
+        tb = BaseException.__traceback__.__get__(current)
+        visited = 0
+        while tb is not None and visited < 128 and len(frames) < 12:
+            visited += 1
+            frame = tb.tb_frame
+            try:
+                filename = os.path.abspath(frame.f_code.co_filename)
+                relative = os.path.relpath(filename, str(candidate_src))
+                relative_path = Path(relative)
+                function = frame.f_code.co_name
+                line = tb.tb_lineno
+                if (relative == "." or os.path.isabs(relative)
+                        or any(part in {"", ".", ".."} for part in relative_path.parts)
+                        or re.fullmatch(r"[A-Za-z0-9_./-]{1,512}", relative) is None
+                        or not isinstance(function, str)
+                        or re.fullmatch(r"[A-Za-z0-9_<>.$-]{1,256}", function) is None
+                        or type(line) is not int or line < 1):
+                    tb = tb.tb_next
+                    continue
+                frames.append({"source_relative_path": relative_path.as_posix(),
+                               "function": function, "line": line})
+            except (OSError, ValueError, TypeError):
+                pass
+            tb = tb.tb_next
+        cause = BaseException.__cause__.__get__(current)
+        current = cause if cause is not None else BaseException.__context__.__get__(current)
     if not frames:
         return None
     return {"exception_type": name, "frames": frames}
@@ -568,9 +579,12 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path) -> tuple[int
                 if type(arg) is not tuple or len(arg) != 3:
                     captured["origin"] = None
                     return trace
-                exc_type, tb = arg[0], arg[2]
+                exc = arg[1]
+                if not isinstance(exc, BaseException):
+                    captured["origin"] = None
+                    return trace
                 captured["origin"] = _root_setup_exception_origin(
-                    exc_type, tb, candidate_src)
+                    exc, candidate_src)
             except (TypeError, ValueError):
                 captured["origin"] = None
         return trace

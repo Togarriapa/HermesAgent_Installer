@@ -221,6 +221,51 @@ def test_fixed_cli_trace_limits_local_events_to_main_but_keeps_nested_origin(mon
     assert qualification.sys.gettrace() is None
 
 
+def test_fixed_cli_trace_keeps_suppressed_context_frames_without_exception_text():
+    def nested_failure():
+        raise LookupError("PRIVATE_SUPPRESSED_CONTEXT_TEXT_MUST_NOT_ESCAPE")
+
+    class RootSetup:
+        @staticmethod
+        def main(_argv):
+            try:
+                nested_failure()
+            except LookupError:
+                raise RuntimeError("PRIVATE_OUTER_EXCEPTION_TEXT_MUST_NOT_ESCAPE") from None
+
+    cli_exit, origin = qualification._run_fixed_root_adapter_update(
+        RootSetup, Path(__file__).resolve().parent)
+    assert cli_exit == 1
+    assert set(origin) == {"exception_type", "frames"}
+    assert origin["exception_type"] == "RuntimeError"
+    assert any(frame["function"] == "nested_failure" for frame in origin["frames"])
+    assert len(origin["frames"]) <= 12
+    assert all(set(frame) == {"source_relative_path", "function", "line"}
+               for frame in origin["frames"])
+    assert "PRIVATE_SUPPRESSED_CONTEXT_TEXT_MUST_NOT_ESCAPE" not in repr(origin)
+    assert "PRIVATE_OUTER_EXCEPTION_TEXT_MUST_NOT_ESCAPE" not in repr(origin)
+    assert qualification.sys.gettrace() is None
+
+
+def test_exception_origin_bounds_and_breaks_cause_cycles():
+    def captured_error(text):
+        try:
+            raise RuntimeError(text)
+        except RuntimeError as exc:
+            return exc
+
+    errors = [captured_error(f"PRIVATE_CHAIN_TEXT_{index}") for index in range(8)]
+    for index, exc in enumerate(errors):
+        exc.__cause__ = errors[(index + 1) % len(errors)]
+    origin = qualification._root_setup_exception_origin(
+        errors[0], Path(__file__).resolve().parent)
+    assert origin is not None
+    assert origin["exception_type"] == "RuntimeError"
+    assert len(origin["frames"]) == 4
+    assert len(origin["frames"]) <= 12
+    assert "PRIVATE_CHAIN_TEXT_" not in repr(origin)
+
+
 def test_fixed_cli_trace_refuses_a_preexisting_trace():
     def prior_trace(_frame, _event, _arg):
         return prior_trace
