@@ -473,11 +473,22 @@ def _isolate_resource_import_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "RESOURCES_CAS", cas)
 
 
-def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
+def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
+                  public_service_files=False, request=None):
     etc = tmp_path / "etc" / "hermes-installer"
     var = tmp_path / "var" / "lib" / "hermes-installer"
-    unit_dir = tmp_path / "etc" / "systemd" / "system"
-    libexec = tmp_path / "usr" / "local" / "libexec"
+    if public_service_files:
+        if request is None:
+            raise AssertionError("public service fixture needs pytest cleanup ownership")
+        service_root = Path(tempfile.mkdtemp(prefix="core-m1-service-", dir="/tmp"))
+        service_root.chmod(0o755)
+        request.addfinalizer(lambda: shutil.rmtree(service_root))
+        unit_dir = service_root / "etc" / "systemd" / "system"
+        libexec = service_root / "usr" / "local" / "libexec"
+    else:
+        service_root = None
+        unit_dir = tmp_path / "etc" / "systemd" / "system"
+        libexec = tmp_path / "usr" / "local" / "libexec"
     home = tmp_path / "home" / "admin" / ".hermes"
     for path in (etc, var.parent, unit_dir, libexec, home):
         path.mkdir(parents=True, exist_ok=True)
@@ -522,8 +533,8 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
         (core.TOKEN, "token_sha256", os.getuid(), os.getgid(), 0o640)))
     fixture_root = tmp_path.resolve()
     controlled_write_paths = (
-        core.ETC_INSTALLER, core.VAR_LIB_INSTALLER, core.SYSTEMD_UNIT_DIR,
-        core.LIBEXEC_DIR, core.TOKEN, core.JOURNAL, core.RESOURCES_RECORD,
+        core.ETC_INSTALLER, core.VAR_LIB_INSTALLER,
+        core.TOKEN, core.JOURNAL, core.RESOURCES_RECORD,
         core.RESOURCES_CAS, core.RESOURCES_MIGRATION_RECORD,
         core.PRIMARY_PROMPT_JOURNAL, core.PRIMARY_PROMPT_BACKUPS,
         core.RESOURCES_SKILL_OVERLAYS, core.ADAPTER_MIGRATION_BACKUP,
@@ -532,6 +543,15 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     )
     outside = [str(path) for path in controlled_write_paths
                if not path.resolve().is_relative_to(fixture_root)]
+    if service_root is not None:
+        if (core.UNIT.resolve() != (service_root / "etc/systemd/system" / core.SERVICE).resolve()
+                or core.LIBEXEC_DIR.resolve() != (service_root / "usr/local/libexec").resolve()
+                or core.LAUNCHER.resolve() != (service_root / "usr/local/libexec/hermes-jarvis-core-launcher").resolve()):
+            raise AssertionError("only the exact disposable service files may use public fixture custody")
+    else:
+        outside.extend(str(path) for path in (core.SYSTEMD_UNIT_DIR, core.LIBEXEC_DIR,
+                                               core.UNIT, core.LAUNCHER)
+                       if not path.resolve().is_relative_to(fixture_root))
     if outside:
         raise AssertionError(f"Core fixture write paths escaped tmp_path: {outside}")
     if not core.HERMES_HOME.resolve().is_relative_to(fixture_root):
@@ -715,10 +735,12 @@ def test_native_plugin_bootstrap_embedded_scripts_parse_on_target_runtime():
         compile(source, f"native-plugin-bootstrap-script-{index}", "exec")
 
 
-def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="active"):
+def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="active",
+                                    public_service_files=False, request=None):
     if journal_state not in {"installed", "active"}:
         raise ValueError("legacy fixture journal state must be installed or active")
-    calls, enabled = _fake_runtime(tmp_path, monkeypatch)
+    calls, enabled = _fake_runtime(tmp_path, monkeypatch,
+        public_service_files=public_service_files, request=request)
     # Establish a complete temporary owned install using the same fixture actor
     # and fixed temp paths; do not manufacture a journal fragment by hand.
     core.install_or_resume()
@@ -731,6 +753,15 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="act
                    "unit_sha256": hashlib.sha256(core._unit()).hexdigest()})
     core.JOURNAL.write_text(json.dumps(record, sort_keys=True) + "\n")
     core.JOURNAL.chmod(0o600)
+    if public_service_files:
+        service_root = core.UNIT.parents[3]
+        expected_files = {core.UNIT.resolve(), core.LAUNCHER.resolve()}
+        actual_files = {path.resolve() for path in service_root.rglob("*") if path.is_file()}
+        root_stat = service_root.stat()
+        if (actual_files != expected_files
+                or (root_stat.st_uid, root_stat.st_gid, stat.S_IMODE(root_stat.st_mode))
+                    != (core.ROOT_UID, core.ROOT_UID, 0o755)):
+            raise AssertionError("public fixture tree must retain only the two owned service files")
     # The production recipe is the post-migration comparator. The on-disk
     # legacy launcher and journal hashes above remain the migration input.
     monkeypatch.setattr(core, "_launcher", _REAL_CORE_LAUNCHER)
@@ -1362,7 +1393,8 @@ def test_post_migration_recovery_refuses_changed_current_launcher_before_touchin
 def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_launcher(tmp_path, monkeypatch, request):
     guard_runner = subprocess.run
     calls, enabled, _old_launcher, selection = _install_legacy_service_fixture(
-        tmp_path, monkeypatch, journal_state="installed")
+        tmp_path, monkeypatch, journal_state="installed",
+        public_service_files=True, request=request)
     core.migrate_owned_core_to_adapter_path()
     _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
     memory = core.HERMES_HOME / "memories" / "owner.md"
