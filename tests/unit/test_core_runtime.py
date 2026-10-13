@@ -2313,8 +2313,13 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     assert _PRODUCTION_READ_CURRENT_RESOURCES_DISCOVERY(
         core_source_generation=updated["core_source_generation"]
     )["resources_state"] == "discovered"
-    assert json.loads(core.RESOURCES_RECORD.read_bytes())["artifact_sha256"] == (
-        cohort["new_composed_artifact_sha256"])
+    resources_raw = core.RESOURCES_RECORD.read_bytes()
+    resources_record = json.loads(resources_raw)
+    reconstruction = cohort["reconstruction"]
+    assert cohort["phase"] == "committed"
+    assert reconstruction["new_composed_artifact_sha256"] == cohort["new_artifact_sha256"]
+    assert resources_record["artifact_sha256"] == cohort["new_artifact_sha256"]
+    assert hashlib.sha256(resources_raw).hexdigest() == cohort["new_resources_record_sha256"]
     if obsidian_fixture is not None:
         assert cohort["phase"] == "committed"
         assert cohort["obsidian_registration_state"] == "registered"
