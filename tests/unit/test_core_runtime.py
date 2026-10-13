@@ -2521,6 +2521,7 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
 @pytest.mark.parametrize("registered_obsidian", [False, True])
 def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
         tmp_path, monkeypatch, request, registered_obsidian):
+    real_wait_for_listener = core._wait_for_listener
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
@@ -2542,6 +2543,16 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
     unit = core.UNIT.read_bytes()
     token = core.TOKEN.read_bytes()
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
+    def current_journal_listener(*, adapter_source=core.ADAPTER_SOURCE, legacy_launcher=False):
+        if not enabled["value"]:
+            return False
+        try:
+            record = json.loads(core.JOURNAL.read_bytes())
+        except (OSError, ValueError, TypeError):
+            return False
+        return (not legacy_launcher
+                and record.get("adapter_source") == str(adapter_source))
+    monkeypatch.setattr(core, "_owned_listener", current_journal_listener)
     attempts = {"wait": 0}
     listener_sources = []
     def fail_first_restart(*, adapter_source=core.ADAPTER_SOURCE):
@@ -2552,6 +2563,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
             attempts["starting_cohort"], _cohort_raw = core._read_adapter_update_cohort()
             raise core.CoreRuntimeError("injected adapter update restart failure")
         assert Path(adapter_source) == old_source
+        real_wait_for_listener(adapter_source=Path(adapter_source))
     monkeypatch.setattr(core, "_wait_for_listener", fail_first_restart)
     update_call_start = len(_calls)
 
@@ -2597,6 +2609,28 @@ def test_wait_for_listener_checks_the_requested_journaled_source(monkeypatch):
     monkeypatch.setattr(core, "_owned_listener", owned_listener)
     core._wait_for_listener(adapter_source=prior_source)
     assert observed == [prior_source]
+
+
+def test_wait_for_listener_keeps_default_source_and_refuses_mismatch(monkeypatch):
+    observed = []
+    monotonic = {"value": 0.0}
+
+    def only_candidate_is_current(*, adapter_source=core.ADAPTER_SOURCE):
+        observed.append(Path(adapter_source))
+        return Path(adapter_source) == core.ADAPTER_SOURCE
+
+    monkeypatch.setattr(core, "_owned_listener", only_candidate_is_current)
+    core._wait_for_listener()
+    assert observed == [core.ADAPTER_SOURCE]
+
+    observed.clear()
+    prior_source = Path("/opt/hermes-installer-core-prior/src")
+    monkeypatch.setattr(core.time, "monotonic", lambda: monotonic["value"])
+    monkeypatch.setattr(core.time, "sleep", lambda seconds: monotonic.__setitem__(
+        "value", monotonic["value"] + seconds))
+    with pytest.raises(core.CoreRuntimeError, match="did not prove its isolated loopback listener"):
+        core._wait_for_listener(adapter_source=prior_source)
+    assert observed == [prior_source] * 30
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
