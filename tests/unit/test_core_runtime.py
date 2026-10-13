@@ -287,7 +287,7 @@ def _bounded_cohort_exception_sites():
         sys.settrace(previous)
 
 
-def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None):
+def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None, runner=None):
     """Run the untouched generated guard as admin in a private mount view."""
     if os.geteuid() != 0:
         raise AssertionError("the Pi startup-guard fixture requires root to model admin")
@@ -361,7 +361,8 @@ test "$actual_uid" = 1000
 printf 'FIXTURE_NAMESPACE_READY\\n'
 exec "$runuser_bin" -u admin -- "$@"
 """
-        result = subprocess.run(
+        run = subprocess.run if runner is None else runner
+        result = run(
             [unshare, "--mount", "--propagation", "private", "--", "sh", "-eu", "-c",
              namespace_script, "core-start-guard", str(core.UNIT), str(core.LAUNCHER),
              str(cred_dir), str(cred_view), runuser, *command],
@@ -1340,6 +1341,7 @@ def test_post_migration_recovery_refuses_changed_current_launcher_before_touchin
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
 def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_launcher(tmp_path, monkeypatch, request):
+    guard_runner = subprocess.run
     calls, enabled, _old_launcher, selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
@@ -1399,8 +1401,10 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
         backup_generation=prior["adapter_generation"])
     assert core.UNIT.read_bytes() == expected_new_unit
     assert hashlib.sha256(expected_new_unit).hexdigest() == updated["unit_sha256"]
-    assert _exec_start_pre(expected_new_unit, expect_success=True) == 0
-    assert _exec_start_pre(prior_unit, expect_success=False) != 0
+    assert _exec_start_pre(expected_new_unit, expect_success=True,
+                           runner=guard_runner) == 0
+    assert _exec_start_pre(prior_unit, expect_success=False,
+                           runner=guard_runner) != 0
     assert core.TOKEN.read_bytes() == token
     assert memory.read_text() == "existing owner memory"
     backup = core.ADAPTER_UPDATE_BACKUPS / prior["adapter_generation"]
@@ -2260,6 +2264,22 @@ def test_unwritten_initial_primary_rollback_requires_original_soul_inode_and_sig
     monkeypatch.setattr(primary, "_read_soul", lambda _core: (soul, replacement_signature))
     with pytest.raises(core.CoreRuntimeError, match="original owner SOUL"):
         core._check_adapter_cohort_rollback_currentness(cohort, prior, contents)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
+def test_exec_start_pre_uses_only_explicit_captured_runner_under_core_subprocess_deny(
+        tmp_path, monkeypatch, request):
+    guard_runner = subprocess.run
+    unit, _cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request)
+
+    def deny_core_subprocess(*_args, **_kwargs):
+        raise AssertionError("Core cohort attempted an unapproved host subprocess")
+
+    monkeypatch.setattr(core.subprocess, "run", deny_core_subprocess)
+    with pytest.raises(AssertionError, match="unapproved host subprocess"):
+        core.subprocess.run(["true"])
+    assert _exec_start_pre(unit, expect_success=True, runner=guard_runner) == 0
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
