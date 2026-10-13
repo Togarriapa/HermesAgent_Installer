@@ -4,6 +4,7 @@ These tests use temporary files and mocked systemd calls; target acceptance is
 performed separately on the enrolled Pi.
 """
 import hashlib
+import contextlib
 import io
 import json
 import os
@@ -22,6 +23,32 @@ from types import MappingProxyType, ModuleType, SimpleNamespace
 import pytest
 
 from hermes_installer import core_runtime as core
+
+
+@contextlib.contextmanager
+def _bounded_cohort_exception_sites():
+    """Expose only code locations/types for a hidden cohort failure on Pi."""
+    previous = sys.gettrace()
+    sites = []
+    allowed = {"core_runtime.py", "manual_jarvis_skills.py", "resources_skill_overlay.py"}
+
+    def trace(frame, event, arg):
+        if event == "exception" and Path(frame.f_code.co_filename).name in allowed:
+            exception_type = type(arg[1]).__name__
+            if len(sites) < 80:
+                sites.append((Path(frame.f_code.co_filename).name,
+                              frame.f_code.co_name, frame.f_lineno, exception_type))
+        return trace
+
+    sys.settrace(trace)
+    try:
+        yield
+    except BaseException:
+        sys.settrace(previous)
+        print("bounded cohort exception sites: " + repr(sites[-30:]))
+        raise
+    finally:
+        sys.settrace(previous)
 
 
 def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None):
@@ -965,7 +992,8 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
         return result
     monkeypatch.setattr(core, "_run", model_restart_on_failure)
 
-    result = core.update_owned_core_adapter()
+    with _bounded_cohort_exception_sites():
+        result = core.update_owned_core_adapter()
 
     updated = json.loads(core.JOURNAL.read_text())
     assert "updated to the verified adapter generation" in result
