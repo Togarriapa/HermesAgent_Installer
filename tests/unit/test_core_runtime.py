@@ -815,6 +815,13 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
 
 def test_install_resume_and_rollback_use_only_fixed_owned_paths(tmp_path, monkeypatch):
     calls, enabled = _fake_runtime(tmp_path, monkeypatch)
+    recovery_lock_states = []
+    original_locked_recovery = core._recover_interrupted_adapter_update_locked
+    def observe_locked_recovery():
+        recovery_lock_states.append(core._ADAPTER_UPDATE_LOCK_HELD.get())
+        return original_locked_recovery()
+    monkeypatch.setattr(core, "_recover_interrupted_adapter_update_locked",
+                        observe_locked_recovery)
     preserve = core.HERMES_HOME / "auth.json"
     preserve.write_text("user credential")
     first = core.install_or_resume()
@@ -822,6 +829,7 @@ def test_install_resume_and_rollback_use_only_fixed_owned_paths(tmp_path, monkey
     second = core.install_or_resume()
     assert token == core.TOKEN.read_bytes()
     assert enabled["value"]
+    assert recovery_lock_states == [True, True]
     assert "listener verified" in first and "listener verified" in second
     assert preserve.read_text() == "user credential"
     monkeypatch.setattr(core, "_owned_listener", lambda: False)
@@ -830,6 +838,24 @@ def test_install_resume_and_rollback_use_only_fixed_owned_paths(tmp_path, monkey
     assert preserve.read_text() == "user credential"
     assert any(argv == ("systemctl", "daemon-reload") and not unit_exists
                for argv, unit_exists in calls)
+
+
+def test_interrupted_recovery_reuses_an_already_held_lock(tmp_path, monkeypatch):
+    _fake_runtime(tmp_path, monkeypatch)
+    with core._adapter_update_lock():
+        assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+        core._recover_interrupted_adapter_update()
+        assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+
+
+def test_interrupted_recovery_rejects_non_root_before_lock_or_reads(monkeypatch):
+    def forbidden_lock():
+        raise AssertionError("non-root recovery attempted to acquire the Core update lock")
+
+    monkeypatch.setattr(core.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(core, "_adapter_update_lock", forbidden_lock)
+    with pytest.raises(core.CoreRuntimeError, match="requires Root"):
+        core._recover_interrupted_adapter_update()
 
 
 def test_launcher_uses_only_pinned_hermes_and_installer_adapter_paths():

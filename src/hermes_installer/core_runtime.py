@@ -5668,6 +5668,16 @@ def _prove_new_cohort_startup_chat():
   return proof
 
 def _recover_interrupted_adapter_update():
+ if os.geteuid()!=ROOT_UID:
+  raise CoreRuntimeError("interrupted adapter recovery requires Root")
+ if _ADAPTER_UPDATE_LOCK_HELD.get():
+  return _recover_interrupted_adapter_update_locked()
+ with _adapter_update_lock():
+  return _recover_interrupted_adapter_update_locked()
+
+def _recover_interrupted_adapter_update_locked():
+ if os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get():
+  raise CoreRuntimeError("interrupted adapter recovery requires the held Root lock")
  # The cohesive M1 cohort keeps the original ownership journal byte-identical
  # until all owner bindings are rebound. Therefore its phase, not a synthetic
  # `preparing` value in that journal, is the recovery authority.
