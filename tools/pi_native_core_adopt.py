@@ -515,6 +515,10 @@ def _valid_qualification_snapshot(value: object) -> bool:
         "adapter_update_backup_source_generation", "primary_owner_prefix_sha256",
         "primary_immutable_backup_sha256",
     }
+    absent_digests = {
+        "overlay_record_sha256", "primary_record_sha256",
+        "obsidian_registration_sha256", "obsidian_vault_tree_sha256",
+    }
     digest_pattern = r"[0-9a-f]{64}"
     for key in _QUALIFICATION_SNAPSHOT_KEYS:
         if key in optional_digests and value[key] is None:
@@ -527,7 +531,11 @@ def _valid_qualification_snapshot(value: object) -> bool:
                 "obsidian_registration_sha256", "obsidian_vault_tree_sha256",
                 "adapter_update_backup_source_generation", "primary_owner_prefix_sha256",
                 "primary_immutable_backup_sha256"}:
-            if not isinstance(value[key], str) or re.fullmatch(digest_pattern, value[key]) is None:
+            if key in optional_digests and value[key] is None:
+                continue
+            if (not isinstance(value[key], str)
+                    or (re.fullmatch(digest_pattern, value[key]) is None
+                        and not (key in absent_digests and value[key] == "absent"))):
                 return False
         elif key == "token_custody_verified":
             if value[key] is not True:
@@ -554,6 +562,18 @@ def _valid_qualification_snapshot(value: object) -> bool:
         elif key == "primary_prompt_state":
             if value[key] not in {"adopted", "unmanaged"}:
                 return False
+    # Core uses the literal sentinel only for the four optional protected
+    # files/trees below.  Bind each one to the independent state/count fields
+    # so an arbitrary caller cannot turn a required digest into "absent".
+    registration_absent = value["obsidian_registration_state"] == "absent"
+    if ((value["obsidian_registration_sha256"] == "absent") != registration_absent
+            or (value["obsidian_vault_tree_sha256"] == "absent") != registration_absent):
+        return False
+    primary_unmanaged = value["primary_prompt_state"] == "unmanaged"
+    if (value["primary_record_sha256"] == "absent") != primary_unmanaged:
+        return False
+    if value["overlay_record_sha256"] == "absent" and value["overlay_content_count"] != 0:
+        return False
     return True
 
 

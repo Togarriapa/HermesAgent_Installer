@@ -1312,22 +1312,24 @@ def _completed_ingress_handoff_fixture(tmp_path, monkeypatch):
 
 def _qualification_report_fixture(candidate="b" * 40, archive="c" * 64):
     def snapshot(source, generation):
-        return {
+        result = {
             "journal_sha256": "1" * 64, "unit_sha256": "2" * 64,
             "launcher_sha256": "3" * 64, "token_custody_verified": True,
             "token_sha256": "4" * 64, "adapter_source": source,
             "adapter_generation": generation, "core_source_generation": "5" * 64,
             "plugin_selection_sha256": "6" * 64, "resources_record_sha256": "7" * 64,
-            "overlay_record_sha256": "8" * 64, "overlay_content_count": 1,
-            "overlay_contents_sha256": "9" * 64, "primary_record_sha256": None,
-            "obsidian_registration_state": "absent", "obsidian_registration_sha256": None,
-            "obsidian_vault_tree_sha256": None, "adapter_update_state": "active",
+            "overlay_record_sha256": "absent", "overlay_content_count": 0,
+            "overlay_contents_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "primary_record_sha256": "absent",
+            "obsidian_registration_state": "absent", "obsidian_registration_sha256": "absent",
+            "obsidian_vault_tree_sha256": "absent", "adapter_update_state": "active",
             "adapter_update_previous_source": None,
             "adapter_update_backup_source_generation": generation,
             "primary_prompt_soul_sha256": "a" * 64, "primary_prompt_state": "unmanaged",
             "primary_owner_prefix_sha256": "b" * 64, "primary_owner_prefix_length": 12,
             "primary_immutable_backup_sha256": None,
         }
+        return result
     return {
         "schema": 1, "action": "core-service adapter-update",
         "candidate_commit": candidate, "candidate_archive_sha256": archive,
@@ -1375,10 +1377,22 @@ def test_nonzero_qualification_persists_only_validated_sanitized_report(tmp_path
     assert (info.st_uid, info.st_gid) == (0, 0)
     assert b"_replace_launcher" in saved
     assert b"PRIVATE" not in saved
-    assert json.loads(saved)["cli_failure_origin"] == report["cli_failure_origin"]
+    persisted = json.loads(saved)
+    assert persisted["cli_failure_origin"] == report["cli_failure_origin"]
+    for snapshot in (persisted["before"], persisted["after"]):
+        assert snapshot["overlay_record_sha256"] == "absent"
+        assert snapshot["overlay_content_count"] == 0
+        assert snapshot["primary_prompt_state"] == "unmanaged"
+        assert snapshot["primary_record_sha256"] == "absent"
+        assert snapshot["obsidian_registration_state"] == "absent"
+        assert snapshot["obsidian_registration_sha256"] == "absent"
+        assert snapshot["obsidian_vault_tree_sha256"] == "absent"
 
 
-@pytest.mark.parametrize("report_kind", ["malformed", "foreign-candidate", "unsafe-origin"])
+@pytest.mark.parametrize("report_kind", [
+    "malformed", "foreign-candidate", "unsafe-origin", "forged-absent-digest",
+    "inconsistent-registration-sentinel",
+])
 @pytest.mark.skipif(os.geteuid() != 0, reason="protected failure report fixture requires root")
 def test_untrusted_qualification_failure_report_cannot_replace_last_failure(
         tmp_path, monkeypatch, report_kind):
@@ -1397,8 +1411,12 @@ def test_untrusted_qualification_failure_report_cannot_replace_last_failure(
     else:
         if report_kind == "foreign-candidate":
             report["candidate_commit"] = "f" * 40
-        else:
+        elif report_kind == "unsafe-origin":
             report["cli_failure_origin"]["frames"][0]["source_relative_path"] = "/etc/shadow"
+        elif report_kind == "forged-absent-digest":
+            report["before"]["resources_record_sha256"] = "absent"
+        else:
+            report["before"]["obsidian_registration_state"] = "registered"
         raw = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()
     tool = Path(adopt.__file__)
     tool_info = tool.lstat()
