@@ -3157,7 +3157,8 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request, *, empty_op
     old_unit = core._unit(adapter_source=old_source, cohort_gate=True,
                           backup_generation=old_adapter)
     new_unit = core._unit(adapter_source=new_source, cohort_gate=True,
-                          backup_generation=old_adapter)
+                          backup_generation=old_adapter,
+                          failure_diagnostics=True, whole_guard_encoding=True)
     core.LAUNCHER.write_bytes(new_launcher)
     core.LAUNCHER.chmod(0o755)
     core.UNIT.write_bytes(new_unit)
@@ -3697,7 +3698,10 @@ def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resource
         if row.startswith("LoadCredential=adapter-backup-")]
     assert len(backup_credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 1
     assert not any("native-plugin" in row for row in backup_credentials)
-    assert _exec_start_pre(unit, expect_success=True) == 0
+    systemd_argv = _systemd_decoded_exec_start_pre(unit)
+    compile(systemd_argv[4], "<systemd-decoded-source-cohort-guard>", "exec")
+    assert systemd_argv[4].startswith("exec(bytes.fromhex(")
+    assert _exec_start_pre(unit, expect_success=True, systemd_argv=systemd_argv) == 0
     # A reboot during any incomplete phase must fail closed even when the
     # systemd unit and launcher already contain the new source recipe.
     for phase in ("prepared", "resources-rebound", "rolling-back"):
@@ -3787,7 +3791,8 @@ def test_m1_guard_diagnostic_runs_only_after_original_guard_denies(
     with pytest.raises(AssertionError, match="generated ExecStartPre should succeed") as caught:
         _exec_start_pre(
             unit, credential_mutations={credential_name: ("bytes", b"invalid fixture token\n")},
-            expect_success=True, diagnostic=True)
+            expect_success=True, diagnostic=True,
+            systemd_argv=_systemd_decoded_exec_start_pre(unit))
     message = str(caught.value)
     assert "exit=" in message and "guard_flags={" in message
     assert "'namespace_ready': True" in message
@@ -3881,9 +3886,7 @@ def test_m1_cohort_accepts_only_its_exact_legacy_or_diagnostic_guard_recipe(
     source = Path(cohort["new_source"])
     launcher_sha = hashlib.sha256(core._launcher(adapter_source=source)).hexdigest()
     for native_transition in (False, True):
-        variants = [(False, False), (True, False)]
-        if native_transition:
-            variants.append((True, True))
+        variants = [(False, False), (True, False), (True, True)]
         for diagnostic, whole_encoded in variants:
             unit = core._unit(adapter_source=source, cohort_gate=True,
                 backup_generation=cohort["old_adapter_generation"],

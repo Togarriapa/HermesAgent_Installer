@@ -2858,9 +2858,8 @@ def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False,backup_gene
  if type(failure_diagnostics) is not bool or (failure_diagnostics and not cohort_gate):
   raise CoreRuntimeError("failure diagnostics require a source-cohort unit")
  if (type(whole_guard_encoding) is not bool
-     or (whole_guard_encoding and not (cohort_gate and native_plugin_transition
-                                       and failure_diagnostics))):
-  raise CoreRuntimeError("whole-program guard encoding requires a diagnostic native-plugin cohort")
+     or (whole_guard_encoding and not (cohort_gate and failure_diagnostics))):
+  raise CoreRuntimeError("whole-program guard encoding requires a diagnostic source-cohort unit")
  a=pwd.getpwnam("admin")
  if a.pw_uid!=1000 or a.pw_gid!=1000 or a.pw_dir!="/home/admin": raise CoreRuntimeError("admin identity mismatch")
  guard=""
@@ -2921,9 +2920,8 @@ def _cohort_guard_unit(cohort,*,source,backup_generation,native_plugin_transitio
   _unit(adapter_source=source,cohort_gate=True,backup_generation=backup_generation,
         native_plugin_transition=native_plugin_transition,failure_diagnostics=True),
  )
- if native_plugin_transition:
-  candidates += (_unit(adapter_source=source,cohort_gate=True,
-        backup_generation=backup_generation,native_plugin_transition=True,
+ candidates += (_unit(adapter_source=source,cohort_gate=True,
+        backup_generation=backup_generation,native_plugin_transition=native_plugin_transition,
         failure_diagnostics=True,whole_guard_encoding=True),)
  matches=[]
  for candidate in candidates:
@@ -6284,7 +6282,7 @@ def _update_owned_core_adapter_locked():
   raise CoreRuntimeError("verified prior A0 archive changed during transition preparation")
  new_unit=_unit(adapter_source=ADAPTER_SOURCE,cohort_gate=True,backup_generation=old_adapter,
   native_plugin_transition=plugin_transition is not None,failure_diagnostics=True,
-  whole_guard_encoding=plugin_transition is not None)
+  whole_guard_encoding=True)
  new_launcher=_launcher(adapter_source=ADAPTER_SOURCE)
  old_unit=old_files[UNIT]; old_launcher=old_files[LAUNCHER]
  new_unit_sha=hashlib.sha256(new_unit).hexdigest(); new_launcher_sha=hashlib.sha256(new_launcher).hexdigest()
