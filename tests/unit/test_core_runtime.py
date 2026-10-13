@@ -1872,6 +1872,10 @@ def test_incoming_adapter_old_a0_proof_denies_tamper_before_effects(
     _fake_update_pidfd(monkeypatch, enabled, request)
     _rebind_migrated_fixture_to_prior_generation()
     calls_before = list(calls)
+    enabled_before = enabled["value"]
+    unit_present_before = core.UNIT.exists()
+    unit_bytes_before = core.UNIT.read_bytes() if unit_present_before else None
+    launcher_bytes_before = core.LAUNCHER.read_bytes()
     receipt_path = core.RESOURCES_RECORD
     original_receipt = receipt_path.read_bytes()
     changed_path = None
@@ -1949,8 +1953,53 @@ def test_incoming_adapter_old_a0_proof_denies_tamper_before_effects(
                 "base_artifact_sha256": inputs["old_artifact"],
                 "skills": {},
             }), 0o600, core.ROOT_UID, core.ROOT_UID)
+        from hermes_installer.registry import manual_jarvis_skills as native
+        protected_paths = {
+            core.JOURNAL,
+            core.UNIT,
+            core.LAUNCHER,
+            core.TOKEN,
+            receipt_path,
+            core.RESOURCES_MIGRATION_RECORD,
+            core.ADAPTER_UPDATE_COHORT,
+            core.RESOURCES_CAS / (inputs["old_artifact"] + ".zip"),
+            core.RESOURCES_CAS / (hashlib.sha256(inputs["old_base_archive"]).hexdigest() + ".zip"),
+            core.HERMES_HOME / "skills" / native._GENERATION / native._OWNER_FILE,
+            core.HERMES_HOME / "SOUL.md",
+            core.ADAPTER_MIGRATION_BACKUP / "journal.json",
+            core.ADAPTER_MIGRATION_BACKUP / "unit",
+            core.ADAPTER_MIGRATION_BACKUP / "launcher",
+            core.ADAPTER_MIGRATION_BACKUP / "plugin-selection.json",
+            core.ADAPTER_MIGRATION_BACKUP / "manifest.json",
+            core.RESOURCES_SKILL_OVERLAYS / "lock",
+        }
+        if inputs["snapshots"]["primary_record"]:
+            protected_paths.add(core.PRIMARY_PROMPT_JOURNAL)
+        if inputs["overlay_raw"] is not None or tamper == "overlay-appearance":
+            protected_paths.add(core.RESOURCES_SKILL_OVERLAYS / "active.json")
+            protected_paths.update(
+                core.RESOURCES_SKILL_OVERLAYS / (hashlib.sha256(data).hexdigest() + ".bin")
+                for data in inputs["overlay_contents"].values())
+
+        def protected_snapshot(paths):
+            snapshot = {}
+            for path in paths:
+                try:
+                    metadata = path.lstat()
+                except FileNotFoundError:
+                    snapshot[path] = None
+                    continue
+                signature = (metadata.st_dev, metadata.st_ino, metadata.st_mode,
+                             metadata.st_uid, metadata.st_gid, metadata.st_nlink,
+                             metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
+                content = path.read_bytes() if stat.S_ISREG(metadata.st_mode) else None
+                snapshot[path] = (signature, content)
+            return snapshot
+
+        verifier_state_before = protected_snapshot(protected_paths)
         with pytest.raises(core.CoreRuntimeError):
             _verify_adapter_a0_migration_proof(inputs)
+        assert protected_snapshot(protected_paths) == verifier_state_before
         if changed_path is not None and changed_bytes is not None:
             changed_path.write_bytes(changed_bytes)
         if changed_mode is not None:
@@ -1959,8 +2008,15 @@ def test_incoming_adapter_old_a0_proof_denies_tamper_before_effects(
             changed_identity_path.write_bytes(changed_identity_bytes)
     core._atomic_replace(receipt_path, original_receipt,
         0o600, core.ROOT_UID, core.ROOT_UID)
-    assert calls == calls_before
-    assert enabled["value"]
+    fragment_query = ("systemctl", "show", "--property=FragmentPath", "--value", core.SERVICE)
+    dropins_query = ("systemctl", "show", "--property=DropInPaths", "--value", core.SERVICE)
+    new_calls = calls[len(calls_before):]
+    assert [call[0] for call in new_calls] in ([], [fragment_query, dropins_query])
+    assert all(call[1] is unit_present_before for call in new_calls)
+    assert enabled["value"] is enabled_before
+    assert core.UNIT.exists() is unit_present_before
+    assert (core.UNIT.read_bytes() if unit_present_before else None) == unit_bytes_before
+    assert core.LAUNCHER.read_bytes() == launcher_bytes_before
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
