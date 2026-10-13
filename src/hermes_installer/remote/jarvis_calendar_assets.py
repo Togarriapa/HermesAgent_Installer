@@ -80,9 +80,11 @@ _MOUNT = r'''function mount(container, api, state) {
     windowStart = 0; windowEnd = 0; agendaEvents = []; agendaDays = []; selectedDay = null; selectedEventId = null;
   }
   const dateParts = (value, timezone) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
-    timeZone:timezone, year:'numeric', month:'2-digit', day:'2-digit'
+    timeZone:timezone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23'
   }).formatToParts(new Date(value)).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
   const dayKey = (value, timezone) => { const p = dateParts(value, timezone); return `${p.year}-${p.month}-${p.day}`; };
+  const localMidnight = (value, timezone) => { const p = dateParts(value, timezone); return p.hour === '00' && p.minute === '00' && p.second === '00' && value % 1000 === 0; };
+  const dayCount = (first, last) => (Date.parse(last + 'T00:00:00Z') - Date.parse(first + 'T00:00:00Z')) / 86400000 + 1;
   const shiftDay = (key, amount) => {
     const [year, month, day] = key.split('-').map(Number);
     return new Date(Date.UTC(year, month - 1, day + amount)).toISOString().slice(0, 10);
@@ -96,7 +98,7 @@ _MOUNT = r'''function mount(container, api, state) {
         || !Array.isArray(payload.events) || payload.events.length > 100) return false;
     try { new Intl.DateTimeFormat('en', {timeZone:payload.timezone}); } catch (_) { return false; }
     const start = parseInstant(payload.window_start), end = parseInstant(payload.window_end);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 7 * 86400000 + 1000) return false;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 31 * 86400000) return false;
     if ((payload.status === 'empty' && payload.events.length) || (payload.status === 'partial' && !payload.partial)) return false;
     if (['unavailable','auth-expired','permission-denied','rate-limited'].includes(payload.status) && payload.events.length) return false;
     const ids = new Set();
@@ -130,7 +132,11 @@ _MOUNT = r'''function mount(container, api, state) {
     dayStrip.replaceChildren();
     agendaDays.forEach(day => {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = dayText(day);
+      const boundary = [day === agendaDays[0] && !localMidnight(windowStart, displayTimezone) ? 'partial start day' : '',
+        day === agendaDays[agendaDays.length - 1] && !localMidnight(windowEnd, displayTimezone) ? 'partial final day' : ''].filter(Boolean).join(', ');
+      button.setAttribute('aria-label', (boundary ? boundary + ' · ' : '') + dayText(day));
       button.setAttribute('aria-pressed', day === currentDay ? 'true' : 'false'); button.dataset.day = day;
+      if (boundary) button.textContent += ' · partial';
       button.addEventListener('click', () => { selectedDay = day; renderAgenda(); });
       button.addEventListener('keydown', event => {
         const index = agendaDays.indexOf(day); let nextIndex = index;
@@ -181,8 +187,8 @@ _MOUNT = r'''function mount(container, api, state) {
       if (!validPayload(payload)) throw new Error('unavailable');
       displayTimezone = payload.timezone; windowStart = parseInstant(payload.window_start); windowEnd = parseInstant(payload.window_end);
       agendaEvents = payload.events.slice();
-      const firstDay = dayKey(windowStart, displayTimezone);
-      agendaDays = Array.from({length:7}, (_, index) => shiftDay(firstDay, index));
+      const firstDay = dayKey(windowStart, displayTimezone), lastDay = dayKey(windowEnd - 1, displayTimezone);
+      agendaDays = Array.from({length:dayCount(firstDay, lastDay)}, (_, index) => shiftDay(firstDay, index));
       selectedDay = firstDay;
       select.hidden = ['connected', 'empty', 'partial'].includes(payload.status);
       disable.hidden = !['connected', 'empty', 'partial'].includes(payload.status);

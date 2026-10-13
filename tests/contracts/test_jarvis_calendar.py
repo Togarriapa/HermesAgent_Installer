@@ -161,7 +161,9 @@ async function run() {
   app.requests[1].resolve(ok(payload('Fresh'))); await tick();
   body.resolve(payload('Stale')); await tick();
   assert.deepEqual(titles(app.nodes['[data-calendar-events]']), ['Fresh']);
-  assert.equal(app.nodes['[data-calendar-days]'].children.length, 7, 'date strip stays within the returned seven-day window');
+  assert.equal(app.nodes['[data-calendar-days]'].children.length, 8, 'local dates include both partial boundary dates in the exact returned window');
+  assert.match(app.nodes['[data-calendar-days]'].children[0].getAttribute('aria-label'), /partial start day/);
+  assert.match(app.nodes['[data-calendar-days]'].children[7].getAttribute('aria-label'), /partial final day/);
   assert.match(app.nodes['[data-calendar-source]'].textContent, /Window/);
   const readsBeforeBrowse = app.requests.length;
   app.nodes['[data-calendar-days]'].children[1].click();
@@ -239,6 +241,24 @@ async function run() {
   choose('2026-10-26'); assert.deepEqual(timedTitles(), ['Multi-day']);
   choose('2026-10-27'); assert.deepEqual(timedTitles(), ['Multi-day'], 'event ending after midnight remains on its final occupied local day');
   assert.equal(app.requests.length, 1, 'all date grouping and selection remain local');
+
+  // The exact returned non-midnight window can span eight local dates; its last partial-day event remains visible.
+  app = setup();
+  const finalDayEvent = event('window-end','Final partial day','2026-10-31T14:30:00Z','2026-10-31T14:45:00Z');
+  app.requests[0].resolve(ok(windowPayload([finalDayEvent], '2026-10-24T15:00:00+01:00',
+    '2026-10-31T15:00:00+00:00', 'Europe/Lisbon'))); await tick();
+  assert.equal(app.nodes['[data-calendar-days]'].children.length, 8);
+  assert.match(app.nodes['[data-calendar-days]'].children[7].getAttribute('aria-label'), /partial final day/);
+  app.nodes['[data-calendar-days]'].children[7].click();
+  assert.deepEqual(titles(app.nodes['[data-calendar-events]']), ['Final partial day']);
+
+  // A real Lisbon fallback-offset window is seven wall days but seven days plus one UTC hour.
+  app = setup();
+  app.requests[0].resolve(ok(windowPayload([event('fallback','Fallback day','2026-10-31T14:30:00Z','2026-10-31T14:45:00Z')],
+    '2026-10-24T15:00:00+01:00', '2026-10-31T15:00:00+00:00', 'Europe/Lisbon'))); await tick();
+  assert.equal(app.nodes['[data-calendar-days]'].children.length, 8, 'DST fallback offset does not make the returned window invalid');
+  app.nodes['[data-calendar-days]'].children[7].click();
+  assert.deepEqual(titles(app.nodes['[data-calendar-events]']), ['Fallback day']);
 
   // Partial, expired, denied, empty and malformed intervals keep truthful states.
   app = setup();
