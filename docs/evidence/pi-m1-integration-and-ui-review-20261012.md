@@ -828,3 +828,27 @@ compilation and strict spec/plan validation passed with zero findings.
 
 The source-reviewed UI originals `4` and Sources `33/35` were not deployed.
 At this ledger point, production remained on `0cbf9b819a6be41b3ff34d623374355cb64c3834`, and the Pi configuration still had its original single approved address. No result for run 126 was available. Accordingly, these entries record qualification evidence only; they do not establish deployment, additional-account access, or current acceptance.
+
+## Later Pi qualification runs 126–130
+
+Historical candidate results from the subsequent Pi ledger. These outcomes do
+not establish current production state. Runs 126–130 passed source compilation
+and strict spec/plan validation with zero findings unless explicitly stated.
+
+| Run / candidate | Archive SHA-256 | Pi result and disposition |
+| --- | --- | --- |
+| 126 `b24d376d05889110b3c035275a082bbd94d1d90c` | `625fc4ebadc60eebd8b2d72da12a5fa8100fbd872e1654df8bfba244abb312fb` | UI: 10 failed, 172 passed in 3.77s. A new held-lock fixture initially failed because its private parent was absent; corrected in `c4`. Actual secondary Core effect run was interrupted: recovery passed, its partial test had 1 pass/1 failure in 124.17s; tail group passed 48 checks in 54.44s. |
+| 127 `666ddbe4f2b2b19174ce60ccb743901c75d015d0` | `b6888ad2d61e597804e566095e277c8b77d531ba522f69995de5f00793982c87` | UI: 2 failed, 180 passed in 3.69s. Four Core lock/startup checks passed; partial group had 1 failure in 124.90s. |
+| 128 `d09d1d72c4317ae960633672c246060bcd5e449b` | `349a641b45499d70599e7157f4b2dcb71195fe5964f206d4860190522eb32f9f` | Compile/spec/plan passed, including the first #21 spec validation. UI: 1 failed, 181 passed in 3.68s; stale captured approval-nonce assertion corrected in `e8`. Partial-group failure duration was not supplied. |
+| 129 `3f2c7904da076c250ce9fc3d07f4254d9d15d2a1` | `f5cd03876350b4d67f480baebbcd1a16d550da1cc9501aff3acfeb62690441a9` | UI: 182 passed in 3.67s with 28 warnings. Partial group: 1 failure in 103.76s; `guard_ok=True`, then `PermissionError` at the original script's unit `stat`. Sandboxed Chromium helper `87c3f` against exact repo source 129 passed phone390x844, tablet768x1024 and wide1440x900 44px controls plus motion pause/resume, but had 7 render failures: phone composer/nav overlap; three Mission auto-close fixture flags; and three tablet Notes reads racing load/stale-button state. No qualification was weakened. Root visually reviewed a Pi127-derived wide Overview capture with synthetic quiet fixture. CSS `2f` raised controls from 42px to 44px and added nested mobile scrolling; actual navigation clearance remained pending. |
+| 130 `ab509e65b63ce4df92e06f25263eb11506e5aa73` | `4472450c4c5bd628d7983f89bdd419b1f5945c3d4e70c43d329431d2dc384bc6` | Compile/spec/plan passed, including #21 one-use refinements; `f15` branch was not accepted. Partial group failed at `PermissionError` on `stat` of the allowlisted unit basename. Exact Root fixture public service-file mode `0664` source correction was reviewed; Pi validation remained pending 131. Renderer exited 2 because an Obsidian button was stale; `ca6` re-queries the live DOM and requires selected ID/body/digest, which does not prove production effects. |
+
+At the supplied ledger point, run 131 jobs were still running with no results.
+Root read back the four live units as active (Core, Inspector, Gateway and
+tunnel), but no actual source deployment, configuration union, additional
+admin enrollment, new provider, voice qualification or device proof occurred
+in this turn. Core `0dac9c...` had genuine interrupted-recovery and 48-tail
+passes plus four new-lock checks, but full new-source positive, restart,
+partial-recovery and overall M1 acceptance remained open. Broad #21, #62 and
+#18 items and eight other requirements remained open. These are historical
+qualification facts, not a current production-status assertion.
