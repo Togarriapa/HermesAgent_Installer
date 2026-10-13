@@ -2672,3 +2672,18 @@ The installer SHALL emit bounded failure-only bool-or-null startup predicate met
 - **WHEN** a new diagnostic guard changes the generated unit recipe during an adapter update or recovery
 - **THEN** existing protected legacy units remain eligible only through their exact no-diagnostic recipe and original source/cohort/journal joins; new diagnostic units require equally exact generated joins, and foreign or modified recipes still deny.
 - **AND** saved prior bytes restore unchanged. Meaningful Pi generated allow/deny/privacy and prior-recipe/recovery contracts plus reviewed Core pin precede one actual observed retry; original153 startup cause stays pending until returned metadata identifies it.
+
+### Requirement: Systemd preserves the intended new cohort guard program
+The installer SHALL encode fresh new-cohort guard commands so installed systemd supplies the exact intended Python program, retaining fixed interpreter options, guard semantics, privacy and all recovery gates.
+
+#### Scenario: Installed manager decodes a fresh encoded guard
+- **WHEN** installed systemd parses a fresh new-cohort ExecStartPre directive
+- **THEN** the complete intended guard is carried through a fixed whole-program encoding; its recovered bytes equal the original program and compile, with the same interpreter and `-I -S -c` options, predicate order, silence/diagnostic behavior, exit decisions and deadlines.
+- **AND** Pi regression reads the real typed manager-decoded argument from a unique no-start unit, cleans only its own exact inode/content, confirms live files unchanged, and executes allow/deny effects only in the approved private fixture using that decoded argument. Shell parsing alone does not establish systemd compatibility.
+
+#### Scenario: Existing recipes and retained recovery stay exact
+- **WHEN** fresh encoding adds a new generated unit variant
+- **THEN** ordinary/default, historical cohort and prior inline-diagnostic recipes remain byte-identical and eligible only through their exact protected unit/source-recipe hash joins; modified or foreign recipes still deny, and saved backup bytes/history restore unchanged.
+- **AND** meaningful parser/fidelity/privacy/CAS and update/recovery Pi qualification plus reviewed Core pin precede an actual attempt. Candidate156 parser failure is source-level proof; historical attempt attribution and all unaccepted capabilities remain distinct.
+
+These scenarios refine existing R0055/R0201 and RT-T266.3/VD-T266.5 (#35); all original219 requirements,62 components,18 acceptance criteria and eight OPEN groups remain preserved.

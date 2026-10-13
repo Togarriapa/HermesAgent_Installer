@@ -247,3 +247,9 @@ Candidate149's valid CLI report retained the outer Core recovery error but not t
 ### R0201/#35 denied startup guard metadata
 
 Actual candidate153 reached fixed Core start, which failed before listener verification; historical control-process failures contain no usable exception. Exact rollback restored old0cb and all four units. Within existing guarded lifecycle/recovery obligations, add failure-only structured predicate metadata to the new cohort startup guard, with unchanged checks, deadlines and exit1. Root can then inspect one qualified attempt rather than infer an unobserved startup cause. Preserve old unit recipe bytes and closed compatibility; no blind retry, authority expansion or successful-start logging.
+
+### R0201/#35 installed-systemd guard argument fidelity
+
+Exact Pi parser probe960 on candidate156/Core969 proved the generated cohort/plugin/diagnostic directive decodes differently under installed systemd: shell fixture source21530 bytes compiled, systemd source21529 bytes failed SyntaxError line1, with no service started and live unit/launcher unchanged. Historical journal attribution remains aggregate. Refine only fresh new-cohort command encoding to carry the entire intended guard program through systemd without C-escape alteration, preferably a UTF-8 hex payload executed by a fixed outer Python expression. Preserve ordinary, legacy and prior inline-diagnostic recipe bytes and all guarded checks, diagnostics, deadlines, backup history and owner scope. Actual adoption remains pending.
+
+This bounded parser transport correction refines existing R0055/R0201 and RT-T266.3/VD-T266.5 within #35; it adds no requirement, component or task group to the preserved219/62/18/eight-group scope.
