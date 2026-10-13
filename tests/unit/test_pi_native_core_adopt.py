@@ -1335,6 +1335,7 @@ def test_completed_ingress_handoff_archives_raw_predecessor_then_replaces_atomic
     assert replacement["prior_completed_ingress_sha256"] == predecessor["sha256"]
     assert parsed["prior_completed_ingress_sha256"] == predecessor["sha256"]
     assert replacement["state"] == "prepared"
+    assert replacement["runtime_inspector_sha256"] is None
     assert active.stat().st_ino != old_inode
     assert predecessor["raw"] != active.read_bytes()
 
