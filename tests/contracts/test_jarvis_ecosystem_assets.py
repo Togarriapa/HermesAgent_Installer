@@ -61,7 +61,7 @@ function makeRoot(){
  root.querySelector=selector=>selector==='[data-feature-root="ecosystem"]'?root:Target.prototype.querySelector.call(root,selector);
  return root;
 }
-const now=Date.now();
+const nativeDateNow=Date.now.bind(Date);let clockNow=nativeDateNow();Date.now=()=>clockNow;const now=clockNow;
 const data={schema:2,observation:{state:'observed',observed_at:new Date(now).toISOString(),partial:false,coverage:'complete',window:{from:new Date(now-60000).toISOString(),to:new Date(now).toISOString(),seconds:60}},summary:{observed_instances:2,observed_completed_executions:2,response_duration_ms:0,response_duration_coverage:1},pending:{team_membership:'verified',communication_edges:'verified'},
  instances:[
   {id:'e'.repeat(32),display_name:'Dev <img src=x>',profile_id:'developer',state:'completed',stale:false,source_revision:'source-5',mission_id:'m'.repeat(32),mission_revision:3,events:[{kind:'completed',status:'completed',at:new Date(now).toISOString()}]},
@@ -123,6 +123,20 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  assert.match(nodes(root,'[data-ecosystem-coverage]')[0].textContent,/schema 1 has no verified Team lineage/);
  assert.match(nodes(root,'[data-ecosystem-coverage]')[0].textContent,/observed response duration unknown \(0 observed responses with duration\)/,'null remains unknown even when coverage is zero');
  cleanup();assert.equal(nodes(root,'[data-ecosystem-refresh]')[0].disabled,true);
+
+ // A newer snapshot cannot extend an event's freshness enough to replay its pulse.
+ const replayRoot=makeRoot(),replayApi=api(),replayCleanup=mount(replayRoot,replayApi);
+ const futureEvent={...data,relations:[{...data.relations[0],id:'p'.repeat(32),at:new Date(now+30000).toISOString()}]};
+ replayApi.gets[0].resolve(futureEvent);await flush();
+ const replayGraph=nodes(replayRoot,'[data-ecosystem-graph]')[0];
+ assert.equal(all(replayGraph).find(node=>node.className==='ecosystem-arrow').dataset.pulse,'true');
+ clockNow=now+120001;
+ nodes(replayRoot,'[data-ecosystem-refresh]')[0].dispatch('click');
+ const newerObservation={...futureEvent,observation:{...futureEvent.observation,observed_at:new Date(clockNow).toISOString(),window:{from:new Date(clockNow-60000).toISOString(),to:new Date(clockNow).toISOString(),seconds:60}}};
+ replayApi.gets[1].resolve(newerObservation);await flush();
+ assert.equal(replayRoot.dataset.state,'current');
+ assert.equal(all(replayGraph).find(node=>node.className==='ecosystem-arrow').dataset.pulse,undefined,'the same still-fresh event remains suppressed after its original snapshot expires');
+ replayCleanup();Date.now=nativeDateNow;
 
  // An in-flight response after unmount cannot repopulate the view.
  const lateRoot=makeRoot(),lateApi=api(),dispose=mount(lateRoot,lateApi);dispose();
