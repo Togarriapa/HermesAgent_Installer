@@ -273,3 +273,5 @@ Numeric diagnostics saturate at stdout65537 bytes, stderr16385 bytes and elapsed
 ### R0201/#35 finite qualification progress observation
 
 Actual168's validated wrapper diagnostic establishes a timeout at the original300s boundary, with no retained child buffers; automatic recovery restored all four prior units. The qualifier prints its report only after fixed CLI completion and digests CLI output privately. Nested importer/startup/wait bounds suggest possible outer preemption but do not establish its stage or cause. Add only finite flushed candidate/archive-bound checkpoints around the existing qualifier stages and a strict wrapper last-phase summary on failure. Preserve Core, tracing scope, all deadlines/gates and acceptance separation; no blind retry or private output exposure.
+
+Strict sequence supplies checkpoint order; measured rounded/capped elapsed milliseconds are nondecreasing and may be equal. Never synthesize time increments for ordering.

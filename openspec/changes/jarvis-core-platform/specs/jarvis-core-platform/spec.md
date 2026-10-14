@@ -2743,3 +2743,7 @@ The qualifier SHALL expose only closed flushed checkpoints for its fixed stages,
 - **AND** the original300s deadline, custody, output/report/persistence/recovery decisions and Core remain unchanged. Adapter-update observation alone leaves the inner blocked substage/cause unknown; meaningful Pi parser/privacy/flush/timeout contracts precede a current attempt.
 
 This finite observation remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups.
+
+#### Scenario: Measured checkpoint timestamps are equal
+- **WHEN** consecutive measured monotonic timestamps round to the same millisecond or reach the300000ms ceiling
+- **THEN** strictly increasing sequence preserves order and nondecreasing measured elapsed values remain valid; fabricated time increments are forbidden and decreasing elapsed values deny observation.
