@@ -3306,12 +3306,24 @@ def test_wait_for_listener_keeps_default_source_and_refuses_mismatch(monkeypatch
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update needs the real root actor")
 def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tmp_path, monkeypatch, request):
     guard_runner = subprocess.run
+    real_wait_for_listener = core._wait_for_listener
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
     _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
     _fake_update_pidfd(monkeypatch, enabled, request)
     old_source = _rebind_migrated_fixture_to_prior_generation()
+    recovery_wait_sources = []
+
+    def wait_for_recovered_source(*, adapter_source=core.ADAPTER_SOURCE):
+        requested_source = Path(adapter_source)
+        assert requested_source == old_source
+        recovery_wait_sources.append(requested_source)
+        return real_wait_for_listener(adapter_source=requested_source)
+
+    # The generic fixture uses a zero-argument wait stub. Recovery must use
+    # the real source-aware listener check against the journaled prior source.
+    monkeypatch.setattr(core, "_wait_for_listener", wait_for_recovered_source)
     migrated_raw = core.JOURNAL.read_bytes()
     migrated_record = json.loads(migrated_raw)
     prior_unguarded_unit = core._unit(startup_guard=False, adapter_source=old_source)
@@ -3369,6 +3381,7 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     assert core.RESOURCES_RECORD.read_bytes() == prior_resources
     assert core.LAUNCHER.read_bytes() == launcher
     assert core.UNIT.read_bytes() == unit
+    assert recovery_wait_sources == [old_source]
     assert enabled["value"]
     assert _exec_start_pre(core.UNIT.read_bytes()) is None  # exact prior unit is guardless
 
