@@ -43,6 +43,7 @@ _QUALIFICATION_CHECKPOINT_STREAM = sys.stderr
 _QUALIFICATION_STACK_SAMPLE_PREFIX = "HERMES_CORE_QUALIFICATION_STACK_SAMPLE_V2="
 _QUALIFICATION_STACK_SAMPLE_STREAM = sys.stderr
 _QUALIFICATION_STACK_SAMPLE_SECONDS = 250.0
+_QUALIFICATION_MONITORING_TOOL_ID = 3
 _QUALIFICATION_STACK_LABELS = frozenset({
     "updater", "importer", "generation_tree", "listener", "startup_chat",
     "reconstruction", "root_runuser", "adapter_generation",
@@ -966,7 +967,6 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path,
     except Exception:
         code_rows, source_rows, mapping_complete = {}, {}, False
     sample_started = time.monotonic()
-    main_depth = 0
     cancellation_barrier_done = False
 
     def cancel_sample():
@@ -1010,38 +1010,78 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path,
     sampler = threading.Thread(target=sample_after_bound, daemon=True,
                                name="core-qualification-stack-sample")
 
-    def trace(frame, event, arg):
-        nonlocal main_depth
-        if event == "call":
-            if frame.f_code is main_code:
-                main_depth += 1
-                return trace
-            return None
-        if frame.f_code is not main_code:
-            return None
-        if event == "return":
-            main_depth = max(0, main_depth - 1)
-            if main_depth:
-                return trace
-            # The return trace event runs before the CLI frame is gone. It
-            # cancels first and uses a bounded barrier against a publication
-            # already in progress; the worker cannot start another write.
+    monitoring = getattr(sys, "monitoring", None)
+    events = getattr(monitoring, "events", None)
+    exception_handled_event = getattr(events, "EXCEPTION_HANDLED", None)
+    py_return_event = getattr(events, "PY_RETURN", None)
+    monitoring_owned = False
+    registered_events: list[int] = []
+    monitor_ready = False
+
+    def exception_handled(code, _instruction_offset, exc):
+        if code is not main_code or not isinstance(exc, BaseException):
+            return
+        try:
+            captured["origin"] = _root_setup_exception_origin(exc, candidate_src)
+        except Exception:
+            captured["origin"] = None
+
+    def main_returned(code, _instruction_offset, _retval):
+        if code is main_code:
             cancel_sample()
-            return trace
-        if event == "exception" and frame.f_code is main_code:
+
+    def release_monitoring():
+        nonlocal monitoring_owned
+        if not monitoring_owned:
+            return
+        # Disable both scopes before removing callbacks or releasing our ID.
+        for cleanup in (
+            lambda: monitoring.set_local_events(
+                _QUALIFICATION_MONITORING_TOOL_ID, main_code, 0),
+            lambda: monitoring.set_events(_QUALIFICATION_MONITORING_TOOL_ID, 0),
+        ):
             try:
-                if type(arg) is not tuple or len(arg) != 3:
-                    captured["origin"] = None
-                    return trace
-                exc = arg[1]
-                if not isinstance(exc, BaseException):
-                    captured["origin"] = None
-                    return trace
-                captured["origin"] = _root_setup_exception_origin(
-                    exc, candidate_src, outer_tb=arg[2])
-            except (TypeError, ValueError):
-                captured["origin"] = None
-        return trace
+                cleanup()
+            except Exception:
+                pass
+        for event in registered_events:
+            try:
+                monitoring.register_callback(_QUALIFICATION_MONITORING_TOOL_ID,
+                                             event, None)
+            except Exception:
+                pass
+        try:
+            monitoring.free_tool_id(_QUALIFICATION_MONITORING_TOOL_ID)
+        except Exception:
+            pass
+        monitoring_owned = False
+
+    def install_monitoring() -> bool:
+        nonlocal monitoring_owned
+        if (monitoring is None or type(exception_handled_event) is not int
+                or type(py_return_event) is not int
+                or not callable(getattr(monitoring, "get_tool", None))):
+            return False
+        try:
+            if monitoring.get_tool(_QUALIFICATION_MONITORING_TOOL_ID) is not None:
+                return False
+            monitoring.use_tool_id(_QUALIFICATION_MONITORING_TOOL_ID,
+                                   "hermes-core-qualification")
+            monitoring_owned = True
+            monitoring.register_callback(_QUALIFICATION_MONITORING_TOOL_ID,
+                                         exception_handled_event, exception_handled)
+            registered_events.append(exception_handled_event)
+            monitoring.register_callback(_QUALIFICATION_MONITORING_TOOL_ID,
+                                         py_return_event, main_returned)
+            registered_events.append(py_return_event)
+            monitoring.set_events(_QUALIFICATION_MONITORING_TOOL_ID,
+                                  exception_handled_event)
+            monitoring.set_local_events(_QUALIFICATION_MONITORING_TOOL_ID,
+                                        main_code, py_return_event)
+            return True
+        except Exception:
+            release_monitoring()
+            return False
 
     sampler_started = False
     try:
@@ -1050,20 +1090,22 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path,
     except Exception:
         # A best-effort observer must never block the fixed CLI operation.
         sample_done.set()
-    trace_installed = False
+    monitor_ready = install_monitoring()
     try:
-        sys.settrace(trace)
-        trace_installed = True
         try:
             result = main(["core-service", "adapter-update"])
             cli_exit = result if type(result) is int and 0 <= result <= 255 else 1
-        except Exception:
-            # The trace retains only type and source locations; never inspect
-            # or serialize the exception object or its arguments.
+        except Exception as exc:
+            # Only a successfully installed fixed-code monitor enables this
+            # origin projection; monitor refusal leaves the observation unknown.
+            if monitor_ready:
+                try:
+                    captured["origin"] = _root_setup_exception_origin(exc, candidate_src)
+                except Exception:
+                    captured["origin"] = None
             cli_exit = 1
     finally:
-        if trace_installed:
-            sys.settrace(None)
+        release_monitoring()
         cancel_sample()
         if sampler_started:
             try:

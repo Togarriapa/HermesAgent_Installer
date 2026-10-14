@@ -26,9 +26,109 @@ qualification = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(qualification)
 
 
-def _run_cli(root_setup):
-    return qualification._run_fixed_root_adapter_update(
-        root_setup, Path(__file__).resolve().parent, "a" * 40, "b" * 64)
+class _FakeMonitoring:
+    class Events:
+        EXCEPTION_HANDLED = 1
+        PY_RETURN = 2
+
+    events = Events()
+
+    def __init__(self, *, occupied=False, fail_local_setup=False):
+        self.tools = {qualification._QUALIFICATION_MONITORING_TOOL_ID:
+                      ("foreign-tool" if occupied else None)}
+        self.callbacks = {}
+        self.global_events = {}
+        self.local_events = {}
+        self.fail_local_setup = fail_local_setup
+        self.operations = []
+
+    def get_tool(self, tool_id):
+        return self.tools.get(tool_id)
+
+    def use_tool_id(self, tool_id, name):
+        self.operations.append(("use", tool_id, name))
+        if self.tools.get(tool_id) is not None:
+            raise ValueError("monitoring tool id is occupied")
+        self.tools[tool_id] = name
+
+    def register_callback(self, tool_id, event, callback):
+        self.operations.append(("register", tool_id, event, callback is None))
+        if self.tools.get(tool_id) is None:
+            raise ValueError("monitoring tool id is not owned")
+        if callback is None:
+            self.callbacks.pop((tool_id, event), None)
+        else:
+            self.callbacks[(tool_id, event)] = callback
+
+    def set_events(self, tool_id, events):
+        self.operations.append(("global", tool_id, events))
+        if self.tools.get(tool_id) is None:
+            raise ValueError("monitoring tool id is not owned")
+        self.global_events[tool_id] = events
+
+    def set_local_events(self, tool_id, code, events):
+        self.operations.append(("local", tool_id, code, events))
+        if self.fail_local_setup:
+            raise RuntimeError("partial monitoring setup refusal")
+        self.local_events[(tool_id, code)] = events
+
+    def free_tool_id(self, tool_id):
+        self.operations.append(("free", tool_id))
+        if self.tools.get(tool_id) == "foreign-tool":
+            raise ValueError("foreign monitoring tool cannot be freed")
+        self.tools[tool_id] = None
+        self.global_events.pop(tool_id, None)
+        self.local_events = {key: value for key, value in self.local_events.items()
+                             if key[0] != tool_id}
+
+    def handled(self, code, exc):
+        tool_id = qualification._QUALIFICATION_MONITORING_TOOL_ID
+        callback = self.callbacks.get((tool_id, self.events.EXCEPTION_HANDLED))
+        if self.global_events.get(tool_id, 0) & self.events.EXCEPTION_HANDLED and callback:
+            callback(code, 0, exc)
+
+    def returned(self, code):
+        tool_id = qualification._QUALIFICATION_MONITORING_TOOL_ID
+        callback = self.callbacks.get((tool_id, self.events.PY_RETURN))
+        if (self.local_events.get((tool_id, code), 0) & self.events.PY_RETURN
+                and callback):
+            callback(code, 0, None)
+
+
+_LAST_MONITORING = None
+_NO_MONITORING_OVERRIDE = object()
+
+
+def _run_cli(root_setup, monitoring=_NO_MONITORING_OVERRIDE):
+    global _LAST_MONITORING
+    previous = getattr(qualification.sys, "monitoring", _NO_MONITORING_OVERRIDE)
+    if monitoring is _NO_MONITORING_OVERRIDE:
+        monitoring = _FakeMonitoring()
+    if monitoring is None:
+        qualification.sys.monitoring = None
+    else:
+        qualification.sys.monitoring = monitoring
+    _LAST_MONITORING = monitoring
+    try:
+        result = qualification._run_fixed_root_adapter_update(
+            root_setup, Path(__file__).resolve().parent, "a" * 40, "b" * 64)
+        return result
+    finally:
+        if previous is _NO_MONITORING_OVERRIDE:
+            if hasattr(qualification.sys, "monitoring"):
+                del qualification.sys.monitoring
+        else:
+            qualification.sys.monitoring = previous
+
+
+def _handled_main_exception(main, exc):
+    if _LAST_MONITORING is not None:
+        _LAST_MONITORING.handled(main.__code__, exc)
+
+
+def _main_returned(main):
+    if _LAST_MONITORING is not None:
+        _LAST_MONITORING.returned(main.__code__)
 
 
 def _stack_code_row(label, line_count=100000):
@@ -336,14 +436,16 @@ def test_partial_or_mismatched_update_readback_stays_pending(mutation, phase, li
     assert any(value is False for value in checks.values())
 
 
-def test_fixed_cli_trace_retains_only_candidate_relative_exception_metadata():
+def test_fixed_cli_monitoring_retains_only_candidate_relative_exception_metadata():
     class RootSetup:
         @staticmethod
         def main(argv):
             assert argv == ["core-service", "adapter-update"]
             try:
                 raise RuntimeError("PRIVATE_EXCEPTION_TEXT_MUST_NOT_ESCAPE")
-            except RuntimeError:
+            except RuntimeError as exc:
+                _handled_main_exception(RootSetup.main, exc)
+                _main_returned(RootSetup.main)
                 return 4
 
     cli_exit, origin = _run_cli(RootSetup)
@@ -355,15 +457,30 @@ def test_fixed_cli_trace_retains_only_candidate_relative_exception_metadata():
     assert frame["function"] == "main" and frame["line"] > 0
     assert "PRIVATE_EXCEPTION_TEXT_MUST_NOT_ESCAPE" not in repr(origin)
     assert qualification.sys.gettrace() is None
+    assert _LAST_MONITORING.tools[qualification._QUALIFICATION_MONITORING_TOOL_ID] is None
+    assert _LAST_MONITORING.callbacks == {}
+    tool_id = qualification._QUALIFICATION_MONITORING_TOOL_ID
+    assert ("global", tool_id, _LAST_MONITORING.events.EXCEPTION_HANDLED) \
+        in _LAST_MONITORING.operations
+    assert ("global", tool_id, 0) in _LAST_MONITORING.operations
+    assert ("local", tool_id, RootSetup.main.__code__, _LAST_MONITORING.events.PY_RETURN) \
+        in _LAST_MONITORING.operations
+    assert ("local", tool_id, RootSetup.main.__code__, 0) \
+        in _LAST_MONITORING.operations
+    assert not any(op[0] == "global" and op[2] & _LAST_MONITORING.events.PY_RETURN
+                   for op in _LAST_MONITORING.operations)
+    assert _LAST_MONITORING.operations[-1] == ("free", tool_id)
 
 
-def test_fixed_cli_trace_drops_caught_exception_when_cli_succeeds():
+def test_fixed_cli_monitoring_drops_caught_exception_when_cli_succeeds():
     class RootSetup:
         @staticmethod
         def main(_argv):
             try:
                 raise RuntimeError("PRIVATE_EXCEPTION_TEXT_MUST_NOT_ESCAPE")
-            except RuntimeError:
+            except RuntimeError as exc:
+                _handled_main_exception(RootSetup.main, exc)
+                _main_returned(RootSetup.main)
                 return 0
 
     cli_exit, origin = _run_cli(RootSetup)
@@ -371,7 +488,7 @@ def test_fixed_cli_trace_drops_caught_exception_when_cli_succeeds():
     assert origin is None
 
 
-def test_fixed_cli_trace_limits_local_events_to_main_but_keeps_nested_origin(monkeypatch):
+def test_fixed_cli_monitoring_is_main_only_and_keeps_nested_origin():
     def ordinary_calls(depth):
         if depth:
             return ordinary_calls(depth - 1)
@@ -385,26 +502,15 @@ def test_fixed_cli_trace_limits_local_events_to_main_but_keeps_nested_origin(mon
         def main(argv):
             assert argv == ["core-service", "adapter-update"]
             assert ordinary_calls(32) == "completed"
-            nested_failure()
+            try:
+                nested_failure()
+            except LookupError as exc:
+                # An event for a non-main code object must not capture it.
+                _LAST_MONITORING.handled(nested_failure.__code__, exc)
+                _handled_main_exception(RootSetup.main, exc)
+                _main_returned(RootSetup.main)
+                return 1
 
-    main_code = RootSetup.main.__code__
-    real_settrace = qualification.sys.settrace
-    events = []
-
-    def observe_settrace(callback):
-        if callback is None:
-            real_settrace(None)
-            return
-
-        def observe(frame, event, arg):
-            local = callback(frame, event, arg)
-            if event == "call":
-                events.append((frame.f_code is main_code, local is not None))
-            return observe if local is not None else None
-
-        real_settrace(observe)
-
-    monkeypatch.setattr(qualification.sys, "settrace", observe_settrace)
     cli_exit, origin = _run_cli(RootSetup)
     assert cli_exit == 1
     assert origin["exception_type"] == "LookupError"
@@ -412,13 +518,13 @@ def test_fixed_cli_trace_limits_local_events_to_main_but_keeps_nested_origin(mon
     assert "main" in functions and "nested_failure" in functions
     assert "ordinary_calls" not in functions
     assert "PRIVATE_NESTED_EXCEPTION_TEXT_MUST_NOT_ESCAPE" not in repr(origin)
-    assert any(is_main and local_enabled for is_main, local_enabled in events)
-    assert any(not is_main and not local_enabled for is_main, local_enabled in events)
-    assert not any(not is_main and local_enabled for is_main, local_enabled in events)
+    assert _LAST_MONITORING.global_events == {}
+    assert _LAST_MONITORING.local_events == {}
+    assert _LAST_MONITORING.tools[qualification._QUALIFICATION_MONITORING_TOOL_ID] is None
     assert qualification.sys.gettrace() is None
 
 
-def test_fixed_cli_trace_keeps_suppressed_context_frames_without_exception_text():
+def test_fixed_cli_monitoring_keeps_suppressed_context_frames_without_exception_text():
     def nested_failure():
         raise LookupError("PRIVATE_SUPPRESSED_CONTEXT_TEXT_MUST_NOT_ESCAPE")
 
@@ -427,7 +533,8 @@ def test_fixed_cli_trace_keeps_suppressed_context_frames_without_exception_text(
         def main(_argv):
             try:
                 nested_failure()
-            except LookupError:
+            except LookupError as exc:
+                _handled_main_exception(RootSetup.main, exc)
                 raise RuntimeError("PRIVATE_OUTER_EXCEPTION_TEXT_MUST_NOT_ESCAPE") from None
 
     cli_exit, origin = _run_cli(RootSetup)
@@ -441,6 +548,125 @@ def test_fixed_cli_trace_keeps_suppressed_context_frames_without_exception_text(
     assert "PRIVATE_SUPPRESSED_CONTEXT_TEXT_MUST_NOT_ESCAPE" not in repr(origin)
     assert "PRIVATE_OUTER_EXCEPTION_TEXT_MUST_NOT_ESCAPE" not in repr(origin)
     assert qualification.sys.gettrace() is None
+
+
+@pytest.mark.parametrize("mode", ["missing", "occupied", "partial"])
+def test_fixed_cli_monitoring_refusal_keeps_cli_and_unknown_origin(mode):
+    if mode == "missing":
+        monitoring = None
+    elif mode == "occupied":
+        monitoring = _FakeMonitoring(occupied=True)
+    else:
+        monitoring = _FakeMonitoring(fail_local_setup=True)
+
+    class RootSetup:
+        @staticmethod
+        def main(_argv):
+            try:
+                raise OSError("PRIVATE_MONITORING_REFUSAL_TEXT")
+            except OSError as exc:
+                _handled_main_exception(RootSetup.main, exc)
+                _main_returned(RootSetup.main)
+                return 9
+
+    cli_exit, origin = _run_cli(RootSetup, monitoring)
+    assert cli_exit == 9
+    assert origin is None
+    assert qualification.sys.gettrace() is None
+    if mode == "occupied":
+        assert monitoring.tools[qualification._QUALIFICATION_MONITORING_TOOL_ID] == "foreign-tool"
+        assert monitoring.callbacks == {}
+        assert monitoring.global_events == {}
+    elif mode == "partial":
+        assert monitoring.tools[qualification._QUALIFICATION_MONITORING_TOOL_ID] is None
+        assert monitoring.callbacks == {}
+        assert monitoring.global_events == {}
+
+
+def test_fixed_cli_monitoring_captures_escaping_exception_from_outer_catch():
+    def nested_failure():
+        raise LookupError("PRIVATE_ESCAPING_EXCEPTION_TEXT")
+
+    class RootSetup:
+        @staticmethod
+        def main(_argv):
+            nested_failure()
+
+    cli_exit, origin = _run_cli(RootSetup)
+    assert cli_exit == 1
+    assert origin["exception_type"] == "LookupError"
+    assert any(frame["function"] == "nested_failure" for frame in origin["frames"])
+    assert "PRIVATE_ESCAPING_EXCEPTION_TEXT" not in repr(origin)
+
+
+def test_fixed_cli_uses_real_monitoring_api_for_caught_nested_exception():
+    monitoring = getattr(qualification.sys, "monitoring", None)
+    if monitoring is None:
+        pytest.skip("runtime has no sys.monitoring API")
+    tool_id = qualification._QUALIFICATION_MONITORING_TOOL_ID
+    assert monitoring.get_tool(tool_id) is None
+    original_trace = qualification.sys.gettrace()
+    original_profile = qualification.sys.getprofile()
+
+    def nested_failure():
+        raise LookupError("PRIVATE_REAL_MONITORING_TEXT")
+
+    class RootSetup:
+        @staticmethod
+        def main(_argv):
+            try:
+                nested_failure()
+            except LookupError:
+                return 23
+
+    try:
+        cli_exit, origin = qualification._run_fixed_root_adapter_update(
+            RootSetup, Path(__file__).resolve().parent, "a" * 40, "b" * 64)
+        assert cli_exit == 23
+        assert origin["exception_type"] == "LookupError"
+        assert {frame["function"] for frame in origin["frames"]} >= {
+            "main", "nested_failure"}
+        assert "PRIVATE_REAL_MONITORING_TEXT" not in repr(origin)
+        assert qualification.sys.gettrace() is original_trace
+        assert qualification.sys.getprofile() is original_profile
+        assert monitoring.get_tool(tool_id) is None
+
+        # Re-acquiring the released ID proves both callback registrations were
+        # removed, while the disabled event mask proves no scope was retained.
+        monitoring.use_tool_id(tool_id, "qualification-cleanup-contract")
+        try:
+            assert monitoring.get_events(tool_id) == 0
+            events = monitoring.events
+            for event in (events.EXCEPTION_HANDLED, events.PY_RETURN):
+                assert monitoring.register_callback(tool_id, event, lambda *_args: None) is None
+                monitoring.register_callback(tool_id, event, None)
+        finally:
+            monitoring.set_events(tool_id, 0)
+            monitoring.free_tool_id(tool_id)
+    finally:
+        assert monitoring.get_tool(tool_id) is None
+
+
+def test_monitoring_projector_failure_does_not_change_cli_result(monkeypatch):
+    def refuse_projection(_exc, _candidate_src, **_kwargs):
+        raise RuntimeError("PRIVATE_PROJECTOR_FAILURE")
+
+    monkeypatch.setattr(qualification, "_root_setup_exception_origin", refuse_projection)
+
+    class RootSetup:
+        @staticmethod
+        def main(_argv):
+            try:
+                raise LookupError("PRIVATE_PROJECTOR_INPUT")
+            except LookupError as exc:
+                _handled_main_exception(RootSetup.main, exc)
+                _main_returned(RootSetup.main)
+                return 19
+
+    cli_exit, origin = _run_cli(RootSetup)
+    assert cli_exit == 19
+    assert origin is None
+    assert _LAST_MONITORING.tools[qualification._QUALIFICATION_MONITORING_TOOL_ID] is None
 
 
 def test_exception_origin_bounds_and_breaks_cause_cycles():
@@ -810,6 +1036,7 @@ def test_stack_sample_is_one_shot_and_cancels_without_late_emission(monkeypatch)
             # Execute the deferred observer while this verified CLI frame is
             # live, as if its fixed deadline had elapsed.
             threads[-1].target()
+            _main_returned(RootSetup.main)
             return 0
 
     class MainOnlyFrame:
