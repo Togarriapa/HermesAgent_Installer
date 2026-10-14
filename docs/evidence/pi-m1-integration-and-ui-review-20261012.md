@@ -1641,3 +1641,24 @@ artifact change `65321ca`, imported as Root `4c78440dabc4aa16ae802c0f7302152bbc5
 archive SHA-256
 `0cc64c244d6003c1cdf26393698a799c4c1162b8d0700e9f815a20fdd7cc3d7f`, was
 pending the strict candidate-178 gate. No Core checks or 300s bound changed.
+
+## Candidates 178–179 source and gate status
+
+Candidate 178's four-artifact change `65321ca` was imported as Root
+`4c78440dabc4aa16ae802c0f7302152bbc57a9e5`, archive SHA-256
+`0cc64c244d6003c1cdf26393698a799c4c1162b8d0700e9f815a20fdd7cc3d7f`; it
+passed strict Pi spec/plan validation with 0 errors. Native diagnostic-tracing
+fix `bb52fbd` passed Sol source review for two files, then was imported as Root
+`8b98c930cea250650718f26f6a6b4bbc63afa61f`, archive SHA-256
+`53ddc10f6d4445ea04e1a271134ed36dbe429fcc5abbc185c1df78e4a9bd2a62`. Core
+`6992` remained unchanged. Qualifier SHA-256:
+`eda289f33cbc2a3a881a882fe13f8377d14741a0bfdb95d4730c0d23d50e4922`; test
+SHA-256:
+`d9549fcbf60913ef8f945e7f73d82c74fe4412e3b31846355cfc1dac653ec2d6`.
+
+Candidate 179 passed Pi staging, spec/plan validation and 143 contracts in
+0.79s, including real CPython API effects and cleanup; log:
+`p/candidate179-spec-contracts.log`. Protected apply with union stdin had just
+launched at `p/candidate179-actual-adoption.log`; outcome was pending. The
+matched-archive benchmark remains roughly 9.9s normal/monitored versus 28.6s
+under global tracing; it does not establish actual full-adoption acceptance.
