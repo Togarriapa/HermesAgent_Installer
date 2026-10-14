@@ -58,6 +58,111 @@ _QUALIFICATION_CHECKS = frozenset({
     "protected_prior_backup_matches_exact_bytes", "runtime_token_digest_preserved",
     "primary_prompt_owner_bytes_and_adopted_record_preserved",
 })
+_QUALIFICATION_DIAGNOSTIC_PREFIX = "HERMES_CORE_QUALIFICATION_FAILURE_V1="
+_QUALIFICATION_DIAGNOSTIC_REASONS = frozenset({
+    "execution_os_error", "timeout", "tool_identity_read_failure",
+    "tool_identity_change", "malformed_result_types", "output_bound",
+    "report_rejected", "validated_failure", "exit_report_verification_mismatch",
+    "failure_report_persistence",
+})
+
+
+class _QualificationDiagnosticError(RuntimeError):
+    """Generic outward refusal with a closed, non-sensitive diagnostic record."""
+
+    def __init__(self, record: dict):
+        super().__init__("fixed Core adapter qualification did not verify")
+        self.record = record
+
+
+def _qualification_diagnostic(candidate_sha: str, archive_sha: str, reason: str,
+                               returncode: object, stdout_bytes: object,
+                               stderr_bytes: object, elapsed_ms: object) -> dict:
+    """Build a closed record; oversized counts/time saturate at their documented caps."""
+    if (type(candidate_sha) is not str or re.fullmatch(r"[0-9a-f]{40}", candidate_sha) is None
+            or type(archive_sha) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", archive_sha) is None
+            or reason not in _QUALIFICATION_DIAGNOSTIC_REASONS):
+        raise ValueError("invalid fixed qualification diagnostic input")
+
+    def bounded_count(value: object, maximum: int) -> int | None:
+        if type(value) is not int or value < 0:
+            return None
+        return min(value, maximum)
+
+    bounded_returncode = (returncode if type(returncode) is int and -255 <= returncode <= 255
+                          else None)
+    record = {
+        "schema": 1,
+        "candidate_commit": candidate_sha,
+        "candidate_archive_sha256": archive_sha,
+        "reason": reason,
+        "returncode": bounded_returncode,
+        "stdout_bytes": bounded_count(stdout_bytes, 64 * 1024 + 1),
+        "stderr_bytes": bounded_count(stderr_bytes, 16 * 1024 + 1),
+        "elapsed_ms": bounded_count(elapsed_ms, 300_000),
+    }
+    raw = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    if len((_QUALIFICATION_DIAGNOSTIC_PREFIX + raw + "\n").encode("ascii")) > 4096:
+        raise ValueError("fixed qualification diagnostic exceeds its bound")
+    return record
+
+
+def _valid_qualification_diagnostic_record(record: object) -> bool:
+    keys = {
+        "schema", "candidate_commit", "candidate_archive_sha256", "reason",
+        "returncode", "stdout_bytes", "stderr_bytes", "elapsed_ms",
+    }
+    if type(record) is not dict or set(record) != keys:
+        return False
+    if (type(record["schema"]) is not int or record["schema"] != 1
+            or type(record["candidate_commit"]) is not str
+            or re.fullmatch(r"[0-9a-f]{40}", record["candidate_commit"]) is None
+            or type(record["candidate_archive_sha256"]) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", record["candidate_archive_sha256"]) is None
+            or type(record["reason"]) is not str
+            or record["reason"] not in _QUALIFICATION_DIAGNOSTIC_REASONS):
+        return False
+    returncode = record["returncode"]
+    if returncode is not None and (type(returncode) is not int or not -255 <= returncode <= 255):
+        return False
+    for key, maximum in (("stdout_bytes", 64 * 1024 + 1),
+                         ("stderr_bytes", 16 * 1024 + 1),
+                         ("elapsed_ms", 300_000)):
+        value = record[key]
+        if value is not None and (type(value) is not int or not 0 <= value <= maximum):
+            return False
+    return True
+
+
+def _emit_qualification_diagnostic(record: dict) -> None:
+    if not _valid_qualification_diagnostic_record(record):
+        return
+    try:
+        raw = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    except (TypeError, ValueError, RecursionError):
+        return
+    line = _QUALIFICATION_DIAGNOSTIC_PREFIX + raw
+    if len((line + "\n").encode("ascii")) > 4096:
+        return
+    try:
+        print(line, file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        # Diagnostic output must not change the established refusal/recovery path.
+        pass
+
+
+def _raise_qualification_diagnostic(candidate_sha: str, archive_sha: str, reason: str,
+                                     returncode: object = None,
+                                     stdout_bytes: object = None,
+                                     stderr_bytes: object = None,
+                                     elapsed_ms: object = None) -> None:
+    record = _qualification_diagnostic(candidate_sha, archive_sha, reason, returncode,
+                                       stdout_bytes, stderr_bytes, elapsed_ms)
+    _emit_qualification_diagnostic(record)
+    raise _QualificationDiagnosticError(record) from None
+
+
 _QUALIFICATION_SNAPSHOT_KEYS = frozenset({
     "journal_sha256", "unit_sha256", "launcher_sha256", "token_custody_verified",
     "token_sha256", "adapter_source", "adapter_generation", "core_source_generation",
@@ -715,31 +820,76 @@ def _run_core_refresh_qualification(candidate_sha: str, archive_sha: str,
                                     tool: Path, tool_identity: tuple) -> dict:
     argv = ("/usr/bin/python3", "-I", str(tool), "--candidate-sha", candidate_sha,
             "--archive-sha256", archive_sha)
+    started = time.monotonic()
+
+    def elapsed_ms() -> int:
+        elapsed = time.monotonic() - started
+        if not isinstance(elapsed, (int, float)) or elapsed < 0:
+            return 0
+        return min(int(elapsed * 1000), 300_000)
+
     try:
         result = subprocess.run(
             argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             timeout=300, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C",
                               "HOME": "/root"}, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        raise RuntimeError("fixed Core qualification subprocess did not complete") from None
-    current = tool.lstat()
+    except subprocess.TimeoutExpired as error:
+        out = error.stdout if type(error.stdout) is bytes else None
+        err = error.stderr if type(error.stderr) is bytes else None
+        _raise_qualification_diagnostic(
+            candidate_sha, archive_sha, "timeout", None,
+            len(out) if out is not None else None, len(err) if err is not None else None,
+            elapsed_ms())
+    except OSError:
+        _raise_qualification_diagnostic(candidate_sha, archive_sha,
+                                         "execution_os_error", elapsed_ms=elapsed_ms())
+    result_returncode = getattr(result, "returncode", None)
+    result_stdout = getattr(result, "stdout", None)
+    result_stderr = getattr(result, "stderr", None)
+    stdout_bytes = len(result_stdout) if type(result_stdout) is bytes else None
+    stderr_bytes = len(result_stderr) if type(result_stderr) is bytes else None
+    try:
+        current = tool.lstat()
+    except OSError:
+        _raise_qualification_diagnostic(candidate_sha, archive_sha,
+                                         "tool_identity_read_failure", result_returncode,
+                                         stdout_bytes, stderr_bytes, elapsed_ms())
     if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns,
             current.st_ctime_ns) != tool_identity:
-        raise RuntimeError("fixed Core qualification runner changed during execution")
-    if (type(result.returncode) is not int or type(result.stdout) is not bytes
-            or type(result.stderr) is not bytes or len(result.stdout) > 64 * 1024
-            or len(result.stderr) > 16 * 1024):
-        raise RuntimeError("fixed Core adapter qualification did not verify")
+        _raise_qualification_diagnostic(candidate_sha, archive_sha, "tool_identity_change",
+                                         result_returncode, stdout_bytes, stderr_bytes,
+                                         elapsed_ms())
+    if (type(result_returncode) is not int or type(result_stdout) is not bytes
+            or type(result_stderr) is not bytes):
+        _raise_qualification_diagnostic(
+            candidate_sha, archive_sha, "malformed_result_types", result_returncode,
+            stdout_bytes, stderr_bytes, elapsed_ms())
+    if stdout_bytes > 64 * 1024 or stderr_bytes > 16 * 1024:
+        _raise_qualification_diagnostic(
+            candidate_sha, archive_sha, "output_bound", result_returncode,
+            stdout_bytes, stderr_bytes, elapsed_ms())
     try:
         report, verified = _validated_qualification_report(
-            result.stdout, candidate_sha, archive_sha)
+            result_stdout, candidate_sha, archive_sha)
     except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
-        raise RuntimeError("fixed Core adapter qualification report is not verified") from None
-    if result.returncode == 0 and verified:
+        _raise_qualification_diagnostic(
+            candidate_sha, archive_sha, "report_rejected", result_returncode,
+            stdout_bytes, stderr_bytes, elapsed_ms())
+    if result_returncode == 0 and verified:
         return report
-    if result.returncode != 0 and not verified:
-        _persist_qualification_failure(report)
-    raise RuntimeError("fixed Core adapter qualification did not verify")
+    if result_returncode != 0 and not verified:
+        try:
+            _persist_qualification_failure(report)
+        except Exception:
+            _raise_qualification_diagnostic(
+                candidate_sha, archive_sha, "failure_report_persistence", result_returncode,
+                stdout_bytes, stderr_bytes, elapsed_ms())
+        _raise_qualification_diagnostic(
+            candidate_sha, archive_sha, "validated_failure", result_returncode,
+            stdout_bytes, stderr_bytes, elapsed_ms())
+    _raise_qualification_diagnostic(
+        candidate_sha, archive_sha, "exit_report_verification_mismatch", result_returncode,
+        stdout_bytes, stderr_bytes, elapsed_ms())
 
 
 def _verify_adapter_refresh_plugin_backup(core_runtime, old_record: dict,

@@ -1472,8 +1472,36 @@ def _qualification_report_fixture(candidate="b" * 40, archive="c" * 64):
     }
 
 
+def _qualification_diagnostic_line(captured):
+    assert captured.out == ""
+    lines = [line for line in captured.err.splitlines()
+             if line.startswith(adopt._QUALIFICATION_DIAGNOSTIC_PREFIX)]
+    assert len(lines) == 1
+    encoded = lines[0][len(adopt._QUALIFICATION_DIAGNOSTIC_PREFIX):]
+    record = json.loads(encoded)
+    assert encoded == json.dumps(record, sort_keys=True, separators=(",", ":"))
+    assert set(record) == {
+        "schema", "candidate_commit", "candidate_archive_sha256", "reason",
+        "returncode", "stdout_bytes", "stderr_bytes", "elapsed_ms",
+    }
+    assert record["schema"] == 1
+    assert record["candidate_commit"] == "b" * 40
+    assert record["candidate_archive_sha256"] == "c" * 64
+    assert len(lines[0].encode("ascii") + b"\n") <= 4096
+    assert "PRIVATE" not in lines[0]
+    for key, maximum in (("stdout_bytes", 64 * 1024 + 1),
+                         ("stderr_bytes", 16 * 1024 + 1),
+                         ("elapsed_ms", 300_000)):
+        value = record[key]
+        assert value is None or type(value) is int and 0 <= value <= maximum
+    value = record["returncode"]
+    assert value is None or type(value) is int and -255 <= value <= 255
+    return record
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="protected failure report fixture requires root")
-def test_nonzero_qualification_persists_only_validated_sanitized_report(tmp_path, monkeypatch):
+def test_nonzero_qualification_persists_only_validated_sanitized_report(
+        tmp_path, monkeypatch, capsys):
     parent = tmp_path / "core-runtime"
     parent.mkdir(mode=0o700)
     parent.chmod(0o700)
@@ -1489,8 +1517,14 @@ def test_nonzero_qualification_persists_only_validated_sanitized_report(tmp_path
     monkeypatch.setattr(adopt.subprocess, "run", lambda *_args, **_kwargs:
                         SimpleNamespace(returncode=4, stdout=raw, stderr=b""))
 
-    with pytest.raises(RuntimeError, match="did not verify"):
+    with pytest.raises(adopt._QualificationDiagnosticError) as caught:
         adopt._run_core_refresh_qualification("b" * 40, "c" * 64, tool, identity)
+    diagnostic = _qualification_diagnostic_line(capsys.readouterr())
+    assert diagnostic["reason"] == "validated_failure"
+    assert diagnostic["returncode"] == 4
+    assert diagnostic["stdout_bytes"] == len(raw)
+    assert diagnostic["stderr_bytes"] == 0
+    assert caught.value.record == diagnostic
 
     failure = adopt.CORE_QUALIFICATION_FAILURE
     saved = failure.read_bytes()
@@ -1515,6 +1549,70 @@ def test_nonzero_qualification_persists_only_validated_sanitized_report(tmp_path
         persisted["after"]["native_plugin_transition"]["new_members"])
 
 
+def test_verified_qualification_remains_silent(tmp_path, monkeypatch, capsys):
+    report = _qualification_report_fixture()
+    report["cli_exit_code"] = 0
+    report["cli_failure_origin"] = None
+    report["cohort_phase"] = "committed"
+    report["checks"] = {name: True for name in adopt._QUALIFICATION_CHECKS}
+    report["outcome"] = "verified_adapter_update"
+    raw = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    tool = Path(adopt.__file__)
+    info = tool.lstat()
+    identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    invocation = {}
+
+    def run(*args, **kwargs):
+        invocation["args"] = args
+        invocation["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0, stdout=raw, stderr=b"")
+
+    monkeypatch.setattr(adopt.subprocess, "run", run)
+
+    result = adopt._run_core_refresh_qualification("b" * 40, "c" * 64, tool, identity)
+
+    assert result == report
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+    assert invocation["args"] == (("/usr/bin/python3", "-I", str(tool),
+                                   "--candidate-sha", "b" * 40,
+                                   "--archive-sha256", "c" * 64),)
+    assert invocation["kwargs"] == {
+        "stdin": adopt.subprocess.DEVNULL, "stdout": adopt.subprocess.PIPE,
+        "stderr": adopt.subprocess.PIPE, "timeout": 300,
+        "env": {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "HOME": "/root"},
+        "check": False,
+    }
+
+
+def test_eligible_failure_report_persistence_refusal_is_distinct_and_sanitized(
+        monkeypatch, capsys):
+    report = _qualification_report_fixture()
+    raw = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    tool = Path(adopt.__file__)
+    info = tool.lstat()
+    identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    monkeypatch.setattr(adopt.subprocess, "run", lambda *_args, **_kwargs:
+                        SimpleNamespace(returncode=4, stdout=raw, stderr=b""))
+    attempted = []
+    sentinel = "PRIVATE persistence location"
+
+    def persistence_attempt(value):
+        attempted.append(value)
+        raise OSError(sentinel)
+
+    monkeypatch.setattr(adopt, "_persist_qualification_failure", persistence_attempt)
+    with pytest.raises(adopt._QualificationDiagnosticError) as caught:
+        adopt._run_core_refresh_qualification("b" * 40, "c" * 64, tool, identity)
+
+    diagnostic = _qualification_diagnostic_line(capsys.readouterr())
+    assert len(attempted) == 1 and attempted[0] == report
+    assert diagnostic["reason"] == "failure_report_persistence"
+    assert diagnostic["returncode"] == 4
+    assert sentinel not in json.dumps(diagnostic)
+    assert caught.value.record == diagnostic
+
+
 @pytest.mark.parametrize("report_kind", [
     "malformed", "foreign-candidate", "unsafe-origin", "forged-absent-digest",
     "inconsistent-registration-sentinel", "plugin-map-extra-member",
@@ -1523,7 +1621,7 @@ def test_nonzero_qualification_persists_only_validated_sanitized_report(tmp_path
 ])
 @pytest.mark.skipif(os.geteuid() != 0, reason="protected failure report fixture requires root")
 def test_untrusted_qualification_failure_report_cannot_replace_last_failure(
-        tmp_path, monkeypatch, report_kind):
+        tmp_path, monkeypatch, report_kind, capsys):
     parent = tmp_path / "core-runtime"
     parent.mkdir(mode=0o700)
     parent.chmod(0o700)
@@ -1562,11 +1660,105 @@ def test_untrusted_qualification_failure_report_cannot_replace_last_failure(
                 tool_info.st_mtime_ns, tool_info.st_ctime_ns)
     monkeypatch.setattr(adopt.subprocess, "run", lambda *_args, **_kwargs:
                         SimpleNamespace(returncode=4, stdout=raw, stderr=b""))
+    monkeypatch.setattr(adopt, "_persist_qualification_failure",
+                        lambda *_args: pytest.fail("rejected report reached persistence"))
 
-    with pytest.raises(RuntimeError,
-                       match=r"fixed Core adapter qualification (report is not verified|did not verify)"):
+    with pytest.raises(adopt._QualificationDiagnosticError) as caught:
         adopt._run_core_refresh_qualification("b" * 40, "c" * 64, tool, identity)
+    diagnostic = _qualification_diagnostic_line(capsys.readouterr())
+    assert diagnostic["reason"] == "report_rejected"
+    assert diagnostic["returncode"] == 4
+    assert caught.value.record == diagnostic
     assert failure.read_bytes() == b"prior protected report"
+
+
+@pytest.mark.parametrize("case,reason", [
+    ("execution", "execution_os_error"),
+    ("timeout", "timeout"),
+    ("identity-read", "tool_identity_read_failure"),
+    ("identity-change", "tool_identity_change"),
+    ("malformed", "malformed_result_types"),
+    ("output-bound", "output_bound"),
+    ("stderr-bound", "output_bound"),
+    ("exit-mismatch", "exit_report_verification_mismatch"),
+])
+def test_qualification_refusal_emits_closed_reason_without_private_values(
+        monkeypatch, capsys, case, reason):
+    tool = Path(adopt.__file__)
+    tool_info = tool.lstat()
+    identity = (tool_info.st_dev, tool_info.st_ino, tool_info.st_size,
+                tool_info.st_mtime_ns, tool_info.st_ctime_ns)
+    sentinel = b"PRIVATE qualification sentinel"
+    if case == "execution":
+        def run(*_args, **_kwargs):
+            raise OSError(sentinel.decode())
+        monkeypatch.setattr(adopt.subprocess, "run", run)
+    elif case == "timeout":
+        def run(*_args, **_kwargs):
+            raise adopt.subprocess.TimeoutExpired("private command", 300,
+                                                  output=sentinel, stderr=sentinel)
+        monkeypatch.setattr(adopt.subprocess, "run", run)
+    else:
+        report = _qualification_report_fixture()
+        raw = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        rc = 4
+        out = raw
+        err = b""
+        if case == "malformed":
+            rc = "4"
+        elif case == "output-bound":
+            out = b"x" * (64 * 1024 + 1)
+        elif case == "stderr-bound":
+            err = b"x" * (16 * 1024 + 1)
+        elif case == "exit-mismatch":
+            rc = 0
+        monkeypatch.setattr(adopt.subprocess, "run", lambda *_args, **_kwargs:
+                            SimpleNamespace(returncode=rc, stdout=out, stderr=err))
+        monkeypatch.setattr(adopt, "_persist_qualification_failure",
+                            lambda *_args: pytest.fail("refusal reached failure persistence"))
+        if case == "identity-read":
+            original_lstat = Path.lstat
+
+            def lstat(path):
+                if path == tool:
+                    raise OSError(sentinel.decode())
+                return original_lstat(path)
+            monkeypatch.setattr(Path, "lstat", lstat)
+        elif case == "identity-change":
+            identity = (*identity[:-1], identity[-1] + 1)
+
+    with pytest.raises(adopt._QualificationDiagnosticError) as caught:
+        adopt._run_core_refresh_qualification("b" * 40, "c" * 64, tool, identity)
+    diagnostic = _qualification_diagnostic_line(capsys.readouterr())
+    assert diagnostic["reason"] == reason
+    assert sentinel.decode() not in json.dumps(diagnostic)
+    assert caught.value.record == diagnostic
+    if case == "timeout":
+        assert diagnostic["stdout_bytes"] == len(sentinel)
+        assert diagnostic["stderr_bytes"] == len(sentinel)
+    if case == "execution":
+        assert diagnostic["returncode"] is None
+        assert diagnostic["stdout_bytes"] is None
+        assert diagnostic["stderr_bytes"] is None
+    if case == "output-bound":
+        assert diagnostic["stdout_bytes"] == 64 * 1024 + 1
+    if case == "stderr-bound":
+        assert diagnostic["stderr_bytes"] == 16 * 1024 + 1
+
+
+def test_qualification_diagnostic_rejects_unclosed_records_before_serialization(capsys):
+    base = adopt._qualification_diagnostic("b" * 40, "c" * 64, "timeout",
+                                           None, 2**40, None, 2**40)
+    assert base["stdout_bytes"] == 64 * 1024 + 1
+    assert base["elapsed_ms"] == 300_000
+    for invalid in (
+        {**base, "private": "PRIVATE sentinel"},
+        {**base, "schema": True},
+        {**base, "reason": "PRIVATE sentinel"},
+        {**base, "stderr_bytes": True},
+    ):
+        adopt._emit_qualification_diagnostic(invalid)
+    assert capsys.readouterr().err == ""
 
 
 def test_completed_ingress_handoff_archives_raw_predecessor_then_replaces_atomically(
