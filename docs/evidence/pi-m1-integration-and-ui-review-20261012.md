@@ -1557,3 +1557,18 @@ strict Pi spec/plan validation with 0 errors. The two tool/unit files passed
 apply with union stdin had just launched at `p/candidate175-actual-adoption.log`;
 sample and outcome were pending. Core `6992` remained byte-unchanged from the
 prior qualified candidate 165. No acceptance is claimed.
+
+### Candidate 175 apply outcome
+
+The candidate-175 adopter exited 4 with a capped 300000ms timeout, null return
+code/stdout and 1382 stderr bytes. Its last-phase record was `adapter_update`,
+elapsed 1206ms, sequence 4, count 4, rejected 0. Bounded stack observation
+reported elapsed 250005ms, examined 23 frames, label `updater`, 22 unmatched,
+not truncated and `unknown=False`. The label identifies only the updater, not
+a nested function or cause. Exact candidate/archive remain
+`2df11f817deef6254f206bdf3059b170a567fb5a` /
+`de36f2e6da2d328fe54e56a7ff96620b3797779642151b643a5cfa1b65a39ff0`. Automatic
+recovery verified prior Core and ingress; all four services were active. The
+log is `p/candidate175-actual-adoption.log`. No M1 acceptance is claimed. Sol
+was refining public source-relative frame metadata without private values or
+Core/deadline changes to identify the slow function.
