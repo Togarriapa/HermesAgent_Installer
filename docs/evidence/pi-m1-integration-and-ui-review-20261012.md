@@ -1377,3 +1377,33 @@ production failure or candidate-163 adoption. Candidate 163/Core `6992` and
 archive `99c9…` remain as recorded; readiness, spec/plan, import, fast and
 listener checks above remain passing. Runtime remained on old source `0cb` and
 stable. Native/Sol test-only fixture alignment was in progress.
+
+## Candidates 164–165 qualification status
+
+Candidate 164 (`f61fe307ce3d7a7f35f1ace40e42890043969949`), archive SHA-256
+`439439ab83ad6525ef54889aac6e55f55f49bc97f1c5a4a04c5eae5c17c2042b`, used
+Core `6992`. Actual Pi spec/plan, import and read-only readiness passed. Startup
+passed 7 tests (log SHA-256
+`486b72a9f9f1a2d3dd913b469db5234a63284a8380c8df330f7f85c9d1dd1eba`); listener
+passed 2 (log SHA-256
+`29dfaadb73977f4d958826f9fe727776d7cfc85207543b453ecdd2304ffa15cd`). The
+update-`False` group failed its first test in 310.58s at fixture
+`1909`, `deny_host_subprocess`: the new decoder used shared monkeypatched
+`subprocess.run` for manager queries and cleanup. Log SHA-256 was
+`517297b4f71ba9eb29ba752209536c465306d8f88887f93dc2ee276d67d1f8ad`. This is
+a test harness failure, not a production failure. The `True` and restart groups
+did not run; candidate 164 was not adopted. Test-only correction `f24d` passed
+review, capturing the guard runner with a fixed bounded decoder-call set; Core
+`6992` remained unchanged.
+
+Candidate 165 (`06db1055924775bfc7b584dc701b4a7808184e19`), archive SHA-256
+`a38c886a6d0219ef27ff51889e03cac2dbef87d00fcf03da4cba4384c5a78531`, used the
+same Core `6992`. Pi spec/plan, import and readiness passed. Its fast group
+passed 7 (log SHA-256
+`c8b2e8d7166cb17cee1321ffcc8c2a3ea574dba777592f763833557ceaade2ff1`); listener
+passed 2 (log SHA-256
+`29dfaadb73977f4d958826f9fe727776d7cfc85207543b453ecdd2304ffa15cd`). Logs
+were under `/var/tmp/hermes-native-guard-165-06db10559-20261014T004815Z-3236369/`.
+Update and restart groups were running with results pending; candidate 165 had
+not been adopted. Live source remained `0cb` with all four services active.
+Runtime acceptance remains open.
