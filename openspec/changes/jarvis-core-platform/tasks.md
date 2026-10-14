@@ -323,3 +323,9 @@ All four encoding-correction checkboxes above are bounded leaves of existing R00
 - [ ] In the same diagnostic leaf, test an eligible persistence attempt that raises: preserve its original criteria/attempt and recovery, emit only `failure_report_persistence` plus existing safe metadata, and distinguish it from normally persisted validated failure. No new task group or runtime authority is added.
 
 - [ ] Qualify saturated stdout65537/stderr16385/elapsed300000 ceiling representation and null unavailable values, closed emitter validation/private omission, exact original300s/argv/environment and silent success; do not interpret capped values as exact measurements or extend deadlines.
+
+### Existing R0201/#35 finite qualification stage observation
+
+- [ ] Root Pi strict-validates four artifacts; retain actual168 timeout and automatic prior-runtime restoration evidence. Do not infer importer/guard/inner stage or extend300s from nested budgets.
+- [ ] Existing Luna owner adds only fixed qualifier flushed checkpoints through held stderr and strict wrapper bounded last-phase failure summary. Preserve Core/main-only tracing, private CLI DigestSinks, report/output/persistence/recovery criteria and deadlines; missing/invalid observations stay unknown.
+- [ ] Pi contracts exercise canonical/key/type/enum/digest/order/count/byte bounds, wrong candidate, truncated partial records, private omission, actual pre-operation flush under redirected CLI, timeout partial-buffer retention and silent wrapper success. Sol reviews exact tool/tests; Root qualifies them before one observed attempt. No acceptance follows from a checkpoint alone.

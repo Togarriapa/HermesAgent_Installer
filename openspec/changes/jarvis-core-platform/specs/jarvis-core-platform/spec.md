@@ -2729,3 +2729,17 @@ This diagnostic leaf remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35);21
 #### Scenario: Bounded numeric representation reaches a ceiling
 - **WHEN** observed stdout bytes, stderr bytes or elapsed milliseconds exceed65537,16385 or300000 respectively
 - **THEN** the record saturates that field at its ceiling, meaning at least that value; unavailable fields are null, execution deadlines and acceptance limits do not change, and unexpected fields/types are rejected before emission.
+
+### Requirement: Qualification timeouts retain finite observed stage metadata
+The qualifier SHALL expose only closed flushed checkpoints for its fixed stages, and the wrapper SHALL retain the last validated observation on refusal without changing deadlines, report validation or native acceptance.
+
+#### Scenario: A fixed qualifier stage begins
+- **WHEN** the provenance-validated qualifier enters verifier, runtime, snapshot, adapter-update, history, listener, check or report stages
+- **THEN** it first flushes a canonical bounded candidate/archive-bound phase record with increasing sequence and bounded elapsed time through the held stderr sink, outside private CLI output redirection. No deeper tracing, private values or operation-complete claim is added.
+
+#### Scenario: The wrapper stops before a report is available
+- **WHEN** timeout or refusal leaves bounded partial progress bytes
+- **THEN** strict fixed-prefix/key/type/enum/canonical/digest/order/count/size validation yields only a separate last-observed-phase summary; missing or invalid progress stays unknown, raw stderr is never emitted and success output remains silent.
+- **AND** the original300s deadline, custody, output/report/persistence/recovery decisions and Core remain unchanged. Adapter-update observation alone leaves the inner blocked substage/cause unknown; meaningful Pi parser/privacy/flush/timeout contracts precede a current attempt.
+
+This finite observation remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups.

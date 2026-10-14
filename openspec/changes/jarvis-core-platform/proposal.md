@@ -269,3 +269,7 @@ Actual165 failed at the fixed qualification subprocess, automatically restored t
 Distinguish an attempted valid failure-report persistence refusal with the closed `failure_report_persistence` reason; do not disguise it as a normally persisted validated child failure. This changes diagnostic attribution only.
 
 Numeric diagnostics saturate at stdout65537 bytes, stderr16385 bytes and elapsed300000ms; a ceiling means at least that value, not exact measurement or a changed execution deadline.
+
+### R0201/#35 finite qualification progress observation
+
+Actual168's validated wrapper diagnostic establishes a timeout at the original300s boundary, with no retained child buffers; automatic recovery restored all four prior units. The qualifier prints its report only after fixed CLI completion and digests CLI output privately. Nested importer/startup/wait bounds suggest possible outer preemption but do not establish its stage or cause. Add only finite flushed candidate/archive-bound checkpoints around the existing qualifier stages and a strict wrapper last-phase summary on failure. Preserve Core, tracing scope, all deadlines/gates and acceptance separation; no blind retry or private output exposure.
