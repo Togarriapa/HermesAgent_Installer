@@ -2761,3 +2761,8 @@ The qualifier SHALL sample the fixed CLI main-thread stack once through exact ca
 - **THEN** the watchdog is cancelled and bounded-joined without delaying early completion or emitting afterward; observation remains unknown as applicable. Core, original300s, main-only tracing, report validation, persistence and real recovery remain unchanged, and meaningful Pi cancellation/privacy/parser contracts precede another attempt.
 
 This one-shot observation refines R0055/R0201 and RT-T266.3/VD-T266.5 (#35) within unchanged219/62/18/eight OPEN groups.
+
+#### Scenario: The fixed stack protocol has no extensible fields
+- **WHEN** a child sample or wrapper observation is encoded
+- **THEN** it contains only schema/request digests, elapsed_ms, ordered fixed labels, examined_frames/unmatched_frames and strict truncated/unknown booleans. The eight exact code mappings and32/12 bounds above apply; invalid/absent samples yield null elapsed and an explicitly unknown empty observation, while a valid capped sample stays marked truncated and unknown.
+- **AND** the child and wrapper use distinct fixed versioned prefixes; checkpoint records retain their existing independent schema. No additional source names, roles, paths or arbitrary data are accepted.
