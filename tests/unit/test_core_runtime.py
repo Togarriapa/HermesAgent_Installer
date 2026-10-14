@@ -4009,6 +4009,30 @@ def test_m1_cohort_accepts_only_its_exact_legacy_or_diagnostic_guard_recipe(
         core._unit(adapter_source=source, failure_diagnostics=True)
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="unit recipe stability is qualified on the enrolled Pi")
+def test_m1_historical_core_unit_variants_remain_exact_bytes():
+    # Golden output from Pi-verified Core commit
+    # 0727ee1d5321f868312ecdca738239907aeb458c9467f24f670cae0cd7a412a6.
+    # These six recipes remain the exact compatibility set for old cohorts.
+    source = Path("/opt/hermes-installer-core-fixture/src")
+    expected = {
+        (False, False, False): (14059, "86a99448e3ab3bc15cb0bffa1e3ac979119418bcc3f3f997850f20420af0aba2"),
+        (False, True, False): (18672, "2b11765f94d5d0cb47bf574624a74051c4cbf795eafaeb8510d6a268859d7c50"),
+        (False, True, True): (34264, "3db608b99325c1937a4bd6a6608f382dcd72cde9f7814289f7e9136fb5cedfe3"),
+        (True, False, False): (20452, "1fd1876b7b42f8d494ef582c903847f70cdfe6203ad34290c9c4b67615c78b4b"),
+        (True, True, False): (25065, "f16696c554d23218adcb3e5eb55568904a1be981f9a668143e040841f0ad3dcb"),
+        (True, True, True): (46632, "2d4aea894fccc9c14f05ad8af218e1ea8be9a712ee30546a9be66a8016ad37ac"),
+    }
+    for (native_transition, diagnostics, whole_encoded), (size, digest) in expected.items():
+        unit = core._unit(adapter_source=source, cohort_gate=True,
+            backup_generation="a" * 64,
+            native_plugin_transition=native_transition,
+            failure_diagnostics=diagnostics,
+            whole_guard_encoding=whole_encoded)
+        assert len(unit) == size
+        assert hashlib.sha256(unit).hexdigest() == digest
+
+
 def _native_plugin_starting_fixture(tmp_path, monkeypatch, request, *, empty_optional_backups=False):
     """Promote the bounded starting fixture to the exact closed 11-member recipe."""
     unit, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
