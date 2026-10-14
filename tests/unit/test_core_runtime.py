@@ -2807,7 +2807,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
         assert interrupted_restore["stage"].is_file()
         reference = core._adapter_update_backup_reference(interrupted_cohort)
         _prior_snapshot, backup_contents = core._read_adapter_update_backup(reference)
-        assert hashlib.sha256(backup_contents["primary-record.json"]).hexdigest() == core._ABSENT_DIGEST
+        assert backup_contents["primary-record.json"] == b""
 
         def recovery_snapshot():
             return (core.JOURNAL.read_bytes(), core.RESOURCES_RECORD.read_bytes(),
