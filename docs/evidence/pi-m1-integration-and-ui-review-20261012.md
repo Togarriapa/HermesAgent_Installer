@@ -1813,11 +1813,13 @@ first harness run omitted the leading `d` in the archive pin and refused before
 effects. The corrected unique-188b helper (SHA-256
 `e90fede61d08d2558ad401d703dee1f71b12e6fa6952c189b7dc76ad60cc37c5`) then
 passed the genuine unchanged-c91 public recovery API with the actual fixed
-transport: 1 test passed in 270.45s. Log:
-`p/candidate181-qualified-fixed-recovery.log`.
+transport: 1 test passed in 270.45s. Its fixture log SHA-256 was
+`3a608fc94b6ecc4250c091fe80a2df0cfb3550d04724ad20f284eeab9761210c`:
+`p/candidate188b-transport-registered.log`.
 
 The production candidate-185 tool (`30396d...`) was invoked once. It exited 0
-with `restore-api-returned` and `function_bindings_restored=true`; it retained
+with `restore-api-returned` and `function_bindings_restored=true`. Log:
+`p/candidate181-qualified-fixed-recovery.log`. It retained
 the failed c91 Core identity (`6992`) and verified the reviewed fix-184 Core
 identity (`e9e0...`). The original protected candidate-181 rollback then exited
 0 and restored the exact prior Core plus Inspector, Gateway and tunnel. All
@@ -1825,9 +1827,10 @@ four services were active afterward. Log:
 `p/candidate181-post-fixed-ingress-rollback.log`.
 
 The authenticated public `/chat` page subsequently showed Secure connection,
-Jarvis idle/current-process status, and the existing 11 accepted, 9 completed,
-2 failed requests across 5 chats. This was restored availability on the prior
-`0cb` source, not acceptance of candidate 181, M1, or the newer feature work.
+Jarvis idle/current-process status, and the existing totals of 11 accepted
+turns, 9 completed turns, 2 failed turns and 5 private chats. This was restored
+availability on the prior `0cb` source, not acceptance of candidate 181, M1,
+or the newer feature work.
 No new candidate apply is recorded here. The earlier candidate-181 apply
 remains outside acceptance until its source, recovery, and runtime gates are
 closed and read back on the Pi.
