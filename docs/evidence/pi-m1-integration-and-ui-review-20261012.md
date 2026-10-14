@@ -2086,3 +2086,16 @@ Core/ingress cohort and fresh reads confirmed all four owned services active.
 No further retry follows from this result alone. The next bounded diagnosis
 must inspect the pinned middleware/request seams and preserve every genuine
 completion gate without exposing private response or SDK error text.
+
+### Candidate 203 same-call observer diagnostic refinement
+
+Planning candidate `bfb41a2ec67226f06efc0c95c2886bca39dd3b3b`, archive SHA-256
+`b619b11d7c2956c402a6ee312c379785f56906112f60db9e05e627eaf5c307d5`, contains
+the Sol-owned four-artifact refinement and append-only same-call refusal
+amendment. Sealed staging and strict Pi spec/plan/status/apply-instructions
+checks each exited0. All four artifacts were complete; apply ready,one complete
+and87 remaining of88 tasks. Evidence: `candidate203-stage.log`,
+`candidate203-specs.json`, `candidate203-gates.log`, `candidate203-status.json`,
+`candidate203-apply.json`. These checks validate only the bounded diagnostic
+contract. Implementation/review and meaningful Pi contracts remain required
+before one exact startup observation; all runtime acceptance stays open.
