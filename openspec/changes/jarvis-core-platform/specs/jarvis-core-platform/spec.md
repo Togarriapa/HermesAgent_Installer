@@ -2900,3 +2900,16 @@ The installer SHALL classify only a matched fixed startup RPC failure using clos
 - **THEN** the client retains unclassified refusal, without copying arbitrary error message/data or interpreting a failure as success. Other RPC callers retain generic denial; recognized startup helpers may identify only public source origin metadata.
 
 This diagnostic leaf preserves R0055/R0201, RT-T266.3/VD-T266.5 (#35),219/62/18/eight OPEN groups and300s/110s. Actual native/provider startup proof remains open.
+
+### Requirement: Startup instructions match native Codex composition
+The installer SHALL derive expected startup instructions from the pinned native once-only initialization and Codex composition of the same fresh private ephemeral no-tools agent, preserving exact identity and actual provider-instruction digest checks.
+
+#### Scenario: Native base intentionally excludes ephemeral identity
+- **WHEN** the newly constructed startup agent has exactly absent cached instructions and the fixed native initialization helper prepares its string base once
+- **THEN** the fixed native Codex composer supplies the full expected instructions including the exact independently loaded identity; the later native conversation skips only that already completed initialization through its original cache guard and performs remaining normal preparation. No native source patch or installer-built prompt substitute is used.
+
+#### Scenario: Prepared state or full composition is unavailable or changes
+- **WHEN** the initial cache is already present, initialization/cache/composition shape is invalid, identity is missing, instructions exceed the existing bound, helper/composer fails, agent closure changes or actual native/provider instructions differ
+- **THEN** startup refuses with original cleanup/recovery and unchanged route/account/peer/lease/no-tools/completion gates; cache state and prompt metadata never supply acceptance or authority.
+
+This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) correction preserves219/62/18/eight OPEN groups and300s/110s. Actual provider completion and live acceptance remain OPEN.
