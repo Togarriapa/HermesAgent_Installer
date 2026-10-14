@@ -1547,3 +1547,13 @@ handling. It was imported as Root candidate
 `8db3cac6…6732` was recorded. Candidate 175's Pi gate remained pending. No M1
 acceptance is claimed; the last observed live state was the four active
 services after candidate 171's automatic recovery.
+
+### Candidate 175 Pi gate and apply pending
+
+Root candidate 175 (`2df11f817deef6254f206bdf3059b170a567fb5a`), archive SHA-256
+`de36f2e6da2d328fe54e56a7ff96620b3797779642151b643a5cfa1b65a39ff0`, passed
+strict Pi spec/plan validation with 0 errors. The two tool/unit files passed
+137 contracts in 0.77s; log: `p/candidate175-spec-contracts.log`. Protected
+apply with union stdin had just launched at `p/candidate175-actual-adoption.log`;
+sample and outcome were pending. Core `6992` remained byte-unchanged from the
+prior qualified candidate 165. No acceptance is claimed.
