@@ -1331,3 +1331,34 @@ candidate-160 Pi spec validation and plan validation for the 219/62/18/4/8
 sets. This is not runtime acceptance. Native implementation of a fourth
 recipe preserving candidate 159's bytes was in progress. Core source remained
 `0727` pending reviewed code.
+
+## Candidates 161–163 qualification evidence
+
+Sol's v161 clarification, Root candidate
+`a15124bd383ee6d65ef3326d9f5e2d109519ac88`, archive SHA-256
+`61c2b89016471b03addeec77cd948909d7b7e682c3f5b3b843bba7b71125cba0`, passed
+strict Pi spec/plan validation. Six unit goldens were built from verified,
+sealed Core `0727` inputs and fixed source `/opt/hermes-installer-core-fixture/src`
+with backup marker `a…`; hashes are stored in the new test. These were
+historical fixtures and caused no effects.
+
+Candidate 162 (`4cb916215677485f9654d1adb322973d393b0a08`, archive `9e518…`)
+used Core `53d`. Spec/plan validation passed, but Core import/fast collection
+failed with `SyntaxError` at line 2862, offset 14, due to a missing concatenation
+operator. The guard group exited 4 (log SHA-256
+`6c40e15e4df86a757d9c4218e7c808bf2714882771c2e33eaf8f514c02223238`). There
+were no qualification effects and no actual adoption. The source-only two-
+operator correction `edad` passed Sol review and pin `2289`.
+
+Root candidate 163 (`84932d522af318f39c11dbd52d1fc1eb772aaff6`), archive SHA-256
+`99c9d9c2f6451bece525c01ace72b525b7edba4c9b2ea0e611e6d99c02501803`, used Core
+`6992eb4eed8eb4397fc9e330a60edeec7b0025a55a6fa0b57660549738d6266e`. Pi
+spec/plan validation, protected parent import, and read-only readiness using
+existing Root locks passed. The first fast group passed 7 tests in 7.55s (log
+SHA-256 `fea5c2793a3a00b9cffbceebc5acec7f9388bc88b41f6f4a38db4cfe56746ee1`),
+covering the six goldens, Root ACL denials and actual systemd-decoded guard.
+Listener tests passed 2 in 0.63s (log SHA-256
+`c178449272bb51b7cf4ea950c6169cee3d94d323b8186f6cd7eca96df22dc4a9`). Logs
+were under `/var/tmp/hermes-native-guard-163-84932d522-20261014T001655Z-3228048/`.
+Update and restart groups were still running; no actual candidate-163 adoption
+had occurred. Live source remained `0cb` with four active services.
