@@ -1679,3 +1679,26 @@ ingress; all four services were active. Log:
 source qualification but did not resolve full adoption. Nested payload/native
 loader cost remained under investigation; no deadline change or M1 acceptance
 is claimed.
+
+### Candidate 179 read-only native-skill probe
+
+Final V4 helper SHA-256 was
+`008a594130ab8e59c816cebe70a2e63cf3b5eff8f84308c1b10634379b49f7e3`. The
+initial helper (1/10 views) was refused by the generic boundary. V2 closed the
+public-source-custody `ValueError` with zero effects. Root measured three PM
+public files as regular, UID/GID 1000, mode 0664, single-link and at most 2 MiB;
+read-only V3 accepted only those exact three fixed pins, without chmod. Its API
+and result joins succeeded, but the final effect check refused the denied
+write (`23/pm_import6`). V4 recorded `completed_under_audit` after post-checks:
+for one view, native time 395ms, locator 1ms, PATH 453ms, parse 454ms; for ten
+views, native 3871ms, locator 10ms, PATH 4530ms, parse 4540ms. All-content
+matches were true in both runs; the blocked write remained `23/pm_import6`,
+with network/process effects 0. Log:
+`p/candidate179-native-skill-v4.log`.
+
+This measures native per-view full-catalog parsing under the audited probe
+conditions, not an unconstrained baseline, all 396 views, or full adoption
+acceptance. Source audit found `skills_tool._locate_skill` scans each view; a
+pure exact-text parse memo was considered viable. Sol was planning a per-PROBE
+parse memo that preserves fresh reads, scans and all 396 native views. No source
+fix or Core/deadline change had landed.
