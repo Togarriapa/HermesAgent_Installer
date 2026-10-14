@@ -2838,3 +2838,21 @@ The installer SHALL resume a completed primary rollback substep only from its ex
 - **THEN** a subsequent existing API invocation restores the exact prior tuple/live source, while a companion owner-data drift retry refuses. Strict artifacts, exact source/pin review and focused effects precede actual recovery; original downstream cause and new-adoption acceptance remain separate.
 
 This resumability correction remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and all prior obligations.
+
+### Requirement: Qualified recovery code preserves the retained failed-source authority
+The installer SHALL transport only fixed reviewed recovery definitions for one protected failed cohort, preserving its unchanged source identity and all existing recovery gates.
+
+#### Scenario: The recovery fix is staged separately from failed181c91
+- **WHEN** Root uses the fixed qualified runner with independently verified fix and failed source receipts/hashes/closures
+- **THEN** only the two literal currentness definitions/signatures above are AST-compiled and bound in failed Core globals; that module's unchanged restore API executes once. Its __file__, ADAPTER_SOURCE, pins, importer/plugin/recipe/source identities and all other bindings stay unchanged; no sealed file or whole fix module is executed/rewritten.
+- **AND** exact current failed-cohort/transaction/ingress/old-backup/stage identity is rechecked under the API lock before effects. Finally restores exact original function bindings/helper presence; errors expose only bounded public type/source-frame metadata.
+
+#### Scenario: Transport identity or code shape differs
+- **WHEN** target/source/hash/custody, fixed definition/signature, closure or authority globals do not match
+- **THEN** the runner refuses with protected backups preserved, without arbitrary code selection, journal recreation, prior-source execution, manual service start or lease/deadline changes. Existing recovery remains the only effect path.
+
+#### Scenario: Disclosed transport restores prior availability
+- **WHEN** exact source review and meaningful Pi unlink/interruption/replay and restoration/denial/privacy contracts pass
+- **THEN** Root invokes this one retained recovery and ordinary protected ingress rollback after verified prior Core restoration. Separate normal-source implementation/pins remain explicit; recovery success is neither new-adoption permission nor runtime acceptance.
+
+This fixed transport remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and all prior obligations.
