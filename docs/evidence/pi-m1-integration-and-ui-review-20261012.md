@@ -1426,9 +1426,9 @@ The protected candidate-165 apply failed wrapper qualification with adopter
 exit 4. Automatic recovery succeeded: prior Core and ingress were verified,
 all four services were active, and old source `0cb`, unit and launcher were
 preserved. Core PID was 3243625, `Result=success`, `NRestarts=0`. The actual log
-is `p/candidate165-actual-adoption.log`. The retained last-failure report
-matched candidate/archive 165 but reported `False` and was stale; it cannot
-attribute this failure to the earlier candidate-159 event. The inner failure
+is `p/candidate165-actual-adoption.log`. The retained last-failure report did not match candidate 165 or its archive;
+both match checks were false. The report was stale and cannot attribute this
+failure to the earlier candidate-159 event. The inner failure
 cause remains unknown.
 
 The approved V5 closed journal collector for the last hour showed valid 0,
@@ -1438,3 +1438,10 @@ This absence is not qualification success. Sol's four-artifact refinement
 pending strict Pi gate. It adds only a dedicated `RuntimeError` enum and
 bounded counts at the unchanged 300s wrapper; it does not establish the inner
 cause. No candidate-165 adoption or acceptance is claimed.
+
+### Candidate 166 strict gate
+
+Root candidate 166 (`dba05fda960d07f9d1db32144d6108f5912327fa`), archive
+`96c0ada…3e7ba5`, passed strict validation with 0 spec errors and 0 plan errors.
+The four artifact sets 219/62/18/8 remain open. This gate result adds no new
+runtime or adoption acceptance.
