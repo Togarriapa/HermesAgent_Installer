@@ -1521,3 +1521,29 @@ phase `adapter_update`, elapsed 1230ms, sequence 4, record count 4 and rejected
 timeout; the inner Core function or stage cause remains unknown. Automatic
 recovery verified prior Core and ingress; all four services were active. The
 log is `p/candidate171-actual-adoption.log`. No other acceptance is inferred.
+
+## Candidates 172–175 source and gate evidence
+
+Root candidate 172 (`7f386642c51f9c9c992e6f1c2013cef59fe4de21`), archive SHA-256
+`989f1b364d07a6d4c026a269daf0b506e722821f2396f37a1633de6dff2c6d08`, and
+candidate 173 (`038e6e0b32be7f792b67cef38718f22e9188c5b2`), archive SHA-256
+`b517e98240300a022813846fefc5308ba4d5f724a4261c97029efd86b6f6506f`, each
+passed strict spec/plan validation with 0 errors. One-shot source `45ce`
+passed Sol review. Publication `319f56` for four artifacts was imported as Root
+`a2b382eceee5237ac4f8c20d1b58b8bd9078c832`, archive SHA-256
+`a01beda1da70c1297e4c142f1c6f8e9af08591796ade47309ae2f60126009f8d`; Core
+`6992` remained unchanged. Qualifier tool
+`a14aeb04e97241968c283d9702ceb2894ececa95529d82224d90dec1ed1d0a9e` and adopter
+`db7e4840dec3cd6f7b50735fe756a8169990dbfe3ffcb666567b3df4cb7f2b4e` were
+recorded.
+
+Candidate 174 passed spec/plan validation, but its tests had 119 passes and
+one failure in 0.75s. The positive one-shot fixture exposed an actual pytest
+stack-cap value of `unknown=True`; no actual apply was run. Test-only correction
+`e5f2036` (eight lines) passed Sol review: deterministic one-frame main-stack
+handling. It was imported as Root candidate
+`2df11f817deef6254f206bdf3059b170a567fb5a`, archive SHA-256
+`de36f2e6da2d328fe54e56a7ff96620b3797779642151b643a5cfa1b65a39ff0`; test
+`8db3cac6…6732` was recorded. Candidate 175's Pi gate remained pending. No M1
+acceptance is claimed; the last observed live state was the four active
+services after candidate 171's automatic recovery.
