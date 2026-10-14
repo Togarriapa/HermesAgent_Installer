@@ -11,6 +11,7 @@ import argparse
 from dataclasses import dataclass
 from enum import StrEnum
 import hashlib
+import getpass
 import json
 import os
 import re
@@ -1061,6 +1062,86 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 4
             print(f"Core service action failed ({type(exc).__name__}).", file=sys.stderr)
             return 1
+    if arguments and arguments[0] == "global-admin":
+        if len(arguments) != 2 or arguments[1] not in {"enroll", "revoke", "status"}:
+            print("Use exactly: global-admin {enroll|revoke|status}.", file=sys.stderr)
+            return 2
+        if not (sys.stdin.isatty() and sys.stderr.isatty()):
+            print("Original administrator actions require the root controlling terminal.", file=sys.stderr)
+            return 4
+        proof = None
+        try:
+            _require_root_linux()
+            proof = _capture_root_tty_proof()
+            operation = arguments[1]
+            from .remote import global_admin
+            if operation == "status":
+                _verify_root_tty_proof(proof)
+                print(json.dumps(global_admin.current_status(), sort_keys=True, separators=(",", ":")),
+                      file=sys.stderr)
+                return 0
+            if operation == "revoke":
+                status = global_admin.current_status()
+                if status["state"] not in {"active", "revoked"}:
+                    print("Original administrator is not enrolled.", file=sys.stderr)
+                    return 4
+                print(f"Current administrator revision {status['revision']} digest {status['record_sha256']}.",
+                      file=sys.stderr)
+                expected = input("Type the exact current digest to revoke: ").strip()
+                _verify_root_tty_proof(proof)
+                if expected != status["record_sha256"]:
+                    print("Administrator revocation was not confirmed.", file=sys.stderr)
+                    return 4
+                result = global_admin.revoke(expected_sha256=expected)
+            else:
+                from .remote.core_gateway import CORE_HERMES_HOME, CoreGatewayConfig, _read_config_current
+                from .remote.gateway import JWKSCache, validate_access_jwt
+                config = CoreGatewayConfig.load()
+                _read_config_current(config)
+                home_info = os.stat(CORE_HERMES_HOME, follow_symlinks=False)
+                if (not stat.S_ISDIR(home_info.st_mode) or home_info.st_uid != 1000
+                        or stat.S_IMODE(home_info.st_mode) & 0o022):
+                    raise RuntimeError("owned Hermes home custody is unavailable")
+                status = global_admin.current_status()
+                if status["state"] == "active":
+                    print(f"Current administrator revision {status['revision']} digest {status['record_sha256']}.",
+                          file=sys.stderr)
+                    expected = input("Type the exact current digest to verify or resume this enrollment: ").strip()
+                    if expected != status["record_sha256"]:
+                        print("Administrator enrollment was not confirmed.", file=sys.stderr)
+                        return 4
+                elif status["state"] == "revoked":
+                    print(f"Revoked administrator revision {status['revision']} digest {status['record_sha256']}.",
+                          file=sys.stderr)
+                    expected = input("Type the exact current digest to reactivate this identity: ").strip()
+                    if expected != status["record_sha256"]:
+                        print("Administrator reactivation was not confirmed.", file=sys.stderr)
+                        return 4
+                else:
+                    expected = ""
+                email = input("Explicit original setup-owner email: ").strip()
+                assertion = getpass.getpass("Fresh Cloudflare Access assertion (hidden): ")
+                _verify_root_tty_proof(proof)
+                _read_config_current(config)
+                principal = validate_access_jwt(assertion,
+                    policy=config.policy(JWKSCache(config.issuer, ttl_seconds=1, timeout_seconds=3.0)),
+                    deadline_monotonic=time.monotonic() + 5.0)
+                if (principal.email.casefold() != global_admin.normalize_email(email)
+                        or principal.email.casefold() not in config.allowed_emails):
+                    raise RuntimeError("fresh signed administrator identity did not match the explicit setup owner")
+                result = global_admin.enroll(hostname=config.hostname, issuer=config.issuer,
+                    audience=config.audience, email=principal.email, subject=principal.subject,
+                    expected_sha256=(expected or None),
+                    reactivate_revision=(status["revision"] if status["state"] == "revoked" else None),
+                    reactivate_sha256=(expected if status["state"] == "revoked" else None))
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")), file=sys.stderr)
+            return 0
+        except Exception as exc:
+            print(f"Original administrator action unavailable ({type(exc).__name__}).", file=sys.stderr)
+            return 4
+        finally:
+            if proof is not None:
+                proof.close()
     if arguments and arguments[0] == "source-update":
         if arguments != ["source-update"]:
             parser.error("use exactly: source-update")

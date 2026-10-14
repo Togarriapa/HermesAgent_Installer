@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,7 @@ from hermes_installer.remote.jarvis_chat import JarvisChatDenied
 from hermes_installer.remote.jarvis_profiles_admin import (
     JarvisProfileAdmin, ProfileAdminDescriptor, ProfileAdminFile,
     ProfileAdminWriteResult, reviewed_profiles_admin_feature,
+    RootProfileAdminContext, _same_current_root_admin_snapshot,
 )
 
 
@@ -18,27 +21,50 @@ def _sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def _context(revision: int = 1, digest: str | None = None) -> RootProfileAdminContext:
+    return RootProfileAdminContext("active", True, revision, digest or _sha(f"admin-{revision}"),
+        _sha("owner"), _sha("token"), _sha("config"), "c" * 64,
+        "d" * 64, "e" * 64, time.monotonic() + 5)
+
+
+def test_fresh_root_status_does_not_replace_or_extend_captured_request_deadline():
+    captured = _context()
+    fresh = dataclasses.replace(captured, expires_monotonic=captured.expires_monotonic + 2)
+    original_deadline = captured.expires_monotonic
+    assert _same_current_root_admin_snapshot(captured, fresh) is True
+    assert captured.expires_monotonic == original_deadline
+    assert _same_current_root_admin_snapshot(
+        dataclasses.replace(captured, expires_monotonic=time.monotonic() - 1), fresh) is False
+    assert _same_current_root_admin_snapshot(
+        captured, dataclasses.replace(fresh, revision=fresh.revision + 1)) is False
+
+
 class _Provider:
     def __init__(self):
         self.files = {("hermes", "soul"): "Jarvis owner prompt\n",
                       ("dev-peter", "soul"): "Internal profile prompt\n"}
         self.generation = "a" * 64
+        self.admin_revision = 1
+        self.admin_record_sha256 = _sha("original-admin-record-1")
         self.writes = []
         self.profile_rows = (
             ProfileAdminDescriptor("hermes", "Jarvis", "jarvis", self.generation, ("soul",)),
             ProfileAdminDescriptor("dev-peter", "Dev Peter", "expert", self.generation, ("soul",)),
         )
 
-    def list_profiles(self, *, subject, core_generation, access_jwt, accepted_ingress):
+    def current_admin_scope(self, admin_context):
+        return admin_context.revision, admin_context.record_sha256
+
+    def list_profiles(self, *, subject, core_generation, access_jwt, accepted_ingress, admin_context):
         return self.profile_rows
 
-    def read_file(self, *, subject, core_generation, profile_key, file_kind, access_jwt, accepted_ingress):
+    def read_file(self, *, subject, core_generation, profile_key, file_kind, access_jwt, accepted_ingress, admin_context):
         value = self.files[(profile_key, file_kind)]
         return ProfileAdminFile(profile_key, file_kind, "SOUL.md", self.generation,
                                 value, _sha(value), True)
 
     def write_generation(self, *, subject, core_generation, profile_key, file_kind,
-                         expected_sha256, content, idempotency_key, access_jwt, accepted_ingress):
+                         expected_sha256, content, idempotency_key, access_jwt, accepted_ingress, admin_context):
         before = self.files[(profile_key, file_kind)]
         if _sha(before) != expected_sha256:
             return ProfileAdminWriteResult("conflict", None, _sha(before), None, False)
@@ -52,19 +78,19 @@ def test_opaque_profile_ids_bind_owner_and_current_core_generation_and_never_exp
     provider = _Provider()
     admin = JarvisProfileAdmin(provider)
     snapshot = admin.list_profiles(subject="owner-a", core_generation="core-a",
-                                   access_jwt="jwt", accepted_ingress=object())
+                                   access_jwt="jwt", accepted_ingress=object(), admin_context=_context())
     assert [item["kind"] for item in snapshot["profiles"]] == ["jarvis", "expert"]
     assert all("path" not in item for item in snapshot["profiles"])
     profile_id = snapshot["profiles"][1]["id"]
     with pytest.raises(JarvisChatDenied):
         admin.read_file(subject="owner-b", core_generation="core-a", profile_id=profile_id,
-                        file_kind="soul", access_jwt="jwt", accepted_ingress=object())
+                        file_kind="soul", access_jwt="jwt", accepted_ingress=object(), admin_context=_context())
     with pytest.raises(JarvisChatDenied):
         admin.read_file(subject="owner-a", core_generation="core-b", profile_id=profile_id,
-                        file_kind="soul", access_jwt="jwt", accepted_ingress=object())
+                        file_kind="soul", access_jwt="jwt", accepted_ingress=object(), admin_context=_context())
     with pytest.raises(JarvisChatDenied):
         admin.read_file(subject="owner-a", core_generation="core-a", profile_id="../SOUL.md",
-                        file_kind="soul", access_jwt="jwt", accepted_ingress=object())
+                        file_kind="soul", access_jwt="jwt", accepted_ingress=object(), admin_context=_context())
 
 
 @pytest.mark.parametrize("count", [65, 208])
@@ -75,7 +101,7 @@ def test_profile_inventory_accepts_complete_current_rows_through_native_bound(co
         ProfileAdminDescriptor(f"expert-{index}", f"Expert {index}", "expert",
             provider.generation, ("soul",)) for index in range(count - 1))
     result = JarvisProfileAdmin(provider).list_profiles(subject="owner-a", core_generation="core-a",
-        access_jwt="jwt", accepted_ingress=object())
+        access_jwt="jwt", accepted_ingress=object(), admin_context=_context())
     assert len(result["profiles"]) == count
     assert sum(row["kind"] == "jarvis" for row in result["profiles"]) == 1
     assert all(row["files"] == [{"kind": "soul", "name": "SOUL.md", "editable": True}]
@@ -91,28 +117,28 @@ def test_profile_inventory_denies_over_bound_duplicates_and_missing_jarvis():
     admin = JarvisProfileAdmin(provider)
     with pytest.raises(JarvisChatDenied):
         admin.list_profiles(subject="owner-a", core_generation="core-a", access_jwt="jwt",
-                            accepted_ingress=object())
+                            accepted_ingress=object(), admin_context=_context())
     provider.profile_rows = (jarvis, jarvis)
     with pytest.raises(JarvisChatDenied):
         admin.list_profiles(subject="owner-a", core_generation="core-a", access_jwt="jwt",
-                            accepted_ingress=object())
+                            accepted_ingress=object(), admin_context=_context())
     provider.profile_rows = (ProfileAdminDescriptor("dev-peter", "Dev Peter", "expert",
         provider.generation, ("soul",)),)
     with pytest.raises(JarvisChatDenied):
         admin.list_profiles(subject="owner-a", core_generation="core-a", access_jwt="jwt",
-                            accepted_ingress=object())
+                            accepted_ingress=object(), admin_context=_context())
     provider.profile_rows = (jarvis, ProfileAdminDescriptor("bad key", "Broken", "expert",
         provider.generation, ("soul",)))
     with pytest.raises(JarvisChatDenied):
         admin.list_profiles(subject="owner-a", core_generation="core-a", access_jwt="jwt",
-                            accepted_ingress=object())
+                            accepted_ingress=object(), admin_context=_context())
 
 
 def test_save_requires_fresh_single_use_review_token_and_exact_file_cas():
     provider = _Provider()
     admin = JarvisProfileAdmin(provider)
     auth = {"subject": "owner-a", "core_generation": "core-a",
-            "access_jwt": "jwt", "accepted_ingress": object()}
+            "access_jwt": "jwt", "accepted_ingress": object(), "admin_context": _context()}
     profile_id = admin.list_profiles(**auth)["profiles"][1]["id"]
     initial = admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
     proposed = initial["content"] + "Use concise answers.\n"
@@ -130,11 +156,31 @@ def test_save_requires_fresh_single_use_review_token_and_exact_file_cas():
             preview_token=preview["previewToken"], idempotency_key="idempotency_key_1234567890")
 
 
+def test_preview_is_invalidated_by_admin_revoke_and_reactivation_revision():
+    provider = _Provider()
+    admin = JarvisProfileAdmin(provider)
+    auth = {"subject": "owner-a", "core_generation": "core-a",
+            "access_jwt": "jwt", "accepted_ingress": object(), "admin_context": _context()}
+    profile_id = admin.list_profiles(**auth)["profiles"][1]["id"]
+    current = admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
+    proposed = current["content"] + "Reviewed change.\n"
+    preview = admin.preview(**auth, profile_id=profile_id, file_kind="soul",
+        base_sha256=current["sha256"], content=proposed)
+    provider.admin_revision = 3
+    provider.admin_record_sha256 = _sha("reactivated-admin-record-3")
+    with pytest.raises(JarvisChatDenied):
+        admin.save(**{**auth, "admin_context": _context(3, provider.admin_record_sha256)},
+            profile_id=profile_id, file_kind="soul",
+            base_sha256=current["sha256"], content=proposed,
+            preview_token=preview["previewToken"], idempotency_key="idempotency_key_1234567890")
+    assert provider.writes == []
+
+
 def test_primary_soul_prefix_is_editable_through_the_reviewed_transaction():
     provider = _Provider()
     admin = JarvisProfileAdmin(provider)
     auth = {"subject": "owner-a", "core_generation": "core-a",
-            "access_jwt": "jwt", "accepted_ingress": object()}
+            "access_jwt": "jwt", "accepted_ingress": object(), "admin_context": _context()}
     profile_id = admin.list_profiles(**auth)["profiles"][0]["id"]
     initial = admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
     assert initial["editable"] is True
@@ -154,7 +200,7 @@ def test_source_race_consumes_preview_without_repeating_the_write():
     provider = _Provider()
     admin = JarvisProfileAdmin(provider)
     auth = {"subject": "owner-a", "core_generation": "core-a",
-            "access_jwt": "jwt", "accepted_ingress": object()}
+            "access_jwt": "jwt", "accepted_ingress": object(), "admin_context": _context()}
     profile_id = admin.list_profiles(**auth)["profiles"][1]["id"]
     initial = admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
     proposed = initial["content"] + "Changed by owner.\n"
@@ -173,13 +219,14 @@ def test_primary_soul_preview_and_save_keep_the_managed_suffix_protected():
         suffix = "\n<!-- managed Jarvis block -->\nPinned instructions.\n"
 
         def read_file(self, *, subject, core_generation, profile_key, file_kind,
-                      access_jwt, accepted_ingress):
+                      access_jwt, accepted_ingress, admin_context):
             prefix = self.files[(profile_key, file_kind)]
             return ProfileAdminFile(profile_key, file_kind, "SOUL.md", self.generation,
                 prefix, _sha(prefix + self.suffix), True, self.suffix, True)
 
         def write_generation(self, *, subject, core_generation, profile_key, file_kind,
-                             expected_sha256, content, idempotency_key, access_jwt, accepted_ingress):
+                             expected_sha256, content, idempotency_key, access_jwt,
+                             accepted_ingress, admin_context):
             before = self.files[(profile_key, file_kind)]
             assert expected_sha256 == _sha(before + self.suffix)
             assert "managed Jarvis block" not in content
@@ -191,7 +238,7 @@ def test_primary_soul_preview_and_save_keep_the_managed_suffix_protected():
     provider = _ManagedProvider()
     admin = JarvisProfileAdmin(provider)
     auth = {"subject": "owner-a", "core_generation": "core-a",
-            "access_jwt": "jwt", "accepted_ingress": object()}
+            "access_jwt": "jwt", "accepted_ingress": object(), "admin_context": _context()}
     profile_id = admin.list_profiles(**auth)["profiles"][0]["id"]
     initial = admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
     assert initial["content"] == "Jarvis owner prompt\n"
@@ -212,7 +259,7 @@ def test_primary_soul_preview_and_save_keep_the_managed_suffix_protected():
 def test_profile_file_projection_rejects_a_modified_protected_suffix():
     class _TamperedProvider(_Provider):
         def read_file(self, *, subject, core_generation, profile_key, file_kind,
-                      access_jwt, accepted_ingress):
+                      access_jwt, accepted_ingress, admin_context):
             value = self.files[(profile_key, file_kind)]
             return ProfileAdminFile(profile_key, file_kind, "SOUL.md", self.generation,
                 value, _sha(value), True, "unverified protected suffix", True)
@@ -220,7 +267,7 @@ def test_profile_file_projection_rejects_a_modified_protected_suffix():
     provider = _TamperedProvider()
     admin = JarvisProfileAdmin(provider)
     auth = {"subject": "owner-a", "core_generation": "core-a",
-            "access_jwt": "jwt", "accepted_ingress": object()}
+            "access_jwt": "jwt", "accepted_ingress": object(), "admin_context": _context()}
     profile_id = admin.list_profiles(**auth)["profiles"][0]["id"]
     with pytest.raises(JarvisChatDenied):
         admin.read_file(**auth, profile_id=profile_id, file_kind="soul")

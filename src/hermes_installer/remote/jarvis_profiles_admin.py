@@ -102,6 +102,37 @@ class NativeSkillFile:
     overlay_active: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class RootProfileAdminContext:
+    """Immutable status from this HTTP request's current original ingress."""
+
+    state: str
+    authorized: bool
+    revision: int
+    record_sha256: str
+    owner_subject_sha256: str
+    token_fingerprint_sha256: str
+    config_sha256: str
+    core_generation: str
+    parent_nonce: str
+    parent_proof_sha256: str
+    expires_monotonic: float
+
+
+def _same_current_root_admin_snapshot(captured: Any, fresh: Any) -> bool:
+    """Compare current authority while retaining the original request deadline."""
+    if (type(captured) is not RootProfileAdminContext
+            or type(fresh) is not RootProfileAdminContext
+            or captured.authorized is not True or fresh.authorized is not True
+            or time.monotonic() >= captured.expires_monotonic
+            or time.monotonic() >= fresh.expires_monotonic):
+        return False
+    fields = ("state", "revision", "record_sha256", "owner_subject_sha256",
+        "token_fingerprint_sha256", "config_sha256", "core_generation",
+        "parent_nonce", "parent_proof_sha256")
+    return all(getattr(captured, field) == getattr(fresh, field) for field in fields)
+
+
 class JarvisProfileAdminProvider(Protocol):
     """Trusted source adapter; implementations must enforce native path custody.
 
@@ -113,13 +144,14 @@ class JarvisProfileAdminProvider(Protocol):
     """
 
     def list_profiles(self, *, subject: str, core_generation: str, access_jwt: str,
-                      accepted_ingress: Any) -> tuple[ProfileAdminDescriptor, ...]: ...
+                      accepted_ingress: Any, admin_context: RootProfileAdminContext) -> tuple[ProfileAdminDescriptor, ...]: ...
     def read_file(self, *, subject: str, core_generation: str, profile_key: str,
-                  file_kind: str, access_jwt: str, accepted_ingress: Any) -> ProfileAdminFile: ...
+                  file_kind: str, access_jwt: str, accepted_ingress: Any,
+                  admin_context: RootProfileAdminContext) -> ProfileAdminFile: ...
     def write_generation(self, *, subject: str, core_generation: str, profile_key: str,
                          file_kind: str, expected_sha256: str, content: str,
                          idempotency_key: str, access_jwt: str,
-                         accepted_ingress: Any) -> ProfileAdminWriteResult: ...
+                         accepted_ingress: Any, admin_context: RootProfileAdminContext) -> ProfileAdminWriteResult: ...
 
 
 class CoreGatewayProfileAdminProvider:
@@ -135,18 +167,87 @@ class CoreGatewayProfileAdminProvider:
               profile_key: str | None = None, file_kind: str | None = None,
               skill_id: str | None = None,
               expected_sha256: str | None = None, content: str | None = None,
-              idempotency_key: str | None = None, restore_id: str | None = None) -> Any:
+              idempotency_key: str | None = None, restore_id: str | None = None,
+              admin_context: RootProfileAdminContext | None = None) -> Any:
         from .core_gateway_inspector import CoreGatewayInspector
-        return CoreGatewayInspector(self._config).owner_profile_admin(access_jwt,
+        if action != "admin-status" and (type(admin_context) is not RootProfileAdminContext
+                or admin_context.authorized is not True
+                or admin_context.expires_monotonic <= time.monotonic()
+                or admin_context.owner_subject_sha256 != hashlib.sha256(
+                    accepted_ingress.principal.subject.encode("utf-8", "strict")).hexdigest()
+                or admin_context.token_fingerprint_sha256 != accepted_ingress.principal.token_fingerprint
+                or admin_context.config_sha256 != self._config.config_sha256
+                or admin_context.core_generation != accepted_ingress.core_generation
+                or admin_context.parent_nonce != accepted_ingress.root_observation.nonce
+                or admin_context.parent_proof_sha256 != accepted_ingress.root_observation.proof_sha256):
+            raise JarvisChatDenied("current Root administrator status is unavailable")
+        wire_context = None if admin_context is None else {
+            "revision": admin_context.revision, "record_sha256": admin_context.record_sha256,
+            "owner_subject_sha256": admin_context.owner_subject_sha256,
+            "token_fingerprint_sha256": admin_context.token_fingerprint_sha256,
+            "config_sha256": admin_context.config_sha256,
+            "core_generation": admin_context.core_generation,
+            "parent_nonce": admin_context.parent_nonce,
+            "parent_proof_sha256": admin_context.parent_proof_sha256,
+            "expires_monotonic": admin_context.expires_monotonic}
+        response = CoreGatewayInspector(self._config).owner_profile_admin(access_jwt,
             accepted_ingress, action=action, profile_id=profile_key,
             file_kind=file_kind, skill_id=skill_id, expected_sha256=expected_sha256,
-            content=content, idempotency_key=idempotency_key, restore_id=restore_id)
+            content=content, idempotency_key=idempotency_key, restore_id=restore_id,
+            admin_context=wire_context)
+        if (type(response) is not dict or set(response) != {"data", "admin_scope"}
+                or type(response["admin_scope"]) is not dict):
+            raise JarvisChatDenied("Root administrator proof is unavailable")
+        scope = response["admin_scope"]
+        if (set(scope) != {"state", "authorized", "revision", "record_sha256",
+                "owner_subject_sha256", "token_fingerprint_sha256", "config_sha256",
+                "core_generation", "parent_nonce", "parent_proof_sha256", "purpose",
+                "expires_monotonic"}
+                or (scope["authorized"] is not True and action != "admin-status")
+                or scope["state"] not in {"active", "revoked", "unconfigured", "legacy-singleton"}
+                or type(scope["authorized"]) is not bool or type(scope["revision"]) is not int
+                or scope["revision"] < 0 or not _HASH.fullmatch(scope["record_sha256"])
+                or scope["owner_subject_sha256"] != hashlib.sha256(
+                    accepted_ingress.principal.subject.encode("utf-8", "strict")).hexdigest()
+                or scope["token_fingerprint_sha256"] != accepted_ingress.principal.token_fingerprint
+                or scope["config_sha256"] != self._config.config_sha256
+                or scope["core_generation"] != accepted_ingress.core_generation
+                or scope["parent_nonce"] != accepted_ingress.root_observation.nonce
+                or scope["parent_proof_sha256"] != accepted_ingress.root_observation.proof_sha256
+                or not _HASH.fullmatch(scope["parent_proof_sha256"])
+                or scope["purpose"] != "profiles-native-skills"
+                or type(scope["expires_monotonic"]) not in {int, float}
+                or time.monotonic() >= scope["expires_monotonic"]
+                or scope["expires_monotonic"] > accepted_ingress.root_observation.expires_monotonic
+                or (scope["authorized"] is True and scope["state"] not in {"active", "legacy-singleton"})):
+            raise JarvisChatDenied("Root administrator proof is unavailable")
+        if action == "admin-status":
+            return {"data": response["data"], "admin_scope": scope}
+        return response["data"]
+
+    def admin_status(self, *, access_jwt: str, accepted_ingress: Any) -> dict[str, Any]:
+        response = self._call(action="admin-status", access_jwt=access_jwt,
+                              accepted_ingress=accepted_ingress)
+        scope = response["admin_scope"]
+        expires = min(float(scope["expires_monotonic"]), accepted_ingress.expires_monotonic)
+        if time.monotonic() >= expires:
+            raise JarvisChatDenied("original profile ingress expired")
+        return RootProfileAdminContext(scope["state"], scope["authorized"], scope["revision"],
+            scope["record_sha256"], scope["owner_subject_sha256"],
+            scope["token_fingerprint_sha256"], scope["config_sha256"],
+            scope["core_generation"], scope["parent_nonce"], scope["parent_proof_sha256"],
+            expires)
+
+    def current_admin_scope(self, admin_context: RootProfileAdminContext) -> tuple[int, str]:
+        if type(admin_context) is not RootProfileAdminContext or admin_context.expires_monotonic <= time.monotonic():
+            raise JarvisChatDenied("Root administrator proof is unavailable")
+        return admin_context.revision, admin_context.record_sha256
 
     def list_skills(self, *, core_generation: str, access_jwt: str,
-                    accepted_ingress: Any) -> tuple[NativeSkillDescriptor, ...]:
+                    accepted_ingress: Any, admin_context: RootProfileAdminContext) -> tuple[NativeSkillDescriptor, ...]:
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("skill Core generation changed")
-        rows = self._call(action="skills-list", access_jwt=access_jwt, accepted_ingress=accepted_ingress)
+        rows = self._call(action="skills-list", access_jwt=access_jwt, accepted_ingress=accepted_ingress, admin_context=admin_context)
         if type(rows) not in {list, tuple} or len(rows) > 8192:
             raise JarvisChatDenied("current native skill inventory is invalid")
         result = []
@@ -166,11 +267,11 @@ class CoreGatewayProfileAdminProvider:
         return tuple(result)
 
     def read_skill(self, *, core_generation: str, skill_id: str, access_jwt: str,
-                   accepted_ingress: Any) -> NativeSkillFile:
+                   accepted_ingress: Any, admin_context: RootProfileAdminContext) -> NativeSkillFile:
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("skill Core generation changed")
         row = self._call(action="skill-read", access_jwt=access_jwt,
-            accepted_ingress=accepted_ingress, skill_id=skill_id)
+            accepted_ingress=accepted_ingress, skill_id=skill_id, admin_context=admin_context)
         if (type(row) is not dict or set(row) != {"skill_id", "file_name", "content", "sha256",
                 "signature", "source_generation", "source", "effective", "overlay_active"}
                 or row.get("skill_id") != skill_id
@@ -190,12 +291,13 @@ class CoreGatewayProfileAdminProvider:
 
     def write_skill(self, *, core_generation: str, skill_id: str, expected_sha256: str,
                     content: str, idempotency_key: str, access_jwt: str,
-                    accepted_ingress: Any) -> ProfileAdminWriteResult:
+                    accepted_ingress: Any, admin_context: RootProfileAdminContext) -> ProfileAdminWriteResult:
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("skill Core generation changed")
         row = self._call(action="skill-write", access_jwt=access_jwt,
             accepted_ingress=accepted_ingress, skill_id=skill_id,
-            expected_sha256=expected_sha256, content=content, idempotency_key=idempotency_key)
+            expected_sha256=expected_sha256, content=content, idempotency_key=idempotency_key,
+            admin_context=admin_context)
         if type(row) is not dict or set(row) != {"state", "skill_id", "source_generation", "sha256",
                 "recovery_id", "effective_readback"}:
             raise JarvisChatDenied("native skill write result is unavailable")
@@ -204,12 +306,13 @@ class CoreGatewayProfileAdminProvider:
 
     def archive_skill(self, *, core_generation: str, skill_id: str, expected_sha256: str,
                       idempotency_key: str, access_jwt: str,
-                      accepted_ingress: Any) -> ProfileAdminWriteResult:
+                      accepted_ingress: Any, admin_context: RootProfileAdminContext) -> ProfileAdminWriteResult:
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("skill Core generation changed")
         row = self._call(action="skill-archive", access_jwt=access_jwt,
             accepted_ingress=accepted_ingress, skill_id=skill_id,
-            expected_sha256=expected_sha256, idempotency_key=idempotency_key)
+            expected_sha256=expected_sha256, idempotency_key=idempotency_key,
+            admin_context=admin_context)
         if type(row) is not dict or set(row) != {"state", "skill_id", "source_generation", "sha256",
                 "recovery_id", "effective_readback"}:
             raise JarvisChatDenied("native skill archive result is unavailable")
@@ -217,13 +320,14 @@ class CoreGatewayProfileAdminProvider:
             row["recovery_id"], row["effective_readback"])
 
     def list_archived_skills(self, *, core_generation: str, skill_id: str, source: str = "resources",
-                             access_jwt: str, accepted_ingress: Any) -> tuple[dict[str, str], ...]:
+                             access_jwt: str, accepted_ingress: Any,
+                             admin_context: RootProfileAdminContext) -> tuple[dict[str, str], ...]:
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("skill Core generation changed")
         if source not in {"resources", "owner-added"}:
             raise JarvisChatDenied("skill archive source is invalid")
         row = self._call(action="skill-restore-list", access_jwt=access_jwt,
-            accepted_ingress=accepted_ingress, skill_id=skill_id)
+            accepted_ingress=accepted_ingress, skill_id=skill_id, admin_context=admin_context)
         versions = row.get("versions") if type(row) is dict and row.get("skill_id") == skill_id else None
         if type(versions) is not list or len(versions) > 4096:
             raise JarvisChatDenied("archived Resources versions are unavailable")
@@ -240,12 +344,12 @@ class CoreGatewayProfileAdminProvider:
         return tuple(result)
 
     def list_skill_archives(self, *, core_generation: str, access_jwt: str,
-                            accepted_ingress: Any) -> tuple[dict[str, Any], ...]:
+                            accepted_ingress: Any, admin_context: RootProfileAdminContext) -> tuple[dict[str, Any], ...]:
         """List restorable versions independently of the now-archived live row."""
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("skill Core generation changed")
         row = self._call(action="skills-archives-list", access_jwt=access_jwt,
-            accepted_ingress=accepted_ingress)
+            accepted_ingress=accepted_ingress, admin_context=admin_context)
         archives = row.get("archives") if type(row) is dict else None
         if type(archives) is not list or len(archives) > 8192:
             raise JarvisChatDenied("native skill archive inventory is unavailable")
@@ -276,13 +380,13 @@ class CoreGatewayProfileAdminProvider:
 
     def restore_skill(self, *, core_generation: str, skill_id: str, expected_sha256: str,
                       restore_id: str, idempotency_key: str, access_jwt: str,
-                      accepted_ingress: Any) -> ProfileAdminWriteResult:
+                      accepted_ingress: Any, admin_context: RootProfileAdminContext) -> ProfileAdminWriteResult:
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("skill Core generation changed")
         row = self._call(action="skill-restore", access_jwt=access_jwt,
             accepted_ingress=accepted_ingress, skill_id=skill_id,
             expected_sha256=expected_sha256, idempotency_key=idempotency_key,
-            restore_id=restore_id)
+            restore_id=restore_id, admin_context=admin_context)
         if type(row) is not dict or set(row) != {"state", "skill_id", "source_generation", "sha256",
                 "recovery_id", "effective_readback"}:
             raise JarvisChatDenied("Resources skill restore is unavailable")
@@ -290,10 +394,10 @@ class CoreGatewayProfileAdminProvider:
             row["recovery_id"], row["effective_readback"])
 
     def list_profiles(self, *, subject: str, core_generation: str, access_jwt: str,
-                      accepted_ingress: Any) -> tuple[ProfileAdminDescriptor, ...]:
+                      accepted_ingress: Any, admin_context: RootProfileAdminContext) -> tuple[ProfileAdminDescriptor, ...]:
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("profile Core generation changed")
-        rows = self._call(action="list", access_jwt=access_jwt, accepted_ingress=accepted_ingress)
+        rows = self._call(action="list", access_jwt=access_jwt, accepted_ingress=accepted_ingress, admin_context=admin_context)
         if type(rows) not in {list, tuple} or len(rows) > MAX_PROFILE_COUNT:
             raise JarvisChatDenied("current native profile inventory is invalid")
         result = []
@@ -314,11 +418,13 @@ class CoreGatewayProfileAdminProvider:
         return tuple(result)
 
     def read_file(self, *, subject: str, core_generation: str, profile_key: str,
-                  file_kind: str, access_jwt: str, accepted_ingress: Any) -> ProfileAdminFile:
+                  file_kind: str, access_jwt: str, accepted_ingress: Any,
+                  admin_context: RootProfileAdminContext) -> ProfileAdminFile:
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("profile Core generation changed")
         row = self._call(action="read", access_jwt=access_jwt,
-            accepted_ingress=accepted_ingress, profile_key=profile_key, file_kind=file_kind)
+            accepted_ingress=accepted_ingress, profile_key=profile_key, file_kind=file_kind,
+            admin_context=admin_context)
         if (type(row) is not dict or set(row) != {"profile_id", "file_kind", "file_name", "content",
                 "protected_suffix", "managed_primary", "sha256", "signature", "source_generation", "effective"}
                 or type(row["signature"]) is not list or len(row["signature"]) != 9):
@@ -330,13 +436,13 @@ class CoreGatewayProfileAdminProvider:
     def write_generation(self, *, subject: str, core_generation: str, profile_key: str,
                          file_kind: str, expected_sha256: str, content: str,
                          idempotency_key: str, access_jwt: str,
-                         accepted_ingress: Any) -> ProfileAdminWriteResult:
+                         accepted_ingress: Any, admin_context: RootProfileAdminContext) -> ProfileAdminWriteResult:
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("profile Core generation changed")
         row = self._call(action="write", access_jwt=access_jwt,
             accepted_ingress=accepted_ingress, profile_key=profile_key,
             file_kind=file_kind, expected_sha256=expected_sha256,
-            content=content, idempotency_key=idempotency_key)
+            content=content, idempotency_key=idempotency_key, admin_context=admin_context)
         if type(row) is not dict or set(row) != {"state", "profile_id", "file_kind",
                 "source_generation", "sha256", "recovery_id", "effective_readback"}:
             raise JarvisChatDenied("profile save result is unavailable")
@@ -352,6 +458,8 @@ class _PreviewGrant:
     file_kind: str
     base_sha256: str
     content_sha256: str
+    admin_revision: int
+    admin_record_sha256: str
     expires_monotonic: float
 
 
@@ -439,9 +547,9 @@ class JarvisProfileAdmin:
         return row
 
     def list_profiles(self, *, subject: str, core_generation: str, access_jwt: str,
-                      accepted_ingress: Any) -> dict[str, Any]:
+                      accepted_ingress: Any, admin_context: RootProfileAdminContext) -> dict[str, Any]:
         rows = self._provider.list_profiles(subject=subject, core_generation=core_generation,
-            access_jwt=access_jwt, accepted_ingress=accepted_ingress)
+            access_jwt=access_jwt, accepted_ingress=accepted_ingress, admin_context=admin_context)
         if type(rows) is not tuple or len(rows) > MAX_PROFILE_COUNT:
             raise JarvisChatDenied("current native profile inventory is invalid")
         seen: set[str] = set()
@@ -469,7 +577,7 @@ class JarvisProfileAdmin:
 
     def read_file(self, *, subject: str, core_generation: str,
                   profile_id: str, file_kind: str, access_jwt: str,
-                  accepted_ingress: Any) -> dict[str, Any]:
+                  accepted_ingress: Any, admin_context: RootProfileAdminContext) -> dict[str, Any]:
         if not _profile_kind(file_kind):
             raise JarvisChatDenied("profile file is unavailable")
         profile = self._resolve(subject=subject, core_generation=core_generation,
@@ -480,7 +588,7 @@ class JarvisProfileAdmin:
         value = _file(self._provider.read_file(subject=subject,
             core_generation=core_generation, profile_key=profile.profile_key,
             file_kind=file_kind, access_jwt=access_jwt,
-            accepted_ingress=accepted_ingress), profile_key=profile.profile_key, file_kind=file_kind)
+            accepted_ingress=accepted_ingress, admin_context=admin_context), profile_key=profile.profile_key, file_kind=file_kind)
         editable = True
         return {"profileId": profile_id, "fileKind": file_kind, "fileName": value.file_name,
                 "content": value.content, "sha256": value.sha256,
@@ -489,7 +597,7 @@ class JarvisProfileAdmin:
 
     def preview(self, *, subject: str, core_generation: str, profile_id: str,
                 file_kind: str, base_sha256: str, content: str, access_jwt: str,
-                accepted_ingress: Any) -> dict[str, Any]:
+                accepted_ingress: Any, admin_context: RootProfileAdminContext) -> dict[str, Any]:
         if (not _profile_kind(file_kind) or not _HASH.fullmatch(base_sha256)
                 or not _valid_text(content)):
             raise JarvisChatDenied("profile change preview is invalid")
@@ -501,7 +609,7 @@ class JarvisProfileAdmin:
         current = _file(self._provider.read_file(subject=subject,
             core_generation=core_generation, profile_key=profile.profile_key,
             file_kind=file_kind, access_jwt=access_jwt,
-            accepted_ingress=accepted_ingress), profile_key=profile.profile_key, file_kind=file_kind)
+            accepted_ingress=accepted_ingress, admin_context=admin_context), profile_key=profile.profile_key, file_kind=file_kind)
         if not hmac.compare_digest(current.sha256, base_sha256):
             raise JarvisChatDenied("profile file changed; reload before reviewing")
         old_lines = current.content.splitlines(keepends=True)
@@ -512,9 +620,14 @@ class JarvisProfileAdmin:
         if len(diff.encode("utf-8")) > MAX_PROFILE_DIFF_BYTES:
             raise JarvisChatDenied("profile change preview exceeds its bound")
         content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        current_admin_scope = getattr(self._provider, "current_admin_scope", None)
+        if not callable(current_admin_scope):
+            raise JarvisChatDenied("Root administrator proof is unavailable")
+        admin_revision, admin_record_sha256 = current_admin_scope(admin_context)
         token = secrets.token_urlsafe(32)
         grant = _PreviewGrant(hashlib.sha256(subject.encode()).hexdigest(), core_generation,
             profile.profile_key, file_kind, current.sha256, content_sha256,
+            admin_revision, admin_record_sha256,
             time.monotonic() + PREVIEW_TTL_SECONDS)
         with self._lock:
             now = time.monotonic()
@@ -530,7 +643,7 @@ class JarvisProfileAdmin:
     def save(self, *, subject: str, core_generation: str, profile_id: str,
              file_kind: str, base_sha256: str, content: str,
              preview_token: str, idempotency_key: str, access_jwt: str,
-             accepted_ingress: Any) -> dict[str, Any]:
+             accepted_ingress: Any, admin_context: RootProfileAdminContext) -> dict[str, Any]:
         if (not _profile_kind(file_kind) or not _HASH.fullmatch(base_sha256)
                 or not _valid_text(content) or not _PREVIEW.fullmatch(preview_token)
                 or not _IDEMPOTENCY.fullmatch(idempotency_key)):
@@ -542,12 +655,18 @@ class JarvisProfileAdmin:
             raise JarvisChatDenied("profile file is unavailable")
         content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
         subject_sha = hashlib.sha256(subject.encode()).hexdigest()
+        current_admin_scope = getattr(self._provider, "current_admin_scope", None)
+        if not callable(current_admin_scope):
+            raise JarvisChatDenied("Root administrator proof is unavailable")
+        admin_revision, admin_record_sha256 = current_admin_scope(admin_context)
         with self._lock:
             grant = self._previews.pop(preview_token, None)
         if (grant is None or grant.expires_monotonic <= time.monotonic()
                 or grant.subject_sha256 != subject_sha
                 or grant.core_generation != core_generation
                 or grant.profile_key != profile.profile_key or grant.file_kind != file_kind
+                or grant.admin_revision != admin_revision
+                or not hmac.compare_digest(grant.admin_record_sha256, admin_record_sha256)
                 or not hmac.compare_digest(grant.base_sha256, base_sha256)
                 or not hmac.compare_digest(grant.content_sha256, content_sha256)):
             raise JarvisChatDenied("profile review expired or changed; review the diff again")
@@ -555,7 +674,7 @@ class JarvisProfileAdmin:
             core_generation=core_generation, profile_key=profile.profile_key,
             file_kind=file_kind, expected_sha256=base_sha256, content=content,
             idempotency_key=idempotency_key, access_jwt=access_jwt,
-            accepted_ingress=accepted_ingress)
+            accepted_ingress=accepted_ingress, admin_context=admin_context)
         if type(result) is not ProfileAdminWriteResult:
             raise JarvisChatDenied("profile save result is unavailable")
         if result.state != "active":
@@ -606,7 +725,8 @@ def _same_origin_owner_post(request: Any) -> None:
         raise web.HTTPForbidden(text="same-origin owner action required", headers=_secure_headers())
 
 
-async def _current_owner(request: Any, service: JarvisChatService):
+async def _current_owner(request: Any, service: JarvisChatService,
+                         admin: JarvisProfileAdmin):
     """Recheck authenticated owner, admitted ingress, and live root Core witness."""
     from aiohttp import web
     from .core_gateway import CoreAcceptedIngressObservation
@@ -619,11 +739,10 @@ async def _current_owner(request: Any, service: JarvisChatService):
             or accepted.core_generation != principal.core_generation):
         raise web.HTTPServiceUnavailable(text="current Core is unavailable", headers=_secure_headers())
     allowed_emails = launch.config.allowed_emails
-    if (len(allowed_emails) != 1
-            or not isinstance(accepted.principal.email, str)
-            or accepted.principal.email.casefold() != next(iter(allowed_emails), None)):
+    if (not isinstance(accepted.principal.email, str)
+            or accepted.principal.email.casefold() not in allowed_emails):
         raise web.HTTPForbidden(
-            text="Global profile administration is unavailable for household access. Administrator access setup is pending; household chat remains available.",
+            text="Global profile administration is pending original administrator setup; household chat remains available.",
             headers=_secure_headers())
     try:
         observation = await asyncio.wait_for(asyncio.to_thread(
@@ -635,7 +754,7 @@ async def _current_owner(request: Any, service: JarvisChatService):
     except Exception:
         raise web.HTTPServiceUnavailable(text="current Core is unavailable", headers=_secure_headers()) from None
 
-    def verify_current() -> None:
+    async def verify_current() -> None:
         current = service._current(request)
         if (current.subject != principal.subject
                 or current.core_generation != principal.core_generation
@@ -643,13 +762,37 @@ async def _current_owner(request: Any, service: JarvisChatService):
                     peer_uid=accepted.peer_uid, peer_gid=accepted.peer_gid,
                     accepted_ingress=accepted) is not True):
             raise JarvisChatDenied("current owner or Core generation changed")
+        if time.monotonic() >= admin_context.expires_monotonic:
+            raise JarvisChatDenied("original administrator ingress expired")
+        try:
+            fresh = await asyncio.wait_for(asyncio.to_thread(
+                admin._provider.admin_status, access_jwt=assertions[0],
+                accepted_ingress=accepted), timeout=3.0)
+        except Exception:
+            raise JarvisChatDenied("current Root administrator status is unavailable") from None
+        if not _same_current_root_admin_snapshot(admin_context, fresh):
+            raise JarvisChatDenied("original administrator status changed")
 
     assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])
     if (len(assertions) != 1 or not isinstance(assertions[0], str)
             or hashlib.sha256(assertions[0].encode("ascii", "ignore")).hexdigest()
                 != accepted.principal.token_fingerprint):
         raise web.HTTPForbidden(text="current owner authorization is unavailable", headers=_secure_headers())
-    return principal, accepted, launch, verify_current, assertions[0]
+    try:
+        admin_context = await asyncio.wait_for(asyncio.to_thread(
+            admin._provider.admin_status, access_jwt=assertions[0], accepted_ingress=accepted),
+            timeout=3.0)
+        if type(admin_context) is not RootProfileAdminContext:
+            raise ValueError
+    except Exception:
+        raise web.HTTPForbidden(text="Original administrator status is unavailable; household chat remains available.",
+                                headers=_secure_headers()) from None
+    if admin_context.authorized is not True:
+        message = ("Original administrator access is revoked; household chat remains available."
+            if admin_context.state == "revoked" else
+            "Original administrator setup is pending; household chat remains available.")
+        raise web.HTTPForbidden(text=message, headers=_secure_headers())
+    return principal, accepted, launch, verify_current, assertions[0], admin_context
 
 
 def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
@@ -672,11 +815,11 @@ def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
 
     async def list_profiles(request: Any) -> Any:
         try:
-            principal, accepted, _launch, verify_current, access_jwt = await _current_owner(request, service)
+            principal, accepted, _launch, verify_current, access_jwt, admin_context = await _current_owner(request, service, admin)
             payload = await asyncio.wait_for(asyncio.to_thread(admin.list_profiles,
                 subject=principal.subject, core_generation=principal.core_generation,
-                access_jwt=access_jwt, accepted_ingress=accepted), timeout=3.0)
-            verify_current()
+                access_jwt=access_jwt, accepted_ingress=accepted, admin_context=admin_context), timeout=3.0)
+            await verify_current()
             return web.json_response(payload, headers=_secure_headers())
         except web.HTTPException:
             raise
@@ -685,12 +828,12 @@ def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
 
     async def read_file(request: Any) -> Any:
         try:
-            principal, accepted, _launch, verify_current, access_jwt = await _current_owner(request, service)
+            principal, accepted, _launch, verify_current, access_jwt, admin_context = await _current_owner(request, service, admin)
             payload = await asyncio.wait_for(asyncio.to_thread(admin.read_file,
                 subject=principal.subject, core_generation=principal.core_generation,
                 profile_id=profile_id(request), file_kind=request.match_info.get("file_kind", ""),
-                access_jwt=access_jwt, accepted_ingress=accepted), timeout=3.0)
-            verify_current()
+                access_jwt=access_jwt, accepted_ingress=accepted, admin_context=admin_context), timeout=3.0)
+            await verify_current()
             return web.json_response(payload, headers=_secure_headers())
         except web.HTTPException:
             raise
@@ -699,14 +842,14 @@ def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
 
     async def list_files(request: Any) -> Any:
         try:
-            principal, accepted, _launch, verify_current, access_jwt = await _current_owner(request, service)
+            principal, accepted, _launch, verify_current, access_jwt, admin_context = await _current_owner(request, service, admin)
             snapshot = await asyncio.wait_for(asyncio.to_thread(admin.list_profiles,
                 subject=principal.subject, core_generation=principal.core_generation,
-                access_jwt=access_jwt, accepted_ingress=accepted), timeout=3.0)
+                access_jwt=access_jwt, accepted_ingress=accepted, admin_context=admin_context), timeout=3.0)
             selected = next((row for row in snapshot["profiles"] if row["id"] == profile_id(request)), None)
             if selected is None:
                 raise JarvisChatDenied("profile is unavailable")
-            verify_current()
+            await verify_current()
             return web.json_response({"coreGeneration": principal.core_generation,
                 "profile": {"id": selected["id"], "name": selected["name"], "kind": selected["kind"],
                             "sourceGeneration": selected["sourceGeneration"]},
@@ -719,14 +862,14 @@ def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
     async def preview(request: Any) -> Any:
         try:
             _same_origin_owner_post(request)
-            principal, accepted, _launch, verify_current, access_jwt = await _current_owner(request, service)
+            principal, accepted, _launch, verify_current, access_jwt, admin_context = await _current_owner(request, service, admin)
             body = await _read_json(request, {"file_kind", "base_sha256", "content"})
             payload = await asyncio.wait_for(asyncio.to_thread(admin.preview,
                 subject=principal.subject, core_generation=principal.core_generation,
                 profile_id=profile_id(request), file_kind=body["file_kind"],
                 base_sha256=body["base_sha256"], content=body["content"],
-                access_jwt=access_jwt, accepted_ingress=accepted), timeout=4.0)
-            verify_current()
+                access_jwt=access_jwt, accepted_ingress=accepted, admin_context=admin_context), timeout=4.0)
+            await verify_current()
             return web.json_response(payload, headers=_secure_headers())
         except web.HTTPException:
             raise
@@ -737,17 +880,17 @@ def install_jarvis_profiles_admin_routes(app: Any, service: JarvisChatService,
     async def save(request: Any) -> Any:
         try:
             _same_origin_owner_post(request)
-            principal, accepted, _launch, verify_current, access_jwt = await _current_owner(request, service)
+            principal, accepted, _launch, verify_current, access_jwt, admin_context = await _current_owner(request, service, admin)
             body = await _read_json(request, {"file_kind", "base_sha256", "content",
                                               "preview_token", "idempotency_key"})
-            verify_current()
+            await verify_current()
             result = await asyncio.wait_for(asyncio.to_thread(admin.save,
                 subject=principal.subject, core_generation=principal.core_generation,
                 profile_id=profile_id(request), file_kind=body["file_kind"],
                 base_sha256=body["base_sha256"], content=body["content"],
                 preview_token=body["preview_token"], idempotency_key=body["idempotency_key"],
-                access_jwt=access_jwt, accepted_ingress=accepted), timeout=8.0)
-            verify_current()
+                access_jwt=access_jwt, accepted_ingress=accepted, admin_context=admin_context), timeout=8.0)
+            await verify_current()
             return web.json_response(result, headers=_secure_headers())
         except web.HTTPException:
             raise
