@@ -1767,8 +1767,8 @@ acceptance is claimed; service availability remains the immediate status.
 
 ## Candidate 182–186 recovery-transport qualification status
 
-The M1 rollback refinement is tracked by OpenSpec #21 and recovery transport by
-#35 (RT-T266.3/VD-T266.5). Candidate 182 was Pi strict-spec/plan validated
+The M1 rollback refinement and recovery transport are both tracked by OpenSpec
+#35 (R0201, RT-T266.3/VD-T266.5). Candidate 182 was Pi strict-spec/plan validated
 with 0 errors; candidate 183's transport plan likewise passed with 0 errors.
 Candidate 184 sealed the reviewed Core rollback fix at source commit
 `577333cbe30d3ce7f1dde465528560586756b7e3`, archive SHA-256
@@ -1778,10 +1778,10 @@ Sol reviewed the fix and the retained inspector pin `793067`. The fast
 qualification suite passed 158 tests with 3 native-target skips; spec and plan
 validation passed. A first restart run omitted the required private `/opt`
 source harness and is not evidence about the product. With that harness, an
-unregistered transport fixture passed once, while the registered restart
-fixture failed before its intended interruption point. Source ordering showed
-the fixture injected failure before the normal listener wait and primary
-adoption, so that run did not qualify the Core recovery behavior.
+unregistered normal Core fixture passed once, while the registered restart
+fixture failed at the first new-listener wait, before primary adoption. Source
+ordering showed the injected failure did not reach the intended interruption
+point, so that run did not qualify the Core recovery behavior.
 
 The registered test was corrected and reviewed so failure injection occurs
 after the actual adopted manager, Resources and SOUL joins. Candidate 186
