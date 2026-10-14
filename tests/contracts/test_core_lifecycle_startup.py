@@ -149,7 +149,7 @@ def _enrolled_row(cohort, *, handle="P" * 43, peer=(411, 1000, 1000)):
         "cohort": cohort, "pidfd": -1, "probe_id": "probe-1", "session_id": "session-1",
         "nonce": nonce,
         "expected_text_sha256": hashlib.sha256(
-            (observer._LIFECYCLE_STARTUP_PROMPT_PREFIX + nonce).encode("ascii")).hexdigest(),
+            (observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + nonce).encode("ascii")).hexdigest(),
         "expiry": cohort.deadline_monotonic, "claimed_peer": None,
         "attempt_handle": None, "completion_handle": None, "consumed": False,
         "current": True, "test_handle": handle, "test_peer": peer,
@@ -258,7 +258,9 @@ def test_startup_diagnostic_exception_vocabulary_uses_exact_type_identity():
     "prompt_cache_wrong_type",
     "prompt_helper", "prompt_composer", "prompt_wrong_type", "prompt_identity_missing",
     "prompt_oversized", "prompt_closure_changed", "prompt_digest_changed",
-    "conversation", "terminal", "success", "close",
+    "conversation", "terminal", "response_echo", "response_leading_space",
+    "response_trailing_space", "response_trailing_newline", "response_wrong_nonce",
+    "success", "close",
 ])
 def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         monkeypatch, tmp_path, failure_stage):
@@ -389,8 +391,20 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                 raise RuntimeError("PRIVATE_CONVERSATION_FAILURE")
             if failure_stage == "terminal":
                 return {"completed": False}
-            if failure_stage in {"success", "close", "prompt_digest_changed"}:
-                final_response = lifecycle_startup._PROMPT_PREFIX + context.nonce
+            if failure_stage in {"success", "close", "prompt_digest_changed", "response_echo",
+                                 "response_leading_space", "response_trailing_space",
+                                 "response_trailing_newline", "response_wrong_nonce"}:
+                final_response = lifecycle_startup._RESPONSE_PREFIX + context.nonce
+                if failure_stage == "response_echo":
+                    final_response = lifecycle_startup._PROMPT_PREFIX + context.nonce
+                elif failure_stage == "response_leading_space":
+                    final_response = " " + final_response
+                elif failure_stage == "response_trailing_space":
+                    final_response += " "
+                elif failure_stage == "response_trailing_newline":
+                    final_response += "\n"
+                elif failure_stage == "response_wrong_nonce":
+                    final_response = lifecycle_startup._RESPONSE_PREFIX + ("f" * 32)
                 instructions = composed_instructions[-1]
                 assert _kwargs["user_message"] == (
                     lifecycle_startup._PROMPT_PREFIX + context.nonce
@@ -418,6 +432,11 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                 if failure_stage == "prompt_digest_changed":
                     assert observed.status == "completed"
                     assert observed_requests == []
+                    return {"completed": True, "final_response": final_response}
+                if failure_stage.startswith("response_"):
+                    assert observed is not native_response
+                    assert observed.output_text != final_response
+                    assert len(observed_requests) == 1
                     return {"completed": True, "final_response": final_response}
                 assert observed is native_response
                 assert len(observed_requests) == 1
@@ -499,13 +518,18 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         "prompt_oversized": ("prompt", "CoreNativeObservationUnavailable"),
         "prompt_closure_changed": ("prompt", "CoreNativeObservationUnavailable"),
         "prompt_digest_changed": ("terminal", "CoreNativeObservationUnavailable"),
+        "response_echo": ("terminal", "CoreNativeObservationUnavailable"),
+        "response_leading_space": ("terminal", "CoreNativeObservationUnavailable"),
+        "response_trailing_space": ("terminal", "CoreNativeObservationUnavailable"),
+        "response_trailing_newline": ("terminal", "CoreNativeObservationUnavailable"),
+        "response_wrong_nonce": ("terminal", "CoreNativeObservationUnavailable"),
         "close": ("response", "OSError"),
     }
     if failure_stage == "success":
         assert response == {"jsonrpc": "2.0", "id": "request-3", "result": {
             "schema": 1, "probe_handle": "P" * 43, "completion_handle": "Q" * 43,
             "status": "completed", "response_sha256": hashlib.sha256(
-                (lifecycle_startup._PROMPT_PREFIX + context.nonce).encode("utf-8")).hexdigest(),
+                (lifecycle_startup._RESPONSE_PREFIX + context.nonce).encode("utf-8")).hexdigest(),
         }}
     else:
         stage, exception_type = expected[failure_stage]
@@ -513,7 +537,8 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
             "code": -32000, "message": "lifecycle startup probe refused",
             "data": lifecycle_startup._startup_refusal_data(stage, exception_type),
         }
-    if failure_stage in {"conversation", "terminal", "success", "close"}:
+    if (failure_stage in {"conversation", "terminal", "success", "close"}
+            or failure_stage.startswith("response_")):
         assert len(agents) == 1 and agents[0].closed is True
     elif failure_stage == "agent_setup":
         assert len(agents) == 1 and agents[0].closed is False
@@ -532,7 +557,7 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         assert identity in composed_instructions[0]
     elif failure_stage == "prompt_cached":
         assert helper_calls == [] and composer_calls == []
-    elif failure_stage in {"conversation", "terminal"}:
+    elif failure_stage in {"conversation", "terminal"} or failure_stage.startswith("response_"):
         assert len(helper_calls) == len(composer_calls) == 1
     elif failure_stage.startswith("prompt_"):
         assert len(helper_calls) == 1
@@ -543,6 +568,8 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         assert helper_calls == [] and composer_calls == []
     if failure_stage in {"success", "close"}:
         assert len(attempt_calls) == len(terminal_calls) == 1
+    elif failure_stage.startswith("response_"):
+        assert len(attempt_calls) == 1 and terminal_calls == []
     else:
         assert attempt_calls == [] and terminal_calls == []
     assert "PRIVATE_" not in repr(response)
@@ -618,7 +645,7 @@ def test_root_cli_lifecycle_registry_is_separate_fixed_three_op_surface(monkeypa
     with pytest.raises(ValueError, match="provider attempt differs"):
         registry._handle_lifecycle(peer, dict(attempt_request, tool_names=["terminal"]))
     attempt = registry._handle_lifecycle(peer, attempt_request)
-    text = observer._LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
+    text = observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + row["nonce"]
     text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
     completed = registry._handle_lifecycle(peer, {
         "schema": 1, "op": "register-lifecycle-startup-response", "nonce": "response",
@@ -730,7 +757,7 @@ def test_root_completion_seals_actual_codex_terminal_and_rejects_tool_use_replay
 
     attempt = registry._handle(peer, attempt_request)
     attempt_handle = attempt["attempt_handle"]
-    text = observer._LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
+    text = observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + row["nonce"]
     text_sha = hashlib.sha256(text.encode()).hexdigest()
     completion = registry._handle(peer, {
         "schema": 1, "op": "register-lifecycle-startup-response", "nonce": "response",
@@ -837,7 +864,7 @@ def test_lifecycle_llm_observer_consumes_exact_no_tool_terminal_once(monkeypatch
             {"type": "input_text", "text": prompt}]}],
         "tools": [], "tool_choice": "none",
     }
-    provider_text = observer._LIFECYCLE_STARTUP_PROMPT_PREFIX + context.nonce
+    provider_text = observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + context.nonce
     response = SimpleNamespace(
         status="completed", error=None, incomplete_details=None, output_text=provider_text,
         output=[], model_dump=lambda **_kwargs: {"status": "completed", "output_text": provider_text},

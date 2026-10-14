@@ -1083,6 +1083,7 @@ _LIFECYCLE_STARTUP_COMPLETION_SEAL = object()
 _ROOT_LIFECYCLE_REGISTRY_SEAL = object()
 _LIFECYCLE_STARTUP_PROMPT_PREFIX = "Reply with exactly JARVIS-STARTUP-"
 _LIFECYCLE_STARTUP_PROMPT_SUFFIX = ". Do not use tools."
+_LIFECYCLE_STARTUP_RESPONSE_PREFIX = "JARVIS-STARTUP-"
 
 
 @dataclass(frozen=True, slots=True)
@@ -4193,7 +4194,7 @@ class RootCoreNativeObservationRegistry:
             session_id = secrets.token_urlsafe(24)
             nonce = secrets.token_hex(16)
             expected_text_sha256 = hashlib.sha256(
-                (_LIFECYCLE_STARTUP_PROMPT_PREFIX + nonce).encode("ascii")).hexdigest()
+                (_LIFECYCLE_STARTUP_RESPONSE_PREFIX + nonce).encode("ascii")).hexdigest()
             with self._lock:
                 if len(self._lifecycle_startup_probes) >= 8 or handle in self._lifecycle_startup_probes:
                     os.close(pidfd)
@@ -5904,7 +5905,7 @@ class RootCoreNativeObservationRegistry:
                         or not isinstance(text, str) or not 1 <= len(text) <= 1024
                         or hashlib.sha256(text.encode("utf-8", "strict")).hexdigest()
                            != request.get("response_text_sha256")
-                        or text != _LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
+                        or text != _LIFECYCLE_STARTUP_RESPONSE_PREFIX + row["nonce"]
                         or not _HASH.fullmatch(request.get("response_sha256", ""))
                         or not self._lifecycle_startup_peer_current(row, cohort)):
                     raise ValueError("lifecycle terminal differs from exact startup challenge")
@@ -8351,7 +8352,7 @@ class RootLifecycleNativeObservationRegistry:
             session_id = secrets.token_urlsafe(24)
             nonce = secrets.token_hex(16)
             expected_text_sha256 = hashlib.sha256(
-                (_LIFECYCLE_STARTUP_PROMPT_PREFIX + nonce).encode("ascii")).hexdigest()
+                (_LIFECYCLE_STARTUP_RESPONSE_PREFIX + nonce).encode("ascii")).hexdigest()
             row = {
                 "cohort": cohort, "pidfd": self._pidfd, "probe_id": probe_id,
                 "session_id": session_id, "nonce": nonce,
@@ -8526,7 +8527,7 @@ class RootLifecycleNativeObservationRegistry:
                     or not isinstance(text, str) or not 1 <= len(text) <= 1024
                     or hashlib.sha256(text.encode("utf-8", "strict")).hexdigest()
                        != request.get("response_text_sha256")
-                    or text != _LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
+                    or text != _LIFECYCLE_STARTUP_RESPONSE_PREFIX + row["nonce"]
                     or not _HASH.fullmatch(request.get("response_sha256", ""))
                     or not self._lifecycle_startup_peer_current(row, cohort)):
                 raise ValueError("lifecycle terminal differs from exact startup challenge")
@@ -9081,7 +9082,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
             calls = _response_tool_calls(response)
             output_text = getattr(response, "output_text", None)
             if (calls or not isinstance(output_text, str) or not 1 <= len(output_text) <= 1024
-                    or output_text != _LIFECYCLE_STARTUP_PROMPT_PREFIX + context.nonce):
+                    or output_text != _LIFECYCLE_STARTUP_RESPONSE_PREFIX + context.nonce):
                 return denied_response()
             response_bytes = _canonical(response.model_dump(mode="json"))
             if not 1 <= len(response_bytes) <= MAX_FRAME:

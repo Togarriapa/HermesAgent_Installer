@@ -32,6 +32,7 @@ _RPC_DIAGNOSTIC_EXCEPTION_TYPES = frozenset({
 })
 _PROMPT_PREFIX = "Reply with exactly JARVIS-STARTUP-"
 _PROMPT_SUFFIX = ". Do not use tools."
+_RESPONSE_PREFIX = "JARVIS-STARTUP-"
 _MAX_SOUL_BYTES = 1024 * 1024
 _UNSET_STARTUP_PROMPT_CACHE = object()
 
@@ -209,7 +210,7 @@ def _run_probe(params: Any, *, client: CoreNativeObservationClient) -> dict[str,
                 or result.get("failed") is True or result.get("partial") is True
                 or result.get("interrupted") is True or result.get("error") not in (None, "")
                 or not isinstance(result.get("final_response"), str)
-                or result["final_response"] != _PROMPT_PREFIX + context.nonce):
+                or result["final_response"] != _RESPONSE_PREFIX + context.nonce):
             raise CoreNativeObservationUnavailable("native startup conversation did not complete exactly")
         terminal = take_lifecycle_startup_terminal(context)
 
