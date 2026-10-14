@@ -1498,6 +1498,8 @@ def _qualification_diagnostic_line(captured):
     assert value is None or type(value) is int and -255 <= value <= 255
     summary = _qualification_last_phase_record(captured)
     assert adopt._valid_qualification_last_phase_summary(summary)
+    stack = _qualification_stack_observation_record(captured)
+    assert adopt._valid_qualification_stack_observation_summary(stack)
     return record
 
 
@@ -1518,6 +1520,18 @@ def _qualification_last_phase_record(captured):
     assert 0 <= summary["record_count"] <= 16
     assert 0 <= summary["rejected_record_count"] <= 16
     assert len(summaries[0].encode("ascii") + b"\n") <= 4096
+    return summary
+
+
+def _qualification_stack_observation_record(captured):
+    summaries = [line for line in captured.err.splitlines()
+                 if line.startswith(adopt._QUALIFICATION_STACK_OBSERVATION_PREFIX)]
+    assert len(summaries) == 1
+    encoded = summaries[0][len(adopt._QUALIFICATION_STACK_OBSERVATION_PREFIX):]
+    summary = json.loads(encoded)
+    assert encoded == json.dumps(summary, sort_keys=True, separators=(",", ":"))
+    assert adopt._valid_qualification_stack_observation_summary(summary)
+    assert len((summaries[0] + "\n").encode("ascii")) <= 4096
     return summary
 
 
@@ -1908,6 +1922,118 @@ def test_qualification_checkpoint_summary_retains_only_validated_prefix_records(
     assert overlong_summary["last_phase"] is None
     assert overlong_summary["record_count"] == 0
     assert overlong_summary["rejected_record_count"] == 1
+
+
+def test_stack_observation_accepts_one_canonical_candidate_bound_sample():
+    sample = {
+        "schema": 1, "candidate_commit": "b" * 40,
+        "candidate_archive_sha256": "c" * 64, "elapsed_ms": 250_000,
+        "labels": ["listener", "updater"], "examined_frames": 8,
+        "unmatched_frames": 6, "truncated": False, "unknown": False,
+    }
+    line = (adopt._QUALIFICATION_STACK_SAMPLE_PREFIX
+            + json.dumps(sample, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    checkpoint = (adopt._QUALIFICATION_CHECKPOINT_PREFIX + json.dumps({
+        "schema": 1, "candidate_commit": "b" * 40,
+        "candidate_archive_sha256": "c" * 64, "sequence": 1,
+        "phase": "adapter_update", "elapsed_ms": 250_000,
+    }, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    summary = adopt._qualification_stack_observation_summary(
+        checkpoint + line, "b" * 40, "c" * 64)
+    assert summary == sample
+    assert adopt._valid_qualification_stack_observation_summary(summary)
+    phase = adopt._qualification_last_phase_summary(
+        checkpoint + line, "b" * 40, "c" * 64)
+    assert phase["last_phase"] == "adapter_update"
+    assert phase["record_count"] == 1 and phase["rejected_record_count"] == 0
+
+
+def test_stack_observation_missing_or_invalid_records_are_unknown():
+    candidate, archive = "b" * 40, "c" * 64
+    expected = {
+        "schema": 1, "candidate_commit": candidate,
+        "candidate_archive_sha256": archive, "elapsed_ms": None,
+        "labels": [], "examined_frames": 0, "unmatched_frames": 0,
+        "truncated": False, "unknown": True,
+    }
+    valid = {
+        "schema": 1, "candidate_commit": candidate,
+        "candidate_archive_sha256": archive, "elapsed_ms": 250_000,
+        "labels": ["importer"], "examined_frames": 3,
+        "unmatched_frames": 2, "truncated": False, "unknown": False,
+    }
+
+    def encoded(record):
+        return (adopt._QUALIFICATION_STACK_SAMPLE_PREFIX
+                + json.dumps(record, sort_keys=True, separators=(",", ":"))
+                + "\n").encode()
+
+    assert adopt._qualification_stack_observation_summary(b"", candidate, archive) == expected
+    invalid_records = (
+        {**valid, "candidate_commit": "d" * 40},
+        {**valid, "schema": True},
+        {**valid, "elapsed_ms": None},
+        {**valid, "labels": ["private_function"]},
+        {**valid, "examined_frames": True},
+        {**valid, "unmatched_frames": 3},
+        {**valid, "labels": [], "unknown": False},
+        {**valid, "truncated": True, "unknown": False},
+        {**valid, "private": "PRIVATE sentinel"},
+        {**valid, "labels": ["importer"] * 13},
+        {**valid, "examined_frames": 33},
+    )
+    for record in invalid_records:
+        summary = adopt._qualification_stack_observation_summary(
+            encoded(record), candidate, archive)
+        assert summary == expected
+    assert adopt._qualification_stack_observation_summary(
+        encoded(valid) + encoded(valid), candidate, archive) == expected
+
+    capped = {
+        **valid, "labels": ["importer"] * 12,
+        "examined_frames": 32, "unmatched_frames": 0,
+        "truncated": True, "unknown": True,
+    }
+    capped_summary = adopt._qualification_stack_observation_summary(
+        encoded(capped), candidate, archive)
+    assert capped_summary == capped
+    assert capped_summary["elapsed_ms"] == 250_000
+    assert capped_summary["labels"] == ["importer"] * 12
+
+    noncanonical = (
+        adopt._QUALIFICATION_STACK_SAMPLE_PREFIX
+        + json.dumps(valid, separators=(",", ":")) + "\n").encode()
+    assert adopt._qualification_stack_observation_summary(
+        noncanonical, candidate, archive) == expected
+
+    duplicate_key = (
+        adopt._QUALIFICATION_STACK_SAMPLE_PREFIX
+        + '{"schema":1,"schema":1}\n').encode()
+    assert adopt._qualification_stack_observation_summary(
+        duplicate_key, candidate, archive) == expected
+    assert adopt._qualification_stack_observation_summary(
+        encoded(valid)[:-1], candidate, archive) == expected
+    assert adopt._valid_qualification_stack_observation_summary(expected)
+
+
+def test_stack_observation_emits_only_the_closed_unknown_summary(capsys):
+    adopt._emit_qualification_stack_observation({
+        "schema": 1, "candidate_commit": "b" * 40,
+        "candidate_archive_sha256": "c" * 64, "elapsed_ms": None,
+        "labels": [], "examined_frames": 0, "unmatched_frames": 0,
+        "truncated": False, "unknown": True,
+    })
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    lines = [line for line in captured.err.splitlines()
+             if line.startswith(adopt._QUALIFICATION_STACK_OBSERVATION_PREFIX)]
+    assert len(lines) == 1
+    encoded = lines[0][len(adopt._QUALIFICATION_STACK_OBSERVATION_PREFIX):]
+    record = json.loads(encoded)
+    assert encoded == json.dumps(record, sort_keys=True, separators=(",", ":"))
+    assert adopt._valid_qualification_stack_observation_summary(record)
+    assert "PRIVATE" not in lines[0]
+    assert len((lines[0] + "\n").encode("ascii")) <= 4096
 
 
 def test_qualification_last_phase_emitter_rejects_unclosed_summary(capsys):

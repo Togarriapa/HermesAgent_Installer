@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fcntl
 import hashlib
 import io
 import json
@@ -17,9 +18,10 @@ import os
 import re
 import stat
 import sys
+import threading
 import time
 from pathlib import Path
-from types import MappingProxyType
+from types import FunctionType, ModuleType, MappingProxyType
 from typing import Any
 
 _NATIVE_PLUGIN_MEMBER_NAMES = ("plugin.yaml", "__init__.py")
@@ -38,6 +40,183 @@ _QUALIFICATION_CHECKPOINT_PHASES = (
     "success_checks", "report_emission",
 )
 _QUALIFICATION_CHECKPOINT_STREAM = sys.stderr
+_QUALIFICATION_STACK_SAMPLE_PREFIX = "HERMES_CORE_QUALIFICATION_STACK_SAMPLE_V1="
+_QUALIFICATION_STACK_SAMPLE_STREAM = sys.stderr
+_QUALIFICATION_STACK_SAMPLE_SECONDS = 250.0
+_QUALIFICATION_STACK_LABELS = frozenset({
+    "updater", "importer", "generation_tree", "listener", "startup_chat",
+    "reconstruction", "root_runuser", "adapter_generation",
+})
+
+
+def _verified_qualification_stack_codes(candidate_src: Path) -> tuple[dict[int, str], bool]:
+    """Return code identities only from already-loaded modules in this candidate."""
+    expected_root = candidate_src / "hermes_installer"
+    modules = (
+        ("hermes_installer.core_runtime", expected_root / "core_runtime.py", {
+            "_update_owned_core_adapter_locked": "updater",
+            "_run_same_materialization_import": "importer",
+            "_hash_generation_tree": "generation_tree",
+            "_wait_for_listener": "listener",
+            "_prove_new_cohort_startup_chat": "startup_chat",
+            "_make_adapter_update_reconstruction": "reconstruction",
+            "_root_runuser_proc_snapshot": "root_runuser",
+        }),
+        ("hermes_installer.remote.core_gateway_inspector",
+         expected_root / "remote" / "core_gateway_inspector.py", {
+             "_current_native_adapter_generation": "adapter_generation",
+         }),
+    )
+    codes: dict[int, str] = {}
+    complete = True
+    for module_name, expected_file, functions in modules:
+        module = sys.modules.get(module_name)
+        if type(module) is not ModuleType:
+            complete = False
+            continue
+        try:
+            if Path(module.__file__).resolve(strict=True) != expected_file.resolve(strict=True):
+                complete = False
+                continue
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            complete = False
+            continue
+        for function_name, label in functions.items():
+            function = getattr(module, function_name, None)
+            code = getattr(function, "__code__", None)
+            if (not isinstance(function, FunctionType) or code is None
+                    or Path(code.co_filename).resolve() != expected_file.resolve()):
+                complete = False
+                continue
+            codes[id(code)] = label
+    if set(codes.values()) != _QUALIFICATION_STACK_LABELS:
+        complete = False
+    return codes, complete
+
+
+def _qualification_stack_sample(candidate_sha: str, archive_sha: str,
+                                 elapsed_ms: int, main_ident: int,
+                                 code_labels: dict[int, str], mapping_complete: bool,
+                                 frames_by_ident: dict[int, Any] | None = None) -> dict:
+    """Build a bounded stack projection; frame names, locals and arguments never escape."""
+    frames_by_ident = sys._current_frames() if frames_by_ident is None else frames_by_ident
+    frame = frames_by_ident.get(main_ident)
+    labels: list[str] = []
+    examined = unmatched = 0
+    truncated = False
+    while frame is not None and examined < 32:
+        examined += 1
+        label = code_labels.get(id(frame.f_code))
+        if label is None:
+            unmatched += 1
+        elif len(labels) < 12:
+            labels.append(label)
+        else:
+            truncated = True
+        frame = frame.f_back
+    if frame is not None:
+        truncated = True
+    unknown = (not mapping_complete or not labels or truncated)
+    return {
+        "schema": 1,
+        "candidate_commit": candidate_sha,
+        "candidate_archive_sha256": archive_sha,
+        "elapsed_ms": elapsed_ms,
+        "labels": labels,
+        "examined_frames": examined,
+        "unmatched_frames": unmatched,
+        "truncated": truncated,
+        "unknown": unknown,
+    }
+
+
+def _valid_qualification_stack_sample(record: object) -> bool:
+    keys = {
+        "schema", "candidate_commit", "candidate_archive_sha256", "elapsed_ms",
+        "labels", "examined_frames", "unmatched_frames", "truncated", "unknown",
+    }
+    if type(record) is not dict or set(record) != keys:
+        return False
+    return (type(record["schema"]) is int and record["schema"] == 1
+            and type(record["candidate_commit"]) is str
+            and re.fullmatch(r"[0-9a-f]{40}", record["candidate_commit"]) is not None
+            and type(record["candidate_archive_sha256"]) is str
+            and re.fullmatch(r"[0-9a-f]{64}", record["candidate_archive_sha256"]) is not None
+            and type(record["elapsed_ms"]) is int
+            and 0 <= record["elapsed_ms"] <= 300_000
+            and type(record["labels"]) is list and len(record["labels"]) <= 12
+            and all(type(label) is str and label in _QUALIFICATION_STACK_LABELS
+                    for label in record["labels"])
+            and type(record["examined_frames"]) is int
+            and 0 <= record["examined_frames"] <= 32
+            and type(record["unmatched_frames"]) is int
+            and 0 <= record["unmatched_frames"] <= record["examined_frames"]
+            and len(record["labels"]) + record["unmatched_frames"]
+            <= record["examined_frames"]
+            and type(record["truncated"]) is bool
+            and type(record["unknown"]) is bool
+            and (record["unknown"]
+                 or (len(record["labels"]) > 0 and not record["truncated"])))
+
+
+def _emit_qualification_stack_sample(record: dict, sample_done: threading.Event,
+                                     publication_lock: threading.Lock) -> None:
+    """Attempt one bounded atomic write to the held original stderr pipe."""
+    if not _valid_qualification_stack_sample(record):
+        return
+    writer_fd = None
+    try:
+        raw = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        payload = (_QUALIFICATION_STACK_SAMPLE_PREFIX + raw + "\n").encode("ascii")
+        if len(payload) > 4096:
+            return
+        if sample_done.is_set():
+            return
+        original_fd = _QUALIFICATION_STACK_SAMPLE_STREAM.fileno()
+        original_stat = os.fstat(original_fd)
+        original_flags = fcntl.fcntl(original_fd, fcntl.F_GETFL)
+        if not stat.S_ISFIFO(original_stat.st_mode):
+            return
+        writer_fd = os.open(
+            f"/proc/self/fd/{original_fd}",
+            os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+        writer_stat = os.fstat(writer_fd)
+        writer_flags = fcntl.fcntl(writer_fd, fcntl.F_GETFL)
+        current_original_stat = os.fstat(original_fd)
+        current_original_flags = fcntl.fcntl(original_fd, fcntl.F_GETFL)
+        if (not stat.S_ISFIFO(writer_stat.st_mode)
+                or (writer_stat.st_dev, writer_stat.st_ino)
+                != (original_stat.st_dev, original_stat.st_ino)
+                or (current_original_stat.st_dev, current_original_stat.st_ino,
+                    current_original_stat.st_mode)
+                != (original_stat.st_dev, original_stat.st_ino, original_stat.st_mode)
+                or current_original_flags != original_flags
+                or not writer_flags & os.O_NONBLOCK):
+            return
+        pipe_buf = os.fpathconf(writer_fd, "PC_PIPE_BUF")
+        if type(pipe_buf) is not int or len(payload) > min(4096, pipe_buf):
+            return
+        # The worker never waits for this gate. The main thread uses the same
+        # gate only as a return barrier; this critical section contains one
+        # nonblocking write of at most PIPE_BUF bytes.
+        if not publication_lock.acquire(blocking=False):
+            return
+        try:
+            if sample_done.is_set():
+                return
+            written = os.write(writer_fd, payload)
+            if written != len(payload):
+                return
+        finally:
+            publication_lock.release()
+    except (AttributeError, OSError, ValueError, TypeError, OverflowError):
+        return
+    finally:
+        if writer_fd is not None:
+            try:
+                os.close(writer_fd)
+            except OSError:
+                pass
 
 
 def _emit_qualification_checkpoint(candidate_sha: str, archive_sha: str,
@@ -615,7 +794,9 @@ def _root_setup_exception_origin(exc: BaseException, candidate_src: Path,
     return {"exception_type": name, "frames": frames}
 
 
-def _run_fixed_root_adapter_update(root_setup, candidate_src: Path) -> tuple[int, dict | None]:
+def _run_fixed_root_adapter_update(root_setup, candidate_src: Path,
+                                   candidate_sha: str,
+                                   archive_sha: str) -> tuple[int, dict | None]:
     if sys.gettrace() is not None:
         raise RuntimeError("qualification runner requires an untraced root CLI context")
     main = root_setup.main
@@ -623,12 +804,72 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path) -> tuple[int
     if main_code is None:
         raise RuntimeError("fixed root CLI entry point has no verified code object")
     captured: dict[str, dict | None] = {"origin": None}
+    sample_done = threading.Event()
+    sample_lock = threading.Lock()
+    sample_started = time.monotonic()
+    main_ident = threading.get_ident()
+    main_depth = 0
+    cancellation_barrier_done = False
+
+    def cancel_sample():
+        nonlocal cancellation_barrier_done
+        sample_done.set()
+        if cancellation_barrier_done:
+            return
+        # Bound the return path even if the observer is descheduled. Once
+        # cancelled, it cannot begin a new publication; a write already
+        # authorized under the gate may finish.
+        if sample_lock.acquire(timeout=0.05):
+            sample_lock.release()
+        cancellation_barrier_done = True
+
+    def sample_after_bound():
+        if sample_done.wait(_QUALIFICATION_STACK_SAMPLE_SECONDS):
+            return
+        if sample_done.is_set():
+            return
+        elapsed = time.monotonic() - sample_started
+        elapsed_ms = (min(int(elapsed * 1000), 300_000)
+                      if isinstance(elapsed, (int, float)) and elapsed >= 0 else 0)
+        try:
+            labels, mapping_complete = _verified_qualification_stack_codes(candidate_src)
+            record = _qualification_stack_sample(
+                candidate_sha, archive_sha, elapsed_ms, main_ident,
+                labels, mapping_complete)
+        except Exception:
+            # Sampling is observational. A failed or incomplete projection
+            # is represented as unknown and never changes the CLI result.
+            record = {
+                "schema": 1, "candidate_commit": candidate_sha,
+                "candidate_archive_sha256": archive_sha,
+                "elapsed_ms": elapsed_ms, "labels": [],
+                "examined_frames": 0, "unmatched_frames": 0,
+                "truncated": False, "unknown": True,
+            }
+        if not sample_done.is_set():
+            _emit_qualification_stack_sample(record, sample_done, sample_lock)
+
+    sampler = threading.Thread(target=sample_after_bound, daemon=True,
+                               name="core-qualification-stack-sample")
 
     def trace(frame, event, arg):
+        nonlocal main_depth
         if event == "call":
-            return trace if frame.f_code is main_code else None
+            if frame.f_code is main_code:
+                main_depth += 1
+                return trace
+            return None
         if frame.f_code is not main_code:
             return None
+        if event == "return":
+            main_depth = max(0, main_depth - 1)
+            if main_depth:
+                return trace
+            # The return trace event runs before the CLI frame is gone. It
+            # cancels first and uses a bounded barrier against a publication
+            # already in progress; the worker cannot start another write.
+            cancel_sample()
+            return trace
         if event == "exception" and frame.f_code is main_code:
             try:
                 if type(arg) is not tuple or len(arg) != 3:
@@ -644,8 +885,17 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path) -> tuple[int
                 captured["origin"] = None
         return trace
 
-    sys.settrace(trace)
+    sampler_started = False
     try:
+        sampler.start()
+        sampler_started = True
+    except Exception:
+        # A best-effort observer must never block the fixed CLI operation.
+        sample_done.set()
+    trace_installed = False
+    try:
+        sys.settrace(trace)
+        trace_installed = True
         try:
             result = main(["core-service", "adapter-update"])
             cli_exit = result if type(result) is int and 0 <= result <= 255 else 1
@@ -654,7 +904,14 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path) -> tuple[int
             # or serialize the exception object or its arguments.
             cli_exit = 1
     finally:
-        sys.settrace(None)
+        if trace_installed:
+            sys.settrace(None)
+        cancel_sample()
+        if sampler_started:
+            try:
+                sampler.join(timeout=0.05)
+            except Exception:
+                pass
     origin = captured["origin"] if cli_exit != 0 else None
     return cli_exit, origin
 
@@ -727,7 +984,7 @@ def main(argv: list[str] | None = None) -> int:
         checkpoint("adapter_update")
         with contextlib.redirect_stdout(cli_stdout), contextlib.redirect_stderr(cli_stderr):
             cli_exit, cli_failure_origin = _run_fixed_root_adapter_update(
-                root_setup, candidate_src)
+                root_setup, candidate_src, args.candidate_sha, args.archive_sha256)
         after_public = None
         after_private = None
         after_error = None

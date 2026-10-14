@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import importlib.util
 import builtins
+import fcntl
 import hashlib
 import io
 import json
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -22,6 +24,11 @@ SPEC = importlib.util.spec_from_file_location("pi_core_lifecycle_qualification",
 assert SPEC is not None and SPEC.loader is not None
 qualification = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(qualification)
+
+
+def _run_cli(root_setup):
+    return qualification._run_fixed_root_adapter_update(
+        root_setup, Path(__file__).resolve().parent, "a" * 40, "b" * 64)
 
 
 def _snapshots():
@@ -324,8 +331,7 @@ def test_fixed_cli_trace_retains_only_candidate_relative_exception_metadata():
             except RuntimeError:
                 return 4
 
-    cli_exit, origin = qualification._run_fixed_root_adapter_update(
-        RootSetup, Path(__file__).resolve().parent)
+    cli_exit, origin = _run_cli(RootSetup)
     assert cli_exit == 4
     assert origin["exception_type"] == "RuntimeError"
     assert len(origin["frames"]) == 1
@@ -345,8 +351,7 @@ def test_fixed_cli_trace_drops_caught_exception_when_cli_succeeds():
             except RuntimeError:
                 return 0
 
-    cli_exit, origin = qualification._run_fixed_root_adapter_update(
-        RootSetup, Path(__file__).resolve().parent)
+    cli_exit, origin = _run_cli(RootSetup)
     assert cli_exit == 0
     assert origin is None
 
@@ -385,8 +390,7 @@ def test_fixed_cli_trace_limits_local_events_to_main_but_keeps_nested_origin(mon
         real_settrace(observe)
 
     monkeypatch.setattr(qualification.sys, "settrace", observe_settrace)
-    cli_exit, origin = qualification._run_fixed_root_adapter_update(
-        RootSetup, Path(__file__).resolve().parent)
+    cli_exit, origin = _run_cli(RootSetup)
     assert cli_exit == 1
     assert origin["exception_type"] == "LookupError"
     functions = [frame["function"] for frame in origin["frames"]]
@@ -411,8 +415,7 @@ def test_fixed_cli_trace_keeps_suppressed_context_frames_without_exception_text(
             except LookupError:
                 raise RuntimeError("PRIVATE_OUTER_EXCEPTION_TEXT_MUST_NOT_ESCAPE") from None
 
-    cli_exit, origin = qualification._run_fixed_root_adapter_update(
-        RootSetup, Path(__file__).resolve().parent)
+    cli_exit, origin = _run_cli(RootSetup)
     assert cli_exit == 1
     assert set(origin) == {"exception_type", "frames"}
     assert origin["exception_type"] == "RuntimeError"
@@ -489,10 +492,291 @@ def test_fixed_cli_trace_refuses_a_preexisting_trace():
     sys.settrace(prior_trace)
     try:
         with pytest.raises(RuntimeError, match="untraced root CLI context"):
-            qualification._run_fixed_root_adapter_update(object(), Path(__file__).parent)
+            qualification._run_fixed_root_adapter_update(
+                object(), Path(__file__).parent, "a" * 40, "b" * 64)
     finally:
         sys.settrace(None)
     assert sys.gettrace() is None
+
+
+def test_stack_sample_is_innermost_bounded_and_unknown_when_mapping_incomplete():
+    def descend(depth):
+        if depth:
+            return descend(depth - 1)
+        return sys._getframe()
+
+    frame = descend(36)
+    record = qualification._qualification_stack_sample(
+        "a" * 40, "b" * 64, 250_000, 123,
+        {id(descend.__code__): "listener"}, True,
+        frames_by_ident={123: frame})
+    assert record == {
+        "schema": 1, "candidate_commit": "a" * 40,
+        "candidate_archive_sha256": "b" * 64, "elapsed_ms": 250_000,
+        "labels": ["listener"] * 12, "examined_frames": 32,
+        "unmatched_frames": 0, "truncated": True, "unknown": True,
+    }
+
+    unmapped = qualification._qualification_stack_sample(
+        "a" * 40, "b" * 64, 250_000, 123, {}, False,
+        frames_by_ident={123: frame})
+    assert unmapped["labels"] == []
+    assert unmapped["unknown"] is True
+    assert unmapped["examined_frames"] == 32
+
+    foreign_thread_only = qualification._qualification_stack_sample(
+        "a" * 40, "b" * 64, 250_000, 123,
+        {id(descend.__code__): "listener"}, True,
+        frames_by_ident={456: frame})
+    assert foreign_thread_only["labels"] == []
+    assert foreign_thread_only["examined_frames"] == 0
+    assert foreign_thread_only["unknown"] is True
+
+    class FrameWithoutPrivateReads:
+        def __init__(self, code, parent=None):
+            object.__setattr__(self, "f_code", code)
+            object.__setattr__(self, "f_back", parent)
+
+        def __getattribute__(self, name):
+            if name in {"f_locals", "f_globals", "f_lasti"}:
+                raise AssertionError("stack sampler inspected private frame state")
+            return object.__getattribute__(self, name)
+
+    private_read_guard = FrameWithoutPrivateReads(descend.__code__)
+    guarded = qualification._qualification_stack_sample(
+        "a" * 40, "b" * 64, 250_000, 123,
+        {id(descend.__code__): "listener"}, True,
+        frames_by_ident={123: private_read_guard})
+    assert guarded["labels"] == ["listener"]
+    assert guarded["unknown"] is False
+
+
+def test_stack_sample_emitter_rejects_unclosed_record_before_output(capsys):
+    class NoOutputAllowed:
+        def fileno(self):
+            raise AssertionError("unvalidated sample reached the output channel")
+
+    previous = qualification._QUALIFICATION_STACK_SAMPLE_STREAM
+    qualification._QUALIFICATION_STACK_SAMPLE_STREAM = NoOutputAllowed()
+    try:
+        qualification._emit_qualification_stack_sample({
+            "schema": 1, "candidate_commit": "a" * 40,
+            "candidate_archive_sha256": "b" * 64, "elapsed_ms": 1,
+            "labels": [], "examined_frames": 0, "unmatched_frames": 0,
+            "truncated": False, "unknown": True,
+            "private": "PRIVATE sample field",
+        }, qualification.threading.Event(), qualification.threading.Lock())
+    finally:
+        qualification._QUALIFICATION_STACK_SAMPLE_STREAM = previous
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+
+
+def test_stack_sample_emitter_drops_when_original_channel_is_not_a_pipe(monkeypatch):
+    held = io.StringIO()
+    monkeypatch.setattr(qualification, "_QUALIFICATION_STACK_SAMPLE_STREAM", held)
+    record = {
+        "schema": 1, "candidate_commit": "a" * 40,
+        "candidate_archive_sha256": "b" * 64, "elapsed_ms": 1,
+        "labels": ["updater"], "examined_frames": 1,
+        "unmatched_frames": 0, "truncated": False, "unknown": False,
+    }
+    qualification._emit_qualification_stack_sample(
+        record, qualification.threading.Event(), qualification.threading.Lock())
+    assert held.getvalue() == ""
+
+
+def test_stack_sample_emitter_drops_when_pipe_is_full_or_publication_gate_busy(monkeypatch):
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+    os.set_blocking(write_fd, False)
+
+    class HeldPipe:
+        def fileno(self):
+            return write_fd
+
+    monkeypatch.setattr(qualification, "_QUALIFICATION_STACK_SAMPLE_STREAM", HeldPipe())
+    record = {
+        "schema": 1, "candidate_commit": "a" * 40,
+        "candidate_archive_sha256": "b" * 64, "elapsed_ms": 1,
+        "labels": ["updater"], "examined_frames": 1,
+        "unmatched_frames": 0, "truncated": False, "unknown": False,
+    }
+    done = qualification.threading.Event()
+    gate = qualification.threading.Lock()
+    gate.acquire()
+    try:
+        qualification._emit_qualification_stack_sample(record, done, gate)
+    finally:
+        gate.release()
+    with pytest.raises(BlockingIOError):
+        os.read(read_fd, 4096)
+
+    while True:
+        try:
+            os.write(write_fd, b"x" * 4096)
+        except BlockingIOError:
+            break
+    flags_before = fcntl.fcntl(write_fd, fcntl.F_GETFL)
+    qualification._emit_qualification_stack_sample(record, done, gate)
+    assert fcntl.fcntl(write_fd, fcntl.F_GETFL) == flags_before
+    os.close(read_fd)
+    os.close(write_fd)
+
+
+def test_stack_code_map_uses_only_already_loaded_candidate_modules(tmp_path, monkeypatch):
+    source = tmp_path / "src"
+    package = source / "hermes_installer"
+    remote = package / "remote"
+    remote.mkdir(parents=True)
+    core_path = package / "core_runtime.py"
+    inspector_path = remote / "core_gateway_inspector.py"
+    core_path.write_text("", encoding="utf-8")
+    inspector_path.write_text("", encoding="utf-8")
+    core_names = {
+        "_update_owned_core_adapter_locked": "updater",
+        "_run_same_materialization_import": "importer",
+        "_hash_generation_tree": "generation_tree",
+        "_wait_for_listener": "listener",
+        "_prove_new_cohort_startup_chat": "startup_chat",
+        "_make_adapter_update_reconstruction": "reconstruction",
+        "_root_runuser_proc_snapshot": "root_runuser",
+    }
+
+    def module_with_functions(module_name, path, names):
+        module = ModuleType(module_name)
+        module.__file__ = str(path)
+        namespace = {}
+        source_text = "\n".join(f"def {name}():\n    return None" for name in names)
+        exec(compile(source_text, str(path), "exec"), namespace)
+        for name in names:
+            setattr(module, name, namespace[name])
+        return module
+
+    monkeypatch.setitem(sys.modules, "hermes_installer.core_runtime",
+                        module_with_functions("hermes_installer.core_runtime",
+                                              core_path, core_names))
+    monkeypatch.setitem(
+        sys.modules, "hermes_installer.remote.core_gateway_inspector",
+        module_with_functions("hermes_installer.remote.core_gateway_inspector",
+                              inspector_path, {"_current_native_adapter_generation":
+                                                "adapter_generation"}))
+    code_labels, complete = qualification._verified_qualification_stack_codes(source)
+    assert complete is True
+    assert set(code_labels.values()) == qualification._QUALIFICATION_STACK_LABELS
+
+    monkeypatch.delitem(sys.modules, "hermes_installer.remote.core_gateway_inspector")
+    core_only, complete = qualification._verified_qualification_stack_codes(source)
+    assert complete is False
+    assert set(core_only.values()) == set(core_names.values())
+
+    inspector = module_with_functions(
+        "hermes_installer.remote.core_gateway_inspector", inspector_path,
+        {"_current_native_adapter_generation": "adapter_generation"})
+    monkeypatch.setitem(sys.modules, "hermes_installer.remote.core_gateway_inspector", inspector)
+    foreign = module_with_functions("hermes_installer.core_runtime", core_path, core_names)
+    foreign.__file__ = str(tmp_path / "foreign" / "core_runtime.py")
+    monkeypatch.setitem(sys.modules, "hermes_installer.core_runtime", foreign)
+    _labels, complete = qualification._verified_qualification_stack_codes(source)
+    assert complete is False
+
+
+def test_stack_sample_is_one_shot_and_cancels_without_late_emission(monkeypatch):
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+
+    class HeldPipe:
+        def fileno(self):
+            return write_fd
+
+    held = HeldPipe()
+    original_flags = fcntl.fcntl(write_fd, fcntl.F_GETFL)
+    monkeypatch.setattr(qualification, "_QUALIFICATION_STACK_SAMPLE_STREAM", held)
+    monkeypatch.setattr(qualification, "_QUALIFICATION_STACK_SAMPLE_SECONDS", 250.0)
+    real_event = qualification.threading.Event
+
+    class ImmediateDeadlineEvent:
+        def __init__(self):
+            self.event = real_event()
+
+        def wait(self, timeout=None):
+            assert timeout == 250.0
+            return self.event.is_set()
+
+        def set(self):
+            self.event.set()
+
+        def is_set(self):
+            return self.event.is_set()
+
+    monkeypatch.setattr(qualification.threading, "Event", ImmediateDeadlineEvent)
+    threads = []
+
+    class DeferredThread:
+        def __init__(self, *, target, daemon, name):
+            assert daemon is True
+            assert name == "core-qualification-stack-sample"
+            self.target = target
+            self.join_timeouts = []
+            threads.append(self)
+
+        def start(self):
+            return None
+
+        def join(self, *, timeout):
+            self.join_timeouts.append(timeout)
+
+    monkeypatch.setattr(qualification.threading, "Thread", DeferredThread)
+
+    class RootSetup:
+        @staticmethod
+        def main(_argv):
+            # Execute the deferred observer while this verified CLI frame is
+            # live, as if its fixed deadline had elapsed.
+            threads[-1].target()
+            return 0
+
+    monkeypatch.setattr(
+        qualification, "_verified_qualification_stack_codes",
+        lambda _src: ({id(RootSetup.main.__code__): "updater"}, True))
+    exit_code, origin = _run_cli(RootSetup)
+    assert exit_code == 0 and origin is None
+    assert len(threads) == 1 and threads[0].join_timeouts == [0.05]
+    captured = os.read(read_fd, 4096)
+    lines = captured.decode("ascii").splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith(qualification._QUALIFICATION_STACK_SAMPLE_PREFIX)
+    encoded = lines[0][len(qualification._QUALIFICATION_STACK_SAMPLE_PREFIX):]
+    sample = json.loads(encoded)
+    assert encoded == json.dumps(sample, sort_keys=True, separators=(",", ":"))
+    assert set(sample) == {
+        "schema", "candidate_commit", "candidate_archive_sha256", "elapsed_ms",
+        "labels", "examined_frames", "unmatched_frames", "truncated", "unknown",
+    }
+    assert sample["labels"] == ["updater"]
+    assert sample["unknown"] is False
+    assert "RootSetup" not in encoded
+    assert fcntl.fcntl(write_fd, fcntl.F_GETFL) == original_flags
+
+    # A cancelled observer invoked after the CLI frame has returned emits no
+    # second record and cannot delay the completed CLI result.
+    threads[-1].target()
+    with pytest.raises(BlockingIOError):
+        os.read(read_fd, 4096)
+
+    class FastRootSetup:
+        @staticmethod
+        def main(_argv):
+            return 0
+
+    fast_exit, fast_origin = _run_cli(FastRootSetup)
+    assert fast_exit == 0 and fast_origin is None
+    assert threads[-1].join_timeouts == [0.05]
+    threads[-1].target()
+    with pytest.raises(BlockingIOError):
+        os.read(read_fd, 4096)
+    os.close(read_fd)
+    os.close(write_fd)
 
 
 def _backup_fixture():
