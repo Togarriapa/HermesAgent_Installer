@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import argparse
+import contextvars
 import fcntl
 import io
 import json
@@ -20,7 +21,10 @@ import stat
 import struct
 import sys
 import tempfile
+import threading
+import types
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 from importlib.resources import files as package_files
@@ -61,6 +65,591 @@ _IMPORTER_MODULE = "hermes_installer.registry.manual_jarvis_skills"
 _JARVIS_HOME = Path("/home/admin/.hermes")
 _HELPER_BACKUP_NAME = re.compile(r"^\.jarvis-resources-skills-helper-transition-[0-9a-f]{32}$")
 
+# R0201/#35: only the fixed Root adapter-update operation may reuse the exact
+# immutable base ZIP.  Core supplies its held-lock/seal predicate and a fresh
+# input witness; this module never persists the entry or caches parsed output.
+_ROOT_UPDATE_ARTIFACT_CACHE_SEAL = object()
+_ROOT_UPDATE_ARTIFACT_CACHE = contextvars.ContextVar(
+    "manual_jarvis_root_update_artifact_cache", default=None)
+
+_BASE_ARTIFACT_INPUTS = (
+    "hermes_installer/__init__.py",
+    "hermes_installer/state.py",
+    "hermes_installer/network.py",
+    "hermes_installer/components/__init__.py",
+    "hermes_installer/components/catalog.py",
+    "hermes_installer/components/skill_refs.py",
+    "hermes_installer/components/native_plugins.py",
+    "hermes_installer/components/public_registries.py",
+    "hermes_installer/registry/__init__.py",
+    "hermes_installer/registry/types.py",
+    "hermes_installer/registry/resolver.py",
+    "hermes_installer/registry/source.py",
+    "hermes_installer/registry/native.py",
+    "hermes_installer/registry/resources_runtime.py",
+    "hermes_installer/registry/manual_jarvis_skills.py",
+    "hermes_installer/registry/jarvis_master_semantics.py",
+    "hermes_installer/registry/bundle_data/hermes-agent-resources.pin.json",
+    "hermes_installer/registry/bundle_data/hermes-agent-resources-2.3.1.tar.gz",
+    "hermes_installer/registry/bundle_data/jarvis-master-semantics.json",
+)
+_BASE_ARTIFACT_SOURCE_LIMIT = 8 * 1024 * 1024
+_BASE_ARTIFACT_CODE_LIMIT = 2 * 1024 * 1024
+_BASE_ARTIFACT_CLOSURE_LIMIT = 32 * 1024 * 1024
+_BASE_ARTIFACT_RUNTIME_ENTRYPOINTS = {
+    "/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python": (
+        "/usr/bin/python3.13", (3, 13, 5), 0, 0, 0o755, 6_673_736,
+        "bd241b38381974ae27d7d5098a6d0e6dda0a744b5e9fdd6fe3a1ae632588961e",
+        "/opt/hermes-jarvis-mvp-20261011/gateway-venv", "/usr"),
+    "/var/tmp/hermes-jarvis-core-checks-20261011/gateway-test-venv/bin/python": (
+        "/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3.14",
+        (3, 14, 7), 1000, 1000, 0o755, 108_914_888,
+        "566f5e480aa1adccd3214f6251f50cab08daf768158d778fd9a73d19ab1fe001",
+        "/var/tmp/hermes-jarvis-core-checks-20261011/gateway-test-venv",
+        "/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64"),
+}
+_BASE_ARTIFACT_YAML_ORIGINS = {
+    "/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python": (
+        "/opt/hermes-jarvis-mvp-20261011/gateway-venv/lib/python3.13/site-packages/yaml/__init__.py",
+        0, 0, 0o644, "b19dfcc333d6a75dfd73073901164507252f271b41d3b5f7d85510033a0547a7"),
+    "/var/tmp/hermes-jarvis-core-checks-20261011/gateway-test-venv/bin/python": (
+        "/var/tmp/hermes-jarvis-core-checks-20261011/gateway-test-venv/lib/python3.14/site-packages/yaml/__init__.py",
+        1000, 1000, 0o644, "b19dfcc333d6a75dfd73073901164507252f271b41d3b5f7d85510033a0547a7"),
+}
+_PLUGIN_CONTRACT_FIELDS = (
+    "adapter_id", "resource_id", "component_adapter_id", "handler_available", "status", "blocker",
+)
+_BASE_ARTIFACT_RUNTIME_BINDINGS = {
+    "hermes_installer.registry.manual_jarvis_skills": (
+        "PINNED_REVISION", "PINNED_TREE", "PRIMARY_PROFILE", "PRIMARY_SKILLS", "PLUGIN_PENDING",
+        "_BUNDLE_SKILL_COUNT", "_BUNDLE_PROFILE_COUNT", "_ARTIFACT_LIMIT", "_MEMBER_LIMIT",
+        "package_files", "_ROOT_UPDATE_ARTIFACT_CACHE_SEAL", "_ROOT_UPDATE_ARTIFACT_CACHE",
+        "_BASE_ARTIFACT_INPUTS", "_BASE_ARTIFACT_SOURCE_LIMIT", "_BASE_ARTIFACT_CODE_LIMIT",
+        "_BASE_ARTIFACT_CLOSURE_LIMIT", "_BASE_ARTIFACT_RUNTIME_ENTRYPOINTS",
+        "_BASE_ARTIFACT_YAML_ORIGINS", "_PLUGIN_CONTRACT_FIELDS", "_BASE_ARTIFACT_RUNTIME_BINDINGS",
+        "_BASE_ARTIFACT_RUNTIME_FUNCTIONS", "_BASE_ARTIFACT_RUNTIME_METHODS",
+        "_BASE_ARTIFACT_RUNTIME_CLASSES", "_BASE_ARTIFACT_RUNTIME_CLASS_BINDINGS",
+        "_BASE_ARTIFACT_MODULES", "_BASE_ARTIFACT_YAML_TABLES",
+        "contextmanager", "_canonical_json", "_sha256", "_zip_write",
+    ),
+    "hermes_installer.registry.native": (
+        "_DISCOVERY_ROOTS", "_PROFILE_NAME", "_SKILL_NAME", "PRIMARY_USER_SOURCE_PROFILE_ID",
+        "PRIMARY_USER_DISPLAY_NAME", "_PRIMARY_USER_IDENTITY_INSTRUCTIONS",
+        "_STANDALONE_HERMES", "PRIMARY_NATIVE_PROFILE_KEY", "RawResource", "RegistryError", "RegistryResolver",
+        "ResolvedResource", "VerifiedSource", "_merge_policy_values",
+    ),
+    "hermes_installer.registry.resolver": (
+        "_VERSION", "_CLAUSE", "_KINDS", "_SINGULAR", "Resource", "ResourceKind",
+    ),
+    "hermes_installer.registry.source": ("PinnedSource", "BundledRegistrySource"),
+    "hermes_installer.registry.resources_runtime": (
+        "_PLUGIN_NEXT_STEP", "_CRON_NEXT_STEP", "_WEBHOOK_NEXT_STEP", "_CHANNEL_NEXT_STEP",
+        "_MCP_NEXT_STEPS",
+    ),
+    "hermes_installer.registry.jarvis_master_semantics": (
+        "OVERLAY_PATH", "UPSTREAM_REPOSITORY", "UPSTREAM_VERSION", "UPSTREAM_REVISION",
+        "UPSTREAM_TREE", "OVERLAY_ID", "APPROVAL_COMMIT", "OVERLAY_SHA256",
+    ),
+    "hermes_installer.components.native_plugins": (
+        "_PLUGIN_IDS", "_PLUGIN_VERSIONS", "_PLUGIN_BLOCKERS", "NATIVE_PLUGIN_ADAPTERS",
+        "_PLUGIN_BY_ID",
+    ),
+}
+_BASE_ARTIFACT_RUNTIME_FUNCTIONS = {
+    "hermes_installer.registry.manual_jarvis_skills": (
+        "_build_manual_jarvis_skills_artifact_uncached", "build_manual_jarvis_skills_artifact",
+        "_root_held_update_artifact_cache", "_root_artifact_source_witness",
+        "_loaded_compiler_identity", "_literal_runtime_value", "_unique_pairs",
+        "_runtime_file_witness", "_canonical_json", "_sha256", "_zip_write",
+    ),
+    "hermes_installer.registry.native": (
+        "_yaml", "_load", "_declared_roots", "_jarvis_identity_text",
+        "effective_native_profile_spec", "_profile_files", "_skill_file",
+    ),
+    "hermes_installer.registry.resolver": (
+        "_merge_policy_values", "_parts", "_compare", "satisfies", "_policy_overlay_matches",
+    ),
+    "hermes_installer.registry.source": ("load_bundled_source", "_git_blob", "_git_tree"),
+    "hermes_installer.registry.resources_runtime": (
+        "_safe_identity", "materialize_runtime_resource", "_registration", "_validate_cron",
+        "_validate_channel_declaration", "_validate_bundle_declaration", "_validate_webhook_declaration",
+        "_valid_header_name", "_cron_instant_matches", "_cron_field_matches",
+    ),
+    "hermes_installer.registry.jarvis_master_semantics": (
+        "_read_overlay", "overlay_identity", "_apply_profile", "effective_profile_spec",
+        "effective_bundle_spec",
+    ),
+    "hermes_installer.components.native_plugins": (
+        "resolve_native_plugin_adapter", "native_plugin_handler_available",
+    ),
+}
+_BASE_ARTIFACT_RUNTIME_METHODS = {
+    "hermes_installer.registry.native": {
+        "NativeRegistry": ("from_verified_source", "discover", "discover_all", "_runtime_artifact", "crosswalk", "materialize"),
+    },
+    "hermes_installer.registry.resolver": {
+        "RegistryResolver": ("__init__", "document_digest", "_parse", "_references", "_selector", "resolve"),
+    },
+    "hermes_installer.registry.source": {
+        "PinnedSource": ("from_mapping",), "BundledRegistrySource": ("__init__", "load"),
+    },
+}
+_BASE_ARTIFACT_RUNTIME_CLASSES = {
+    "hermes_installer.registry.types": ("ResourceKind", "Resource"),
+    "hermes_installer.registry.resolver": ("RawResource", "ResolvedResource"),
+    "hermes_installer.registry.native": ("NativeDiscovery", "NativeResourceBinding"),
+    "hermes_installer.registry.source": ("VerifiedSource",),
+    "hermes_installer.registry.resources_runtime": (
+        "ResourceIdentity", "ResourceReadiness", "ResourceRuntimeArtifact",
+    ),
+}
+_BASE_ARTIFACT_RUNTIME_CLASS_BINDINGS = {
+    "hermes_installer.registry.source": {
+        "BundledRegistrySource": ("MAX_ARCHIVE_BYTES", "MAX_EXPANDED_BYTES", "ROOTS"),
+    },
+}
+_BASE_ARTIFACT_MODULES = (
+    ("hermes_installer", "hermes_installer/__init__.py"),
+    ("hermes_installer.state", "hermes_installer/state.py"),
+    ("hermes_installer.network", "hermes_installer/network.py"),
+    ("hermes_installer.components", "hermes_installer/components/__init__.py"),
+    ("hermes_installer.components.catalog", "hermes_installer/components/catalog.py"),
+    ("hermes_installer.components.skill_refs", "hermes_installer/components/skill_refs.py"),
+    ("hermes_installer.components.native_plugins", "hermes_installer/components/native_plugins.py"),
+    ("hermes_installer.components.public_registries", "hermes_installer/components/public_registries.py"),
+    ("hermes_installer.registry", "hermes_installer/registry/__init__.py"),
+    ("hermes_installer.registry.types", "hermes_installer/registry/types.py"),
+    ("hermes_installer.registry.resolver", "hermes_installer/registry/resolver.py"),
+    ("hermes_installer.registry.source", "hermes_installer/registry/source.py"),
+    ("hermes_installer.registry.native", "hermes_installer/registry/native.py"),
+    ("hermes_installer.registry.resources_runtime", "hermes_installer/registry/resources_runtime.py"),
+    ("hermes_installer.registry.manual_jarvis_skills", "hermes_installer/registry/manual_jarvis_skills.py"),
+    ("hermes_installer.registry.jarvis_master_semantics", "hermes_installer/registry/jarvis_master_semantics.py"),
+)
+
+_BASE_ARTIFACT_YAML_TABLES = (
+    ("SafeLoader", "yaml_constructors"), ("SafeLoader", "yaml_multi_constructors"),
+    ("SafeLoader", "yaml_implicit_resolvers"), ("SafeLoader", "yaml_path_resolvers"),
+    ("SafeDumper", "yaml_representers"), ("SafeDumper", "yaml_multi_representers"),
+)
+
+
+def _runtime_file_witness(path, *, expected_path, expected_uid, expected_gid,
+                          expected_mode, expected_size, expected_sha256, size_limit):
+    path = Path(path)
+    if str(path) != expected_path:
+        raise ManualJarvisSkillsError("pinned runtime file origin differs")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(descriptor)
+        named_before = path.stat(follow_symlinks=False)
+        identity = (before.st_dev, before.st_ino, before.st_size,
+                    before.st_mtime_ns, before.st_ctime_ns)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != expected_uid
+                or before.st_gid != expected_gid or stat.S_IMODE(before.st_mode) != expected_mode
+                or before.st_nlink != 1 or before.st_size < 0 or before.st_size > size_limit
+                or (expected_size is not None and before.st_size != expected_size)
+                or identity[:2] != (named_before.st_dev, named_before.st_ino)):
+            raise ManualJarvisSkillsError("pinned runtime file custody differs")
+        digest = hashlib.sha256()
+        total = 0
+        remaining = size_limit + 1
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            total += len(chunk)
+            remaining -= len(chunk)
+            if total > size_limit:
+                raise ManualJarvisSkillsError("pinned runtime file exceeds its byte bound")
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        named_after = path.stat(follow_symlinks=False)
+        if (digest.hexdigest() != expected_sha256
+                or identity != (after.st_dev, after.st_ino, after.st_size,
+                                after.st_mtime_ns, after.st_ctime_ns)
+                or identity != (named_after.st_dev, named_after.st_ino, named_after.st_size,
+                                named_after.st_mtime_ns, named_after.st_ctime_ns)):
+            raise ManualJarvisSkillsError("pinned runtime file content changed")
+        return (expected_path, expected_sha256, identity, before.st_uid, before.st_gid,
+                stat.S_IMODE(before.st_mode), before.st_nlink)
+    finally:
+        os.close(descriptor)
+
+
+class _RootUpdateArtifactCache:
+    __slots__ = ("seal", "operation", "thread_id", "is_current", "witness",
+                 "artifact", "artifact_sha256", "source_witness", "poisoned")
+
+    def __init__(self, operation, is_current, witness):
+        self.seal = _ROOT_UPDATE_ARTIFACT_CACHE_SEAL
+        self.operation = operation
+        self.thread_id = threading.get_ident()
+        self.is_current = is_current
+        self.witness = witness
+        self.artifact = None
+        self.artifact_sha256 = None
+        self.source_witness = None
+        self.poisoned = False
+
+    def invalidate(self):
+        self.artifact = None
+        self.artifact_sha256 = None
+        self.source_witness = None
+        self.poisoned = True
+
+    def clear(self):
+        self.invalidate()
+
+
+@contextmanager
+def _root_held_update_artifact_cache(operation, *, is_current, witness):
+    """Install one private byte entry for Core's exact held Root update call."""
+    if (type(operation) is not object or not callable(is_current) or not callable(witness)
+            or _ROOT_UPDATE_ARTIFACT_CACHE.get() is not None):
+        raise ManualJarvisSkillsError("Root update artifact cache scope is invalid")
+    entry = _RootUpdateArtifactCache(operation, is_current, witness)
+    if not entry.is_current():
+        raise ManualJarvisSkillsError("Root update artifact cache requires the held sealed operation")
+    token = _ROOT_UPDATE_ARTIFACT_CACHE.set(entry)
+    try:
+        yield
+    finally:
+        entry.clear()
+        _ROOT_UPDATE_ARTIFACT_CACHE.reset(token)
+
+
+def _literal_runtime_value(value, *, depth=0, budget=None):
+    """Snapshot bounded built-in compiler globals without invoking user code."""
+    if budget is None:
+        budget = [100_000]
+    budget[0] -= 1
+    if budget[0] < 0 or depth > 24:
+        raise ManualJarvisSkillsError("loaded Resources compiler state exceeds its bound")
+    value_type = type(value)
+    if value_type is float:
+        return ("float", value.hex())
+    if value is None or value_type in {bool, int, str, bytes}:
+        return (value_type.__name__, value)
+    if isinstance(value, types.FunctionType):
+        return ("function", value, value.__code__, id(value.__code__), value.__module__,
+                value.__qualname__, _literal_runtime_value(
+                    value.__defaults__, depth=depth + 1, budget=budget),
+                _literal_runtime_value(value.__kwdefaults__, depth=depth + 1, budget=budget))
+    if value_type in {tuple, list}:
+        return (value_type.__name__, tuple(
+            _literal_runtime_value(item, depth=depth + 1, budget=budget) for item in value))
+    if value_type is dict:
+        rows = [(_literal_runtime_value(key, depth=depth + 1, budget=budget),
+                 _literal_runtime_value(item, depth=depth + 1, budget=budget))
+                for key, item in value.items()]
+        return ("dict", tuple(sorted(rows, key=lambda row: repr(row[0]))))
+    if value_type in {set, frozenset}:
+        rows = [_literal_runtime_value(item, depth=depth + 1, budget=budget) for item in value]
+        return (value_type.__name__, tuple(sorted(rows, key=repr)))
+    return ("identity", type(value).__module__, type(value).__qualname__, id(value))
+
+
+def _loaded_compiler_identity(source_root):
+    """Bind the exact loaded source/compiler code and YAML delegates used here."""
+    import importlib
+
+    modules = []
+    runtime_budget = [100_000]
+    for module_name, relative in _BASE_ARTIFACT_MODULES:
+        module = importlib.import_module(module_name)
+        expected_path = source_root.joinpath(*relative.split("/")).resolve(strict=True)
+        module_file = getattr(module, "__file__", None)
+        spec = getattr(module, "__spec__", None)
+        if (not isinstance(module_file, str)
+                or Path(module_file).resolve(strict=True) != expected_path
+                or getattr(spec, "origin", None) != str(expected_path)):
+            raise ManualJarvisSkillsError("loaded Resources compiler source identity differs")
+        modules.append((module_name, module, expected_path, spec))
+        package_path = getattr(module, "__path__", None)
+        if package_path is not None:
+            modules.append(("package-path", module_name,
+                            tuple(str(Path(item).resolve(strict=True)) for item in package_path)))
+        selected_bindings = set(_BASE_ARTIFACT_RUNTIME_BINDINGS.get(module_name, ()))
+        for name in sorted(selected_bindings):
+            if name not in vars(module):
+                raise ManualJarvisSkillsError("required Resources builder binding is missing")
+            value = vars(module)[name]
+            literal = _literal_runtime_value(value, budget=runtime_budget)
+            modules.append(("binding", module_name, name, id(value), literal))
+
+        def function_identity(name, function):
+            if not isinstance(function, types.FunctionType) or function.__module__ != module_name:
+                raise ManualJarvisSkillsError("required loaded Resources compiler function differs")
+            wrapped = None
+            if module_name == "hermes_installer.registry.manual_jarvis_skills" and name == "_root_held_update_artifact_cache":
+                # contextmanager() exposes a contextlib wrapper. Pin that exact
+                # standard wrapper and its source-defined wrapped function.
+                wrapped = getattr(function, "__wrapped__", None)
+                expected_wrapper = contextmanager(wrapped) if isinstance(wrapped, types.FunctionType) else None
+                if (wrapped is None or not isinstance(wrapped, types.FunctionType)
+                        or wrapped.__module__ != module_name
+                        or wrapped.__name__ != name
+                        or Path(wrapped.__code__.co_filename).resolve(strict=True) != expected_path
+                        or expected_wrapper is None
+                        or function.__code__ is not expected_wrapper.__code__):
+                    raise ManualJarvisSkillsError("required loaded Resources compiler function differs")
+            elif Path(function.__code__.co_filename).resolve(strict=True) != expected_path:
+                raise ManualJarvisSkillsError("required loaded Resources compiler function differs")
+            modules.append(("function", module_name, name, function, function.__code__,
+                            id(function.__code__), _literal_runtime_value(
+                                function.__defaults__, budget=runtime_budget),
+                            _literal_runtime_value(function.__kwdefaults__, budget=runtime_budget),
+                            tuple(_literal_runtime_value(cell.cell_contents, budget=runtime_budget)
+                                  for cell in (function.__closure__ or ())),
+                            wrapped, getattr(wrapped, "__code__", None),
+                            (_literal_runtime_value(wrapped.__defaults__, budget=runtime_budget)
+                             if wrapped is not None else None),
+                            (_literal_runtime_value(wrapped.__kwdefaults__, budget=runtime_budget)
+                             if wrapped is not None else None),
+                            (tuple(_literal_runtime_value(cell.cell_contents, budget=runtime_budget)
+                                   for cell in (wrapped.__closure__ or ()))
+                             if wrapped is not None else None)))
+
+        for name in _BASE_ARTIFACT_RUNTIME_FUNCTIONS.get(module_name, ()):
+            function = vars(module).get(name)
+            function_identity(name, function)
+        for class_name, method_names in _BASE_ARTIFACT_RUNTIME_METHODS.get(module_name, {}).items():
+            cls = vars(module).get(class_name)
+            if not isinstance(cls, type):
+                raise ManualJarvisSkillsError("required loaded Resources compiler class differs")
+            modules.append(("class", module_name, class_name, cls))
+            for method_name in method_names:
+                descriptor = vars(cls).get(method_name)
+                function = (descriptor.__func__ if isinstance(descriptor, (classmethod, staticmethod))
+                            else descriptor)
+                function_identity(f"{class_name}.{method_name}", function)
+        for class_name in _BASE_ARTIFACT_RUNTIME_CLASSES.get(module_name, ()):
+            cls = vars(module).get(class_name)
+            if not isinstance(cls, type) or cls.__module__ != module_name:
+                raise ManualJarvisSkillsError("required loaded Resources compiler record differs")
+            fields = getattr(cls, "__dataclass_fields__", None)
+            if type(fields) is dict:
+                field_rows = tuple(
+                    (name, _literal_runtime_value(field.type, budget=runtime_budget),
+                     field.init, field.repr, field.compare, field.hash,
+                     _literal_runtime_value(field.default, budget=runtime_budget),
+                     _literal_runtime_value(field.default_factory, budget=runtime_budget))
+                    for name, field in sorted(fields.items()))
+            else:
+                field_rows = ()
+            init_function = vars(cls).get("__init__")
+            if isinstance(init_function, types.FunctionType):
+                init_code = init_function.__code__
+                if (init_code.co_filename != "<string>"
+                        and Path(init_code.co_filename).resolve(strict=True) != expected_path):
+                    raise ManualJarvisSkillsError("loaded Resources compiler record origin differs")
+                init_identity = (init_function, init_code, id(init_code),
+                                 _literal_runtime_value(init_function.__defaults__, budget=runtime_budget),
+                                 _literal_runtime_value(init_function.__kwdefaults__, budget=runtime_budget))
+            else:
+                init_identity = None
+            members = getattr(cls, "__members__", None)
+            enum_rows = (tuple((name, _literal_runtime_value(member.value, budget=runtime_budget))
+                               for name, member in members.items())
+                         if isinstance(members, Mapping) else ())
+            modules.append(("record", module_name, class_name, cls,
+                            _literal_runtime_value(getattr(cls, "__slots__", ()), budget=runtime_budget),
+                            field_rows, init_identity, enum_rows))
+        for class_name, attribute_names in _BASE_ARTIFACT_RUNTIME_CLASS_BINDINGS.get(
+                module_name, {}).items():
+            cls = vars(module).get(class_name)
+            if not isinstance(cls, type) or cls.__module__ != module_name:
+                raise ManualJarvisSkillsError("required loaded Resources compiler class differs")
+            modules.append(("class-bindings", module_name, class_name,
+                            tuple((name, _literal_runtime_value(
+                                getattr(cls, name), budget=runtime_budget))
+                                  for name in attribute_names)))
+        if module_name == "hermes_installer.components.native_plugins":
+            rows = getattr(module, "NATIVE_PLUGIN_ADAPTERS", None)
+            by_id = getattr(module, "_PLUGIN_BY_ID", None)
+            contract_type = getattr(module, "NativePluginAdapterContract", None)
+            if (type(rows) is not tuple or type(by_id) is not dict or not isinstance(contract_type, type)
+                    or set(by_id) != {getattr(row, "adapter_id", None) for row in rows}
+                    or any(type(row) is not contract_type for row in rows)
+                    or any(type(row) is not contract_type for row in by_id.values())):
+                raise ManualJarvisSkillsError("loaded native plugin contract table differs")
+            def contract_row(row):
+                return tuple((name, _literal_runtime_value(
+                    getattr(row, name), budget=runtime_budget))
+                    for name in _PLUGIN_CONTRACT_FIELDS)
+            modules.append(("native-plugin-contracts",
+                            tuple(contract_row(row) for row in rows),
+                            tuple((key, contract_row(by_id[key])) for key in sorted(by_id))))
+
+    import yaml
+    expected_python = _BASE_ARTIFACT_RUNTIME_ENTRYPOINTS.get(sys.executable)
+    if expected_python is None:
+        raise ManualJarvisSkillsError("pinned Python invocation path differs")
+    (expected_target, expected_version, expected_uid, expected_gid, expected_mode,
+     expected_size, expected_sha, expected_prefix, expected_base_prefix) = expected_python
+    if (tuple(sys.version_info[:3]) != expected_version
+            or sys.implementation.name != "cpython"
+            or yaml.__version__ != "6.0.3"
+            or not callable(yaml.safe_load) or not callable(yaml.safe_dump)
+            or not callable(yaml.load) or not callable(yaml.dump)):
+        raise ManualJarvisSkillsError("pinned Resources compiler runtime identity differs")
+    expected_yaml_path, yaml_uid, yaml_gid, yaml_mode, yaml_sha = \
+        _BASE_ARTIFACT_YAML_ORIGINS[sys.executable]
+    yaml_file = Path(yaml.__file__).resolve(strict=True)
+    yaml_spec = getattr(yaml, "__spec__", None)
+    if getattr(yaml_spec, "origin", None) != expected_yaml_path:
+        raise ManualJarvisSkillsError("pinned YAML package origin differs")
+    yaml_witness = _runtime_file_witness(
+        yaml_file, expected_path=expected_yaml_path, expected_uid=yaml_uid,
+        expected_gid=yaml_gid, expected_mode=yaml_mode, expected_size=None,
+        expected_sha256=yaml_sha, size_limit=1024 * 1024)
+    python_file = Path(sys.executable).resolve(strict=True)
+    python_witness = _runtime_file_witness(
+        python_file, expected_path=expected_target, expected_uid=expected_uid,
+        expected_gid=expected_gid, expected_mode=expected_mode, expected_size=expected_size,
+        expected_sha256=expected_sha, size_limit=expected_size)
+    prefix = str(Path(sys.prefix).resolve(strict=True))
+    base_prefix = str(Path(sys.base_prefix).resolve(strict=True))
+    if prefix != expected_prefix or base_prefix != expected_base_prefix:
+        raise ManualJarvisSkillsError("pinned Python environment identity differs")
+    modules.append(("python", sys.implementation.name, tuple(sys.version_info[:3]),
+                    sys.executable, python_witness, prefix, base_prefix, sys.implementation.cache_tag))
+    modules.append(("yaml", yaml, yaml.__version__, yaml_file,
+                    yaml.safe_load, getattr(yaml.safe_load, "__code__", None),
+                    yaml.safe_dump, getattr(yaml.safe_dump, "__code__", None),
+                    yaml.load, getattr(yaml.load, "__code__", None),
+                    yaml.dump, getattr(yaml.dump, "__code__", None),
+                    yaml.SafeLoader, yaml.SafeDumper))
+    modules.append(("yaml-origin", yaml_spec, yaml_witness))
+    for class_name, table_name in _BASE_ARTIFACT_YAML_TABLES:
+        loader_dumper = getattr(yaml, class_name)
+        table = getattr(loader_dumper, table_name, None)
+        if type(table) is not dict:
+            raise ManualJarvisSkillsError("pinned YAML parser table differs")
+        modules.append(("yaml-table", class_name, table_name,
+                        _literal_runtime_value(table, budget=runtime_budget)))
+    return tuple(modules)
+
+
+def _root_artifact_source_witness(source_root, expected_input_sha256):
+    """Hash the exact Root-owned, provenance-bound files used by the builder."""
+    source_root = Path(source_root)
+    resolved_root = source_root.resolve(strict=True)
+    if (resolved_root != source_root or source_root.name != "src"
+            or source_root.parent.parent != Path("/opt")
+            or not re.fullmatch(r"hermes-installer-core-[0-9a-f]{9,64}",
+                                source_root.parent.name)):
+        raise ManualJarvisSkillsError("fixed Resources builder source root differs")
+
+    def read_fixed(relative, *, mode, maximum, base=source_root):
+        parts = PurePosixPath(relative).parts
+        if (not parts or PurePosixPath(relative).is_absolute()
+                or any(part in {"", ".", ".."} for part in parts)):
+            raise ManualJarvisSkillsError("fixed Resources builder input path differs")
+        fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                     | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            for component in (*Path(base).parts[1:], *parts[:-1]):
+                child = os.open(component, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
+                st = os.fstat(child)
+                if (not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_gid != 0
+                        or stat.S_IMODE(st.st_mode) & 0o022):
+                    os.close(child)
+                    raise ManualJarvisSkillsError("Resources builder directory custody differs")
+                os.close(fd)
+                fd = child
+            name = parts[-1]
+            before = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
+                    or stat.S_IMODE(before.st_mode) != mode or before.st_nlink != 1
+                    or before.st_size < 0 or before.st_size > maximum):
+                raise ManualJarvisSkillsError("Resources builder input custody differs")
+            file_fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
+            try:
+                opened = os.fstat(file_fd)
+                if ((opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns,
+                     opened.st_ctime_ns) !=
+                        (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+                         before.st_ctime_ns)):
+                    raise ManualJarvisSkillsError("Resources builder input changed before read")
+                chunks = []
+                remaining = maximum + 1
+                while remaining:
+                    chunk = os.read(file_fd, min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                data = b"".join(chunks)
+                after_fd = os.fstat(file_fd)
+                after_name = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                signature = (before.st_dev, before.st_ino, before.st_size,
+                             before.st_mtime_ns, before.st_ctime_ns)
+                if (len(data) != before.st_size or len(data) > maximum
+                        or signature != (after_fd.st_dev, after_fd.st_ino, after_fd.st_size,
+                                         after_fd.st_mtime_ns, after_fd.st_ctime_ns)
+                        or signature != (after_name.st_dev, after_name.st_ino, after_name.st_size,
+                                         after_name.st_mtime_ns, after_name.st_ctime_ns)):
+                    raise ManualJarvisSkillsError("Resources builder input changed during read")
+                return hashlib.sha256(data).hexdigest(), signature, data
+            finally:
+                os.close(file_fd)
+        finally:
+            os.close(fd)
+
+    if (type(expected_input_sha256) is not tuple
+            or tuple(path for path, _digest in expected_input_sha256) != _BASE_ARTIFACT_INPUTS
+            or any(type(digest) is not str or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                   for _path, digest in expected_input_sha256)):
+        raise ManualJarvisSkillsError("reviewed Resources builder input pins differ")
+    expected_digests = dict(expected_input_sha256)
+    rows = []
+    total = 0
+    for relative in _BASE_ARTIFACT_INPUTS:
+        mode = 0o644
+        maximum = _BASE_ARTIFACT_CODE_LIMIT if relative.endswith(".py") else _BASE_ARTIFACT_SOURCE_LIMIT
+        digest, signature, _data = read_fixed(relative, mode=mode, maximum=maximum)
+        if digest != expected_digests[relative]:
+            raise ManualJarvisSkillsError("Resources builder input differs from its reviewed digest")
+        total += signature[2]
+        if total > _BASE_ARTIFACT_CLOSURE_LIMIT:
+            raise ManualJarvisSkillsError("Resources builder input closure exceeds its bound")
+        rows.append((relative, digest, signature))
+
+    generation = source_root.parent
+    receipt_digest, receipt_sig, receipt_raw = read_fixed(
+        ".source-provenance.json", mode=0o444, maximum=4096, base=generation)
+    total += receipt_sig[2]
+    if total > _BASE_ARTIFACT_CLOSURE_LIMIT:
+        raise ManualJarvisSkillsError("Resources builder input closure exceeds its bound")
+    try:
+        receipt = json.loads(receipt_raw, object_pairs_hook=_unique_pairs)
+    except (ValueError, TypeError):
+        raise ManualJarvisSkillsError("Resources source provenance is malformed") from None
+    if (type(receipt) is not dict
+            or set(receipt) != {"schema", "source_commit", "archive_sha256"}
+            or type(receipt.get("schema")) is not int or receipt["schema"] != 1
+            or not isinstance(receipt.get("source_commit"), str)
+            or re.fullmatch(r"[0-9a-f]{40}", receipt["source_commit"]) is None
+            or not isinstance(receipt.get("archive_sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", receipt["archive_sha256"]) is None
+            or source_root.parent.name != "hermes-installer-core-" + receipt["source_commit"][:9]
+            or receipt_raw != _canonical_json(receipt)):
+        raise ManualJarvisSkillsError("Resources source provenance differs")
+    return (tuple(rows), receipt_digest, receipt_sig,
+            receipt["source_commit"], receipt["archive_sha256"])
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
+
 
 class ManualJarvisSkillsError(RuntimeError):
     """The manual MVP skill stage cannot safely create or verify this generation."""
@@ -75,7 +664,7 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def build_manual_jarvis_skills_artifact() -> bytes:
+def _build_manual_jarvis_skills_artifact_uncached() -> bytes:
     """Build a deterministic import package from the checked-in verified source."""
     from .native import NativeRegistry
     from .source import load_bundled_source
@@ -286,6 +875,40 @@ def build_manual_jarvis_skills_artifact() -> bytes:
     if len(result) > _ARTIFACT_LIMIT:
         raise ManualJarvisSkillsError("manual Jarvis skill artifact exceeds its bound")
     return result
+
+
+def build_manual_jarvis_skills_artifact() -> bytes:
+    """Build a base artifact, reusing bytes only inside Core's held update."""
+    entry = _ROOT_UPDATE_ARTIFACT_CACHE.get()
+    if entry is None:
+        return _build_manual_jarvis_skills_artifact_uncached()
+    if (entry.seal is not _ROOT_UPDATE_ARTIFACT_CACHE_SEAL
+            or threading.get_ident() != entry.thread_id or not entry.is_current()):
+        entry.invalidate()
+        raise ManualJarvisSkillsError("Root update artifact cache authority changed")
+    try:
+        if entry.poisoned:
+            raise ManualJarvisSkillsError("Root update artifact cache operation was invalidated")
+        current_witness = entry.witness()
+        if entry.artifact is None:
+            artifact = _build_manual_jarvis_skills_artifact_uncached()
+            if (type(artifact) is not bytes or not artifact or len(artifact) > _ARTIFACT_LIMIT
+                    or not entry.is_current() or entry.witness() != current_witness):
+                raise ManualJarvisSkillsError("Resources builder inputs changed during artifact build")
+            entry.artifact = artifact
+            entry.artifact_sha256 = _sha256(artifact)
+            entry.source_witness = current_witness
+        elif (current_witness != entry.source_witness
+              or type(entry.artifact) is not bytes or not entry.artifact
+              or len(entry.artifact) > _ARTIFACT_LIMIT
+              or _sha256(entry.artifact) != entry.artifact_sha256):
+            raise ManualJarvisSkillsError("Resources builder input witness changed during Root update")
+        if not entry.is_current():
+            raise ManualJarvisSkillsError("Root update artifact cache operation ended")
+        return entry.artifact
+    except BaseException:
+        entry.invalidate()
+        raise
 
 
 def _zip_write(archive: zipfile.ZipFile, name: str, data: bytes) -> None:

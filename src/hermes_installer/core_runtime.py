@@ -100,6 +100,30 @@ _GUARDED_OLD_READ_ACTIVE={}
 _GUARDED_OLD_READ_CONTEXT=contextvars.ContextVar("core_guarded_old_read",default=None)
 _GUARDED_NEW_READ_CONTEXT=contextvars.ContextVar("core_guarded_new_read",default=None)
 _ADAPTER_UPDATE_LOCK_HELD=contextvars.ContextVar("adapter_update_lock_held",default=False)
+_ROOT_UPDATE_ARTIFACT_OPERATION=object()
+_ROOT_UPDATE_ARTIFACT_OPERATION_HELD=contextvars.ContextVar(
+ "root_update_artifact_operation_held",default=None)
+_ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256=(
+ ("hermes_installer/__init__.py","61ac3dfa3bd8505d5296065d597b9b76c4a42c1f17c706c2d67f4fee2b193242"),
+ ("hermes_installer/state.py","210b3495975e4c215aea1a9343123ab4c5de5ec4c1a30ba609ea5ad0a4d586b1"),
+ ("hermes_installer/network.py","f052318b5ab19a049115e5aa35583a9055f981b7a42064dc43f5fcbe2b60a14b"),
+ ("hermes_installer/components/__init__.py","eb02d685a1fb560210c2915296f7553e279e100b511d6b63892d3e877ccd7e7b"),
+ ("hermes_installer/components/catalog.py","58a64500628387065f2b11a453f73b084227951b1416003933b075246e167930"),
+ ("hermes_installer/components/skill_refs.py","39bb5f218f64644c550a2dc33c6a021a2731aef66234fcf9c6e7793744299d54"),
+ ("hermes_installer/components/native_plugins.py","a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7"),
+ ("hermes_installer/components/public_registries.py","c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f"),
+ ("hermes_installer/registry/__init__.py","e4421f50556d4ff8c5af4bc0249caf64938042e4ccfe704fc99f13f6c27e0102"),
+ ("hermes_installer/registry/types.py","1c4f37d894592db844a96cd40cff6cf1938d9108424727ca169d9cdf33607cd6"),
+ ("hermes_installer/registry/resolver.py","ba60e74b3f5742e3fdce3f8a51aa4f17a17e535eaeb2ebf59ed23532910ae279"),
+ ("hermes_installer/registry/source.py","990ceae1457abf1445ffec0bca0a415181c3b8a4728a1f2d00c76ff40d4aed86"),
+ ("hermes_installer/registry/native.py","ebd3ea99da913d7d5f35a6e6e034aae47c0502d764c0ee7acf6cd69846ce3df7"),
+ ("hermes_installer/registry/resources_runtime.py","796fd768188848d9c157befc2388d40c5379e968415d7896a75b0942ad242273"),
+ ("hermes_installer/registry/manual_jarvis_skills.py","93d02dbe3f220b92deaaa46ce207b0da48f25a0cebe2bf295862a6a0e8135d8a"),
+ ("hermes_installer/registry/jarvis_master_semantics.py","634c29e62295c6b7a66f016b966c1cfc59c3fb667a682227f5bda90b5b11d9a5"),
+ ("hermes_installer/registry/bundle_data/hermes-agent-resources.pin.json","f20474dbf05673bc2595c4b756d6183b5d6789d2aead2261dd7918a3853ea721"),
+ ("hermes_installer/registry/bundle_data/hermes-agent-resources-2.3.1.tar.gz","b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1"),
+ ("hermes_installer/registry/bundle_data/jarvis-master-semantics.json","013aa1f45f2ee8cfc7493eb7a3abe66e9c0668bfa4e548fc6cceaeb0ef378df7"),
+)
 _ADAPTER_STARTUP_COHORT_CONTEXT=contextvars.ContextVar("adapter_startup_cohort_context",default=None)
 _NATIVE_PLUGIN_TRANSITION_CONTEXT=contextvars.ContextVar("native_plugin_transition_context",default=None)
 _NATIVE_PLUGIN_TRANSITION_STATE=contextvars.ContextVar("native_plugin_transition_state",default=None)
@@ -365,6 +389,40 @@ def _adapter_update_lock():
   for fd in reversed(fds):
    try: fcntl.flock(fd,fcntl.LOCK_UN)
    finally: os.close(fd)
+
+@contextmanager
+def _root_update_artifact_cache():
+ """Scope one immutable base ZIP to the exact held Root adapter update."""
+ if (os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+     or _ROOT_UPDATE_ARTIFACT_OPERATION_HELD.get() is not None):
+  raise CoreRuntimeError("Root base-artifact reuse requires the held update lock")
+ from .registry import manual_jarvis_skills as native
+ expected_input_sha256=tuple(_ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256)
+ operation=_ROOT_UPDATE_ARTIFACT_OPERATION
+ thread_id=threading.get_ident()
+ active={"value":True}
+ token=_ROOT_UPDATE_ARTIFACT_OPERATION_HELD.set(operation)
+ def current():
+  return (active["value"] and os.geteuid()==ROOT_UID and _ADAPTER_UPDATE_LOCK_HELD.get()
+          and _ROOT_UPDATE_ARTIFACT_OPERATION_HELD.get() is operation
+          and threading.get_ident()==thread_id)
+ def witness():
+  if not current():
+   raise CoreRuntimeError("Root base-artifact operation custody changed")
+  _validate_adapter_source_path()
+  source_files=native._root_artifact_source_witness(
+      ADAPTER_SOURCE,expected_input_sha256)
+  compiler=native._loaded_compiler_identity(ADAPTER_SOURCE)
+  if not current():
+   raise CoreRuntimeError("Root base-artifact operation ended during verification")
+  return source_files,compiler
+ try:
+  with native._root_held_update_artifact_cache(
+      operation,is_current=current,witness=witness):
+   yield
+ finally:
+  active["value"]=False
+  _ROOT_UPDATE_ARTIFACT_OPERATION_HELD.reset(token)
 
 @dataclass(frozen=True, slots=True)
 class PreparedSameMaterializationTransition:
@@ -6370,7 +6428,8 @@ def restore_owned_core_adapter_update():
 
 def update_owned_core_adapter():
  with _adapter_update_lock():
-  return _update_owned_core_adapter_locked()
+  with _root_update_artifact_cache():
+   return _update_owned_core_adapter_locked()
 
 def _update_owned_core_adapter_locked():
  """Rebind one helper-only adapter generation as a single recoverable cohort."""

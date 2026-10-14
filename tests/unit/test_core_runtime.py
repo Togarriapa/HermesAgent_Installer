@@ -5,6 +5,7 @@ performed separately on the enrolled Pi.
 """
 import hashlib
 import contextlib
+import contextvars
 import ctypes
 import importlib.util
 import io
@@ -2050,6 +2051,220 @@ def _fixed_service_path_identity():
                          info.st_mtime_ns, info.st_ctime_ns,
                          hashlib.sha256(path.read_bytes()).hexdigest()))
     return tuple(identity)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="Root source custody is a Pi-only contract")
+def test_root_update_artifact_cache_requires_existing_held_lock(monkeypatch):
+    from hermes_installer.registry import manual_jarvis_skills as native
+
+    called = []
+    monkeypatch.setattr(native, "_build_manual_jarvis_skills_artifact_uncached",
+                        lambda: called.append(True) or b"should-not-build")
+    with pytest.raises(core.CoreRuntimeError, match="held update lock"):
+        with core._root_update_artifact_cache():
+            native.build_manual_jarvis_skills_artifact()
+    assert called == []
+    assert native._ROOT_UPDATE_ARTIFACT_CACHE.get() is None
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="Root source custody is a Pi-only contract")
+def test_root_update_reuses_only_one_verified_base_artifact_and_clears_scope(
+        monkeypatch):
+    from hermes_installer.registry import manual_jarvis_skills as native
+    from hermes_installer.registry import native as compiler_native
+
+    source_root = core.ADAPTER_SOURCE
+    source_witness = native._root_artifact_source_witness(
+        source_root, core._ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256)
+    assert len(source_witness[0]) == 19
+    assert re.fullmatch(r"[0-9a-f]{40}", source_witness[3])
+    assert source_root.parent.name == "hermes-installer-core-" + source_witness[3][:9]
+    wrong_pins = list(core._ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256)
+    wrong_pins[0] = (wrong_pins[0][0], "0" * 64)
+    with pytest.raises(native.ManualJarvisSkillsError, match="reviewed digest"):
+        native._root_artifact_source_witness(source_root, tuple(wrong_pins))
+    original_spool = native.tempfile.SpooledTemporaryFile
+    spool_calls = []
+
+    def counted_spool(*args, **kwargs):
+        spool_calls.append(True)
+        return original_spool(*args, **kwargs)
+
+    monkeypatch.setattr(native.tempfile, "SpooledTemporaryFile", counted_spool)
+    held_lock = core._ADAPTER_UPDATE_LOCK_HELD.set(True)
+    copied_context = None
+    try:
+        import yaml
+        loaded_identity = native._loaded_compiler_identity(source_root)
+        table = yaml.SafeLoader.yaml_constructors
+        marker = "tag:yaml.org,2002:fixture-mutation"
+        prior = table.get(marker)
+        had_marker = marker in table
+        try:
+            table[marker] = object()
+            assert native._loaded_compiler_identity(source_root) != loaded_identity
+        finally:
+            if had_marker:
+                table[marker] = prior
+            else:
+                table.pop(marker, None)
+
+        with core._root_update_artifact_cache():
+            entry = native._ROOT_UPDATE_ARTIFACT_CACHE.get()
+            first = native.build_manual_jarvis_skills_artifact()
+            second = native.build_manual_jarvis_skills_artifact()
+            assert first == second
+            assert spool_calls == [True]
+            baseline_witness = entry.witness()
+            original_identity_text = compiler_native._jarvis_identity_text
+            compiler_native._jarvis_identity_text = lambda value: value
+            try:
+                with pytest.raises(native.ManualJarvisSkillsError,
+                                   match="required loaded Resources compiler function"):
+                    entry.witness()
+            finally:
+                compiler_native._jarvis_identity_text = original_identity_text
+            assert entry.witness() == baseline_witness
+
+            yaml_table = yaml.SafeLoader.yaml_constructors
+            yaml_marker = "tag:yaml.org,2002:cache-hit-mutation"
+            yaml_prior = yaml_table.get(yaml_marker)
+            yaml_had_marker = yaml_marker in yaml_table
+            try:
+                yaml_table[yaml_marker] = object()
+                assert entry.witness() != baseline_witness
+            finally:
+                if yaml_had_marker:
+                    yaml_table[yaml_marker] = yaml_prior
+                else:
+                    yaml_table.pop(yaml_marker, None)
+            assert entry.witness() == baseline_witness
+            copied_context = contextvars.copy_context()
+            first_manifest, first_files = native._read_artifact(
+                first, hashlib.sha256(first).hexdigest())
+            second_manifest, second_files = native._read_artifact(
+                second, hashlib.sha256(second).hexdigest())
+            assert first_manifest == second_manifest and first_manifest is not second_manifest
+            assert first_files == second_files and first_files is not second_files
+            first_manifest["source"]["revision"] = "fixture mutation"
+            assert second_manifest["source"]["revision"] == native.PINNED_REVISION
+
+            from dataclasses import replace
+            from hermes_installer.components import native_plugins
+            original_rows = native_plugins.NATIVE_PLUGIN_ADAPTERS
+            original_by_id = native_plugins._PLUGIN_BY_ID
+            changed_row = replace(original_rows[0], status="fixture mutation")
+            native_plugins.NATIVE_PLUGIN_ADAPTERS = (changed_row, *original_rows[1:])
+            native_plugins._PLUGIN_BY_ID = {
+                row.adapter_id: row for row in native_plugins.NATIVE_PLUGIN_ADAPTERS
+            }
+            try:
+                with pytest.raises(native.ManualJarvisSkillsError,
+                                   match="input witness changed"):
+                    native.build_manual_jarvis_skills_artifact()
+                assert entry.poisoned and entry.artifact is None
+            finally:
+                native_plugins.NATIVE_PLUGIN_ADAPTERS = original_rows
+                native_plugins._PLUGIN_BY_ID = original_by_id
+        assert native._ROOT_UPDATE_ARTIFACT_CACHE.get() is None
+
+        with pytest.raises(native.ManualJarvisSkillsError,
+                           match="authority changed|invalidated"):
+            copied_context.run(native.build_manual_jarvis_skills_artifact)
+        assert spool_calls == [True]
+
+        # Outside the exact update scope, the public builder delegates afresh.
+        monkeypatch.setattr(native, "_build_manual_jarvis_skills_artifact_uncached",
+                            lambda: b"fresh-outside-operation")
+        assert native.build_manual_jarvis_skills_artifact() == b"fresh-outside-operation"
+
+        with pytest.raises(native.ManualJarvisSkillsError,
+                           match="required loaded Resources compiler function"):
+            native._loaded_compiler_identity(source_root)
+    finally:
+        core._ADAPTER_UPDATE_LOCK_HELD.reset(held_lock)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="Root source custody is a Pi-only contract")
+def test_root_update_artifact_cache_poisons_first_use_on_actual_source_pin_drift(monkeypatch):
+    from hermes_installer.registry import manual_jarvis_skills as native
+
+    pins = list(core._ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256)
+    pins[0] = (pins[0][0], "0" * 64)
+    monkeypatch.setattr(core, "_ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256", tuple(pins))
+    spool_calls = []
+    original_spool = native.tempfile.SpooledTemporaryFile
+    monkeypatch.setattr(native.tempfile, "SpooledTemporaryFile",
+                        lambda *args, **kwargs: spool_calls.append(True)
+                        or original_spool(*args, **kwargs))
+    held = core._ADAPTER_UPDATE_LOCK_HELD.set(True)
+    try:
+        with core._root_update_artifact_cache():
+            entry = native._ROOT_UPDATE_ARTIFACT_CACHE.get()
+            with pytest.raises(native.ManualJarvisSkillsError, match="reviewed digest"):
+                native.build_manual_jarvis_skills_artifact()
+            assert entry.poisoned and entry.artifact is None
+            with pytest.raises(native.ManualJarvisSkillsError, match="invalidated"):
+                native.build_manual_jarvis_skills_artifact()
+            assert spool_calls == []
+    finally:
+        core._ADAPTER_UPDATE_LOCK_HELD.reset(held)
+
+
+@pytest.mark.parametrize("changed_input", ["source", "code", "runtime", "receipt"])
+def test_root_update_artifact_cache_refuses_witness_drift_and_resets(
+        monkeypatch, changed_input):
+    from hermes_installer.registry import manual_jarvis_skills as native
+
+    state = {name: f"original-{name}" for name in ("source", "code", "runtime", "receipt")}
+    builds = []
+    monkeypatch.setattr(native, "_build_manual_jarvis_skills_artifact_uncached",
+                        lambda: builds.append(b"base") or b"base")
+    with native._root_held_update_artifact_cache(
+            object(), is_current=lambda: True, witness=lambda: tuple(sorted(state.items()))):
+        assert native.build_manual_jarvis_skills_artifact() == b"base"
+        state[changed_input] = f"changed-{changed_input}"
+        with pytest.raises(native.ManualJarvisSkillsError,
+                           match="input witness changed"):
+            native.build_manual_jarvis_skills_artifact()
+        assert native._ROOT_UPDATE_ARTIFACT_CACHE.get().artifact is None
+        with pytest.raises(native.ManualJarvisSkillsError, match="invalidated"):
+            native.build_manual_jarvis_skills_artifact()
+        assert builds == [b"base"]
+    assert native._ROOT_UPDATE_ARTIFACT_CACHE.get() is None
+
+
+def test_root_update_artifact_cache_refuses_lost_lock_and_clears_after_builder_error(
+        monkeypatch):
+    from hermes_installer.registry import manual_jarvis_skills as native
+
+    held = {"value": True}
+    calls = []
+    with native._root_held_update_artifact_cache(
+            object(), is_current=lambda: held["value"], witness=lambda: ("source",)):
+        monkeypatch.setattr(native, "_build_manual_jarvis_skills_artifact_uncached",
+                            lambda: calls.append("build") or b"base")
+        assert native.build_manual_jarvis_skills_artifact() == b"base"
+        held["value"] = False
+        with pytest.raises(native.ManualJarvisSkillsError,
+                           match="authority changed"):
+            native.build_manual_jarvis_skills_artifact()
+        assert native._ROOT_UPDATE_ARTIFACT_CACHE.get().artifact is None
+        with pytest.raises(native.ManualJarvisSkillsError,
+                           match="authority changed|invalidated"):
+            native.build_manual_jarvis_skills_artifact()
+    assert native._ROOT_UPDATE_ARTIFACT_CACHE.get() is None
+    assert calls == ["build"]
+
+    def fail_build():
+        raise RuntimeError("controlled builder failure")
+
+    monkeypatch.setattr(native, "_build_manual_jarvis_skills_artifact_uncached", fail_build)
+    with pytest.raises(RuntimeError, match="controlled builder failure"):
+        with native._root_held_update_artifact_cache(
+                object(), is_current=lambda: True, witness=lambda: ("source",)):
+            native.build_manual_jarvis_skills_artifact()
+    assert native._ROOT_UPDATE_ARTIFACT_CACHE.get() is None
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="adapter update proof requires the real root actor")
