@@ -1407,3 +1407,15 @@ were under `/var/tmp/hermes-native-guard-165-06db10559-20261014T004815Z-3236369/
 Update and restart groups were running with results pending; candidate 165 had
 not been adopted. Live source remained `0cb` with all four services active.
 Runtime acceptance remains open.
+
+### Candidate 165 qualification completion and apply pending
+
+Candidate 165's update group passed 2 in 613.71s (log SHA-256
+`3e0e78218c03c9a7761f75916d0b3f01bf8f2fe16fc2c4d5b9806b4a59dec8ee`); its
+restart group passed 2 in 341.57s (log SHA-256
+`2e877afdf785887f71b50cfb08c3557a5de400967255b5a5c0a9370deed8fd55`). The
+fast and listener groups passed as already recorded (7 in 7.53s and 2 in
+0.64s); all candidate 165 qualification groups passed. The protected
+candidate-165 `--apply` with union stdin launched as PID 3241564; its log is
+`p/candidate165-actual-adoption.log`, with result pending. No adoption
+acceptance is claimed.
