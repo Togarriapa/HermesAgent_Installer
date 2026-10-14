@@ -3389,7 +3389,7 @@ def test_startup_codex_selection_refuses_projection_read_failure(monkeypatch):
     assert not core._startup_codex_selection_is_current(inspector, selection)
 
 
-@pytest.mark.parametrize("drift_at,expected_enrollments", [
+@pytest.mark.parametrize("drift_at,expected_enrollments,expected_error", [
     ("before-enrollment", 0,
      "protected Codex model selection changed before enrollment"),
     ("after-completion", 1,
