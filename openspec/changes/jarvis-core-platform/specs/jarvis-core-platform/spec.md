@@ -2856,3 +2856,21 @@ The installer SHALL transport only fixed reviewed recovery definitions for one p
 - **THEN** Root invokes this one retained recovery and ordinary protected ingress rollback after verified prior Core restoration. Separate normal-source implementation/pins remain explicit; recovery success is neither new-adoption permission nor runtime acceptance.
 
 This fixed transport remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and all prior obligations.
+
+### Requirement: Immutable base artifact reuse is confined to one held Root update
+The installer SHALL reuse only verified immutable base artifact bytes within one existing held-Root update operation, while preserving all fresh authority, mutable owner-state and native verification boundaries and execution budgets.
+
+#### Scenario: The same immutable source is built repeatedly during one update
+- **WHEN** the exact Root actor and adapter lock hold the same sealed operation and all finite builder inputs/code/runtime/receipt witnesses remain independently current
+- **THEN** at most one bounded base bytes result may be reused, with exact byte SHA/length and complete freshly read no-follow input custody/digest/stable identity proof on every hit. Existing source-generation checks remain fresh; there is no cross-operation/thread/session/global/persistent cache or new authority producer.
+- **AND** callers parse independent structures and freshly read/compose owner overlays, verify installed membership/tree, SOUL/primary/journal/Resources/CAS/process/lease/provider joins and perform every existing independent396-skill native query. No mutable receipt, native result or effective owner artifact is reused.
+
+#### Scenario: Source or operation identity changes
+- **WHEN** any fixed source input, protected receipt, loaded builder/compiler/runtime identity, actor/lock/seal/operation, byte bound/hash or stable custody witness differs
+- **THEN** the entry is invalidated and the current operation refuses without stale-input fallback, later effects, source/history rewriting or authority/budget weakening. Finally removes all entry state on success, failure and interruption; outside the scoped update the original fresh builder remains the behavior.
+
+#### Scenario: Reduced build work is qualified without losing verification
+- **WHEN** Pi exercises genuine update/restart/interruption and source/owner mutation denials, independent parsing, cleanup and native396/count-preservation contracts
+- **THEN** repeated in-operation builds have identical fresh bytes and one actual builder invocation while every mutable/native check remains. Root qualifies the exact source/pins and current candidate before actual adoption; Jarvis/provider/Resources/public UI proof remains separately required, and300s/110s deadlines stay unchanged.
+
+This narrow build-reuse refinement remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and every earlier obligation.
