@@ -397,7 +397,7 @@ def _bounded_owner_generation_restore_failure():
         sys.settrace(previous)
 
 
-def _systemd_decoded_exec_start_pre(unit_bytes):
+def _systemd_decoded_exec_start_pre(unit_bytes, *, runner=None):
     """Read the manager-decoded ExecStartPre argv for an exact temporary unit."""
     if os.geteuid() != 0:
         raise AssertionError("systemd directive decoding requires the enrolled Pi root actor")
@@ -415,10 +415,11 @@ def _systemd_decoded_exec_start_pre(unit_bytes):
     path = root / name
     content = (b"[Unit]\nDescription=No-start ExecStartPre decoder fixture\n"
                b"[Service]\nType=oneshot\n" + directive + b"\nExecStart=/usr/bin/true\n")
+    run = subprocess.run if runner is None else runner
     def checked(argv, *, maximum=1024 * 1024):
-        result = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, check=False, timeout=15,
-                                close_fds=True)
+        result = run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                     stderr=subprocess.PIPE, check=False, timeout=15,
+                     close_fds=True)
         if (result.returncode != 0 or len(result.stdout) > maximum
                 or len(result.stderr) > 8192):
             raise AssertionError("bounded systemd parser query failed")
@@ -2401,7 +2402,8 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
                 current_unit = core.UNIT.read_bytes()
                 status = _exec_start_pre(
                     current_unit, expect_success=True,
-                    systemd_argv=_systemd_decoded_exec_start_pre(current_unit),
+                    systemd_argv=_systemd_decoded_exec_start_pre(
+                        current_unit, runner=guard_runner),
                     credential_projection=True)
                 if status:
                     guard_denials.append(status)
@@ -2595,7 +2597,8 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
         backup_generation=prior["adapter_generation"], native_plugin_transition=True,
         failure_diagnostics=True, whole_guard_encoding=True,
         credential_projection=True)
-    expected_new_unit_argv = _systemd_decoded_exec_start_pre(expected_new_unit)
+    expected_new_unit_argv = _systemd_decoded_exec_start_pre(
+        expected_new_unit, runner=guard_runner)
     backup_credentials = [row for row in expected_new_unit.decode().splitlines()
         if row.startswith("LoadCredential=adapter-backup-")]
     assert len(backup_credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 3
@@ -2838,7 +2841,8 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     interrupted_unit = core.UNIT.read_bytes()
     assert _exec_start_pre(interrupted_unit, expect_success=False,
                            runner=guard_runner,
-                           systemd_argv=_systemd_decoded_exec_start_pre(interrupted_unit),
+                           systemd_argv=_systemd_decoded_exec_start_pre(
+                               interrupted_unit, runner=guard_runner),
                            credential_projection=True) != 0
 
     monkeypatch.setattr(core, "_atomic_replace", replace_atomic)
@@ -2880,7 +2884,8 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
             starting_unit = core.UNIT.read_bytes()
             assert _exec_start_pre(starting_unit, expect_success=True,
                                    runner=guard_runner, diagnostic=True,
-                                   systemd_argv=_systemd_decoded_exec_start_pre(starting_unit),
+                                   systemd_argv=_systemd_decoded_exec_start_pre(
+                                       starting_unit, runner=guard_runner),
                                    credential_projection=True) == 0
             raise KeyboardInterrupt()
         return real_run(argv, check)
@@ -2904,7 +2909,8 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     partial_unit = core.UNIT.read_bytes()
     assert _exec_start_pre(partial_unit, expect_success=False,
                            runner=guard_runner,
-                           systemd_argv=_systemd_decoded_exec_start_pre(partial_unit),
+                           systemd_argv=_systemd_decoded_exec_start_pre(
+                               partial_unit, runner=guard_runner),
                            credential_projection=True) != 0
 
     monkeypatch.setattr(core, "_atomic_replace", atomic_replace)
