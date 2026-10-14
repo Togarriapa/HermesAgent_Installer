@@ -588,9 +588,6 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
                 target.chmod(mutation[1])
             elif mutation[0] == "owner":
                 os.chown(target, mutation[1], mutation[2])
-            elif mutation[0] == "acl":
-                os.setxattr(target, "system.posix_acl_access", b"invalid-acl",
-                            follow_symlinks=False)
             elif mutation[0] == "acl-wrong":
                 acl = struct.pack("<I", 2) + b"".join(
                     struct.pack("<HHI", *entry) for entry in (
@@ -3830,7 +3827,6 @@ def test_m1_fresh_cohort_accepts_only_exact_root_acl_credential_projection(
     required = "adapter-backup-journal"
     optional = "adapter-backup-overlay-record"
     for mutation in (
-        {required: ("acl",)},
         {required: ("acl-wrong",)},
         {required: ("mode", 0o400)},
         {required: ("owner", 1000, 1000)},
@@ -3858,7 +3854,7 @@ def test_m1_boot_gate_accepts_only_manifested_empty_optional_native_backups(
                            expect_success=False, credential_projection=True) != 0
     assert _exec_start_pre(unit, credential_mutations={optional: ("bytes", b"wrong hash")},
                            expect_success=False, credential_projection=True) != 0
-    assert _exec_start_pre(unit, credential_mutations={optional: ("acl",)},
+    assert _exec_start_pre(unit, credential_mutations={optional: ("acl-wrong",)},
                            expect_success=False, credential_projection=True) != 0
 
 

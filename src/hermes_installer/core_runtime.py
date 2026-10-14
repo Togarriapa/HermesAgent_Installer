@@ -2835,14 +2835,20 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
    transition_code=(
     "transition=c.get('native_plugin_transition'); transition_fields={'schema','purpose','old_adapter_generation','new_adapter_generation','plugin_selection_sha256','old_members','new_members'}; "
     "member_map_ok=lambda m:(type(m) is dict and set(m)=={'plugin.yaml','__init__.py'} and all(type(x) is str and len(x)==64 and all(ch in '0123456789abcdef' for ch in x) for x in m.values())); "
-    "prior_backup_journal=json.loads(open(os.path.join(base,'adapter-backup-journal'),'rb').read()); "
+    "prior_backup_journal=json.loads("+(
+     "credential_data['adapter-backup-journal']" if credential_projection else
+     "open(os.path.join(base,'adapter-backup-journal'),'rb').read()")+"); "
     "transition_ok=(type(transition) is dict and set(transition)==transition_fields and type(transition.get('schema')) is int and transition.get('schema')==1 and transition.get('purpose')=='fixed-native-resources-plugin' and transition.get('old_adapter_generation')==c.get('old_adapter_generation') and transition.get('new_adapter_generation')==c.get('new_adapter_generation') and transition.get('plugin_selection_sha256')==d.get('plugin_selection_sha256')==prior_backup_journal.get('plugin_selection_sha256') and member_map_ok(transition.get('old_members')) and member_map_ok(transition.get('new_members')) and transition['old_members']['plugin.yaml']==transition['new_members']['plugin.yaml'] and transition['old_members']['__init__.py']!=transition['new_members']['__init__.py'] and type(backup_files) is dict and backup_files.get('native-plugin-plugin.yaml')==transition['old_members']['plugin.yaml'] and backup_files.get('native-plugin-__init__.py')==transition['old_members']['__init__.py'] and plugin_members_ok); "
    )
   else:
    transition_code="transition_ok=(c.get('native_plugin_transition') is None); "
+  credential_file_mode="0o440" if credential_projection else "0o400"
   projection_code=("exec(bytes.fromhex("+
       repr(_projected_credential_guard_code(backup_members).encode("ascii").hex())+
       ").decode('ascii')); ") if credential_projection else ""
+  projection_bindings=(
+   "projection_bindings_ok=(projection_ok and raw==credential_data.get('core-ownership-journal') and token==credential_data.get('hermes-session-token') and cr==credential_data.get('adapter-update-cohort') and rr==credential_data.get('resources-discovery')); "
+   if credential_projection else "projection_bindings_ok=True; ")
   if credential_projection:
    manifest_read=("backup_manifest_path=os.path.join(base,backup_manifest_name); backup_manifest_stat=None; backup_raw=credential_data.get(backup_manifest_name,b''); ")
    backup_shape=("(projection_ok and isinstance(backup,dict) and type(backup_files) is dict and set(backup_files)==set(backup_members) and backup.get('source_generation')==backup_generation and backup.get('path')=="+repr(str(ADAPTER_UPDATE_BACKUPS)+"/")+"+backup_generation and backup_raw==canonical(backup_files) and 0<len(backup_raw)<=4096)")
@@ -2861,14 +2867,15 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
     "legacy_keys=set("+repr(tuple(sorted(_ADAPTER_COHORT_LEGACY_FIELDS)))+"); "
     "canonical=lambda v:(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False)+'\\n').encode('ascii'); "
     "recipe=lambda s,g,u,l:hashlib.sha256(canonical({'schema':1,'source':s,'generation':g,'unit_sha256':u,'launcher_sha256':l})).hexdigest(); "
-    "cp_ok=(stat.S_ISREG(cs.st_mode) and stat.S_IMODE(cs.st_mode)==0o400 and cs.st_nlink==1 and 0<len(cr)==cs.st_size<=131072); "
-    "rp_ok=(stat.S_ISREG(rs.st_mode) and stat.S_IMODE(rs.st_mode)==0o400 and rs.st_nlink==1 and 0<len(rr)==rs.st_size<=16384); "
+    "cp_ok=(stat.S_ISREG(cs.st_mode) and stat.S_IMODE(cs.st_mode)=="+credential_file_mode+" and cs.st_nlink==1 and 0<len(cr)==cs.st_size<=131072); "
+    "rp_ok=(stat.S_ISREG(rs.st_mode) and stat.S_IMODE(rs.st_mode)=="+credential_file_mode+" and rs.st_nlink==1 and 0<len(rr)==rs.st_size<=16384); "
     "phase=c.get('phase'); starting=phase in ('source-starting','bindings-verified'); expected_j=c.get('starting_journal_sha256') if starting else c.get('new_journal_sha256'); expected_r=c.get('starting_resources_record_sha256') if starting else c.get('new_resources_record_sha256'); "
     "reconstruction=c.get('reconstruction'); reconstruction_ok=(isinstance(reconstruction,dict) and hashlib.sha256(canonical(reconstruction)).hexdigest()==c.get('reconstruction_sha256') and reconstruction.get('cohort_transaction_id')==c.get('cohort_transaction_id') and reconstruction.get('phase')==phase and reconstruction.get('old_core_source_generation')==c.get('old_core_source_generation') and reconstruction.get('new_core_source_generation')==c.get('new_core_source_generation') and reconstruction.get('old_source_recipe_sha256')==c.get('old_source_recipe_sha256') and reconstruction.get('new_source_recipe_sha256')==c.get('new_source_recipe_sha256')); "
     "backup=d.get('adapter_update_backup'); backup_members="+repr(backup_members)+"; "
     "backup_generation="+repr(backup_generation)+"; "
     "backup_manifest_name='adapter-backup-manifest'; "
     projection_code+
+    projection_bindings+
     manifest_read+
     "backup_files=(backup.get('files') if isinstance(backup,dict) else None); "
     "backup_ok="+backup_shape+"; "
@@ -2878,7 +2885,7 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
     "initial=c.get('initial_primary_transition'); initial_ok=(initial is None or (isinstance(initial,dict) and initial.get('purpose')=='initial-primary-adoption' and initial.get('prior_record_state')=='absent' and initial.get('state') in ('pending','adopted') and ((initial.get('state')=='pending' and c.get('primary_record_sha256')=='absent' and initial.get('owner_backup_sha256') is None) or (initial.get('state')=='adopted' and initial.get('adopted_record_sha256')==c.get('primary_record_sha256') and initial.get('after_resources_record_sha256')==c.get('starting_resources_record_sha256'))))); "
     "keys_ok=(set(c)==keys or (set(c)==legacy_keys and c.get('native_plugin_transition') is None)); "
     ""+transition_script+transition_code+
-    "cohort_ok=(backup_ok and cp_ok and rp_ok and initial_ok and transition_ok and canonical(c)==cr and keys_ok and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home' and c.get('owner_generation_backup_name')=='.jarvis-resources-skills-helper-transition-'+c.get('cohort_transaction_id') and phase in ('source-starting','bindings-verified','committed') and reconstruction_ok and c.get('new_source')==source and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==recipe(source,d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256')) and expected_j==hashlib.sha256(raw).hexdigest() and expected_r==hashlib.sha256(rr).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(raw).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256') and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and d.get('adapter_update_target_source')==source and d.get('adapter_update_target_generation')==d.get('adapter_generation') and ((starting and d.get('adapter_update_state')=='starting') or (phase=='committed' and d.get('adapter_update_state')=='active')) and hashlib.sha256(open('/etc/systemd/system/hermes-jarvis-core.service','rb').read()).hexdigest()==c.get('new_unit_sha256') and hashlib.sha256(open('/usr/local/libexec/hermes-jarvis-core-launcher','rb').read()).hexdigest()==c.get('new_launcher_sha256')); "
+    "cohort_ok=(projection_bindings_ok and backup_ok and cp_ok and rp_ok and initial_ok and transition_ok and canonical(c)==cr and keys_ok and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home' and c.get('owner_generation_backup_name')=='.jarvis-resources-skills-helper-transition-'+c.get('cohort_transaction_id') and phase in ('source-starting','bindings-verified','committed') and reconstruction_ok and c.get('new_source')==source and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==recipe(source,d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256')) and expected_j==hashlib.sha256(raw).hexdigest() and expected_r==hashlib.sha256(rr).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(raw).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256') and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and d.get('adapter_update_target_source')==source and d.get('adapter_update_target_generation')==d.get('adapter_generation') and ((starting and d.get('adapter_update_state')=='starting') or (phase=='committed' and d.get('adapter_update_state')=='active')) and hashlib.sha256(open('/etc/systemd/system/hermes-jarvis-core.service','rb').read()).hexdigest()==c.get('new_unit_sha256') and hashlib.sha256(open('/usr/local/libexec/hermes-jarvis-core-launcher','rb').read()).hexdigest()==c.get('new_launcher_sha256')); "
     "ok=ok and cohort_ok; ")
  else:
   gate_code=""
