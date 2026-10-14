@@ -1731,3 +1731,16 @@ These are audited-probe measurements, not a normal baseline or full M1
 acceptance. The full 396-view memo probe had just started at
 `p/candidate181-native-parse-full396.log`; its result was pending. No actual
 candidate-181 apply had occurred.
+
+### Candidate 181 full-view memo probe and apply pending
+
+The audited 396-view memo probe completed in 18742ms with 179388 PATH reads,
+396 locator calls, 454ms parsing and all content matches true (exit 0). It
+retained blocked write `23/pm_import6` and network/process effects 0. The exact
+V5 helper/source/memo identity remains as above. Log:
+`p/candidate181-native-parse-full396.log`. This establishes all 396 native
+views under audited conditions, not an uncurbed functional PM/UI target claim.
+The protected candidate-181 apply with union stdin had just launched at
+`p/candidate181-actual-adoption.log`; result was pending. Core `6992` remained
+unchanged, the original 300s deadline was unchanged, and no M1 acceptance is
+claimed pending actual readback.
