@@ -3854,8 +3854,23 @@ def test_m1_boot_gate_accepts_only_manifested_empty_optional_native_backups(
                            expect_success=False, credential_projection=True) != 0
     assert _exec_start_pre(unit, credential_mutations={optional: ("bytes", b"wrong hash")},
                            expect_success=False, credential_projection=True) != 0
-    assert _exec_start_pre(unit, credential_mutations={optional: ("acl-wrong",)},
-                           expect_success=False, credential_projection=True) != 0
+    wrong_acl = _exec_start_pre(unit,
+        credential_mutations={optional: ("acl-wrong",)},
+        expect_success=False, return_result=True,
+        systemd_argv=_systemd_decoded_exec_start_pre(unit),
+        credential_projection=True)
+    assert wrong_acl.returncode == 1
+    assert wrong_acl.stdout == b"FIXTURE_NAMESPACE_READY\n"
+    assert len(wrong_acl.stderr.splitlines()) == 1
+    assert wrong_acl.stderr.startswith(b"HERMES_CORE_START_GUARD_FAILURE_V1=")
+    wrong_acl_payload = json.loads(wrong_acl.stderr.partition(b"=")[2])
+    assert wrong_acl_payload["flags"]["backup_ok"] is False
+    assert wrong_acl_payload["flags"]["ok"] is False
+    assert wrong_acl.stderr == (
+        b"HERMES_CORE_START_GUARD_FAILURE_V1="
+        + json.dumps(wrong_acl_payload, sort_keys=True, separators=(",", ":"),
+                     ensure_ascii=True, allow_nan=False).encode("ascii")
+        + b"\n")
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
@@ -4011,7 +4026,7 @@ def test_m1_cohort_accepts_only_its_exact_legacy_or_diagnostic_guard_recipe(
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="unit recipe stability is qualified on the enrolled Pi")
 def test_m1_historical_core_unit_variants_remain_exact_bytes():
-    # Golden output from Pi-verified Core commit
+    # Golden output from the Pi-verified Core source SHA-256
     # 0727ee1d5321f868312ecdca738239907aeb458c9467f24f670cae0cd7a412a6.
     # These six recipes remain the exact compatibility set for old cohorts.
     source = Path("/opt/hermes-installer-core-fixture/src")
