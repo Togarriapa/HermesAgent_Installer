@@ -6,6 +6,7 @@ performed separately on the enrolled Pi.
 import hashlib
 import contextlib
 import ctypes
+import importlib.util
 import io
 import json
 import os
@@ -2819,7 +2820,162 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
 
         monkeypatch.setattr(core, "_restore_adapter_update_owner_generation",
                             restore_owner_generation)
-        core._recover_interrupted_adapter_update()
+
+        transport_mode = os.environ.get(
+            "HERMES_PI_FIXED_RECOVERY_TRANSPORT_FIXTURE")
+        if transport_mode is None:
+            core._recover_interrupted_adapter_update()
+        else:
+            assert transport_mode == "1"
+            # Exercise the fixed recovery transport against the unchanged failed
+            # Core module. The only changed code objects are the two reviewed
+            # currentness functions; the public restore API, module identity,
+            # ADAPTER_SOURCE and all other authority bindings remain c91.
+            transport_path = (Path(__file__).resolve().parents[2]
+                              / "tools" / "pi_core_fixed_recovery_transport.py")
+            assert hashlib.sha256(transport_path.read_bytes()).hexdigest() == (
+                "30396d624ec12947d70403420f5e42eaaddf0011f485a137f6a33e956151f61a")
+            transport_spec = importlib.util.spec_from_file_location(
+                "_fixed_core_recovery_transport_contract", transport_path)
+            assert transport_spec is not None and transport_spec.loader is not None
+            transport = importlib.util.module_from_spec(transport_spec)
+            transport_spec.loader.exec_module(transport)
+            failed_source = transport._source_snapshot(
+                transport._FAILED_COMMIT, transport._FAILED_ARCHIVE_SHA256,
+                transport._FAILED_CORE_SHA256)
+            fix_source = transport._source_snapshot(
+                transport._FIX_COMMIT, transport._FIX_ARCHIVE_SHA256,
+                transport._FIX_CORE_SHA256)
+            assert core.ADAPTER_SOURCE == failed_source[0]
+            assert Path(core.__file__).resolve(strict=True) == (
+                failed_source[0] / "hermes_installer" / "core_runtime.py").resolve(strict=True)
+            assert hashlib.sha256(Path(core.__file__).read_bytes()).hexdigest() == (
+                transport._FAILED_CORE_SHA256)
+            code_objects = transport._definition_code_objects(
+                fix_source[1], expected_sha256=transport._FIX_CORE_SHA256)
+
+            cohort, cohort_raw = core._read_adapter_update_cohort()
+            reference = core._adapter_update_backup_reference(cohort)
+            prior_raw = backup_contents["journal.json"]
+            prior_record = json.loads(prior_raw)
+            retained_cohort_sha = core._retained_committed_adapter_cohort_sha256(
+                cohort, cohort_raw)
+            assert retained_cohort_sha is not None
+            refresh = {
+                "schema": 1,
+                "purpose": "adapter-refresh",
+                "old_core_journal_sha256": hashlib.sha256(prior_raw).hexdigest(),
+                "old_core_adapter_source": prior_record["adapter_source"],
+                "old_core_adapter_generation": prior_record["adapter_generation"],
+                "old_core_source_generation": prior_record["core_source_generation"],
+                "old_inspector_process_identity_sha256": hashlib.sha256(
+                    b"isolated test fixture: no prior inspector").hexdigest(),
+                "old_observer_state": "absent",
+                "old_observer_device": None,
+                "old_observer_inode": None,
+                "core_update_backup_reference": reference,
+                "core_update_cohort_transaction_id": cohort["cohort_transaction_id"],
+                "core_update_cohort_sha256": retained_cohort_sha,
+            }
+            ingress = {"schema": 1, "state": "recovery-required",
+                       "candidate_sha": transport._FAILED_COMMIT,
+                       "adapter_refresh": refresh}
+            ingress_raw = core._canonical_json(ingress)
+            core._atomic_replace(core.NATIVE_ADOPTION_INGRESS_BACKUP, ingress_raw,
+                                 0o600, core.ROOT_UID, core.ROOT_UID)
+            captured_target = transport._capture_exact_target(core)
+            assert captured_target["cohort_raw"] == cohort_raw
+            assert captured_target["ingress_raw"] == ingress_raw
+
+            protected_names = {
+                "_check_adapter_cohort_rollback_currentness",
+                "_verify_absent_initial_primary_rollback",
+            }
+            original_bindings = {
+                name: (name in core.__dict__, core.__dict__.get(name))
+                for name in protected_names
+            }
+            authority_bindings = {name: id(value) for name, value in core.__dict__.items()
+                                  if name not in protected_names}
+
+            def target_guard(received_cohort, prior, contents):
+                assert core._ADAPTER_UPDATE_LOCK_HELD.get() is True
+                live_cohort, live_raw = core._read_adapter_update_cohort()
+                live_ingress = core._projection_file(
+                    core.NATIVE_ADOPTION_INGRESS_BACKUP, owner=core.ROOT_UID,
+                    group=core.ROOT_UID, mode=0o600, maximum=128 * 1024)
+                assert live_raw == cohort_raw and live_cohort == cohort
+                assert live_ingress == ingress_raw
+                assert received_cohort == cohort
+                assert prior == prior_record
+                assert contents["journal.json"] == prior_raw
+                assert (hashlib.sha256(contents["journal.json"]).hexdigest()
+                        == refresh["old_core_journal_sha256"])
+                transport._recheck_source_snapshot(failed_source)
+                transport._recheck_source_snapshot(fix_source)
+
+            def reject_ingress_drift(received_cohort, prior, contents):
+                live_ingress = core._projection_file(
+                    core.NATIVE_ADOPTION_INGRESS_BACKUP, owner=core.ROOT_UID,
+                    group=core.ROOT_UID, mode=0o600, maximum=128 * 1024)
+                if live_ingress != ingress_raw:
+                    raise core.CoreRuntimeError("fixture ingress drifted before restore")
+                target_guard(received_cohort, prior, contents)
+
+            # Model an ingress change after the public API has captured its row,
+            # so the transported guard must reject it before recovery effects.
+            original_read_cohort = core._read_adapter_update_cohort
+            drifted = {"done": False}
+
+            def read_cohort_then_drift(*args, **kwargs):
+                result = original_read_cohort(*args, **kwargs)
+                if not drifted["done"]:
+                    drifted["done"] = True
+                    changed = dict(ingress)
+                    changed_refresh = dict(refresh)
+                    changed_refresh["old_inspector_process_identity_sha256"] = "f" * 64
+                    changed["adapter_refresh"] = changed_refresh
+                    core._atomic_replace(
+                        core.NATIVE_ADOPTION_INGRESS_BACKUP,
+                        core._canonical_json(changed), 0o600,
+                        core.ROOT_UID, core.ROOT_UID)
+                return result
+
+            calls_before_guard_denial = list(_calls)
+            monkeypatch.setattr(core, "_read_adapter_update_cohort", read_cohort_then_drift)
+            with pytest.raises(core.CoreRuntimeError):
+                transport._restore_with_transported_functions(
+                    core, code_objects, reject_ingress_drift)
+            monkeypatch.setattr(core, "_read_adapter_update_cohort", original_read_cohort)
+            assert drifted["done"]
+            assert not any(call[0][:2] in {
+            ("systemctl", "stop"), ("systemctl", "start"),
+            ("systemctl", "restart"), ("systemctl", "enable"),
+            ("systemctl", "disable"), ("native-plugin", "install"),
+            ("native-plugin", "restore"),
+            } for call in _calls[len(calls_before_guard_denial):])
+            assert core.JOURNAL.read_bytes() == prior
+            assert primary_manager._read_soul(core)[0] == original_soul
+            assert stage_path.read_bytes() == stage_raw
+            assert backup_path.read_bytes() == backup_raw
+            assert core.TOKEN.read_bytes() == token
+            assert recovery_snapshot() == protected_before_refusals
+            assert all((name in core.__dict__) == existed
+                       and (not existed or core.__dict__[name] is value)
+                       for name, (existed, value) in original_bindings.items())
+            assert {name: id(value) for name, value in core.__dict__.items()
+                    if name not in protected_names} == authority_bindings
+
+            core._atomic_replace(core.NATIVE_ADOPTION_INGRESS_BACKUP, ingress_raw,
+                                 0o600, core.ROOT_UID, core.ROOT_UID)
+            result = transport._restore_with_transported_functions(
+                core, code_objects, target_guard)
+            assert "exact interrupted Core cohort restored" in result
+            assert all((name in core.__dict__) == existed
+                       and (not existed or core.__dict__[name] is value)
+                       for name, (existed, value) in original_bindings.items())
+            assert {name: id(value) for name, value in core.__dict__.items()
+                    if name not in protected_names} == authority_bindings
     else:
         with _bounded_owner_generation_restore_failure():
             with pytest.raises(core.CoreRuntimeError, match="injected adapter update restart failure"):
