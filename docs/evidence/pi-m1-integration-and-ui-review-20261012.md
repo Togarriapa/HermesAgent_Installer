@@ -2074,3 +2074,15 @@ Evidence: `candidate202-stage.log`, `candidate202-specs.json`,
 `candidate202-gates.log`. One separately qualified protected observation was
 started in `candidate202-actual-adoption.log`; tests alone do not establish
 genuine model completion or M1 acceptance.
+
+The exact candidate202 protected observation failed after144.426s with
+validated returncode4 and CLI exit4. Report emission occurred at144.243s,
+with seven phase records and none rejected. The existing closed source origin
+again identified `terminal` / `CoreNativeObservationUnavailable`; this does
+not distinguish a native incomplete result from an observer denial or a
+different final response. The source correction remains valid but has not
+established startup completion. Automatic recovery verified the prior
+Core/ingress cohort and fresh reads confirmed all four owned services active.
+No further retry follows from this result alone. The next bounded diagnosis
+must inspect the pinned middleware/request seams and preserve every genuine
+completion gate without exposing private response or SDK error text.
