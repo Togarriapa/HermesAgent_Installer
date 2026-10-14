@@ -1469,9 +1469,32 @@ The candidate-168 adopter exited 4. Its canonical
 `HERMES_CORE_QUALIFICATION_FAILURE_V1` report identified exact candidate
 `56832d13049505c4fb63a41f21e2d2d00d4c413c` and archive
 `bad473833ac3fd1bcd503508074f05286c03098e95965c064bf8b694b63f224b`, schema 1,
-reason `TIMEOUT`, elapsed 300000ms (capped), and null return code, stdout bytes
+reason `timeout`, elapsed 300000ms (capped), and null return code, stdout bytes
 and stderr bytes. Automatic recovery verified prior Core and ingress; all four
 services were active. The log is `p/candidate168-actual-adoption.log`. This
 establishes only the wrapper's 300-second timeout, not an inner blocking phase,
 cause, or adoption acceptance. Sol and Native were investigating before any
 retry or deadline change.
+
+## Candidates 169–171 source and gate evidence
+
+Sol's four-artifact refinement 169 (`7e83`), Root candidate
+`e5c2316ba955e3f54f7f434805e2fe8f3b3dd3bc`, archive SHA-256
+`53e2b4ea5ec5c81c8a611b202d29cd7886fbfbb243453d65c6a741aa88fb2e67`, passed
+strict Pi spec/plan validation with 0 errors. Measured timing `6959d7e0c` and
+phase source `cd512` passed Sol review; Root imported them as
+`3aeeec14bad68d0b2684063eb1dcd54cded3ca5b`, archive SHA-256
+`c696918273355b59e554ad89027f5afdd94320dd7cd559c6d030aca040ebae21`. Core
+`6992` remained unchanged. No actual apply result is recorded here.
+
+Candidate 170 passed spec/plan validation and 95 pytest tests in 0.82s, then a
+shared test fixture replaced `sys.flags` with `SimpleNamespace` and caused a
+pytest internal error because `verbose` was missing (exit 3). No actual apply
+was run. Test-only correction `08e767` passed Sol review and was imported as
+Root `bffc9b160968497f2d80ab851ddb149db9109b6b`, archive SHA-256
+`fcaedd33113ff65bd835eccedacfc04ddcd79994262a3346de25f1e1a262a495`; test
+`472e232e8537e547990c517aee4d4514f93b90e63dcb1180c4aa09b078909ffe` uses a real
+flag proxy. Candidate 171's Pi gate remained pending.
+
+All runtime acceptance remains open. The last observed prior state had all four
+services active; no newer live claim is made.
