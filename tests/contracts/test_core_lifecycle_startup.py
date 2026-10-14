@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import contextlib
 import os
 import sys
 import threading
@@ -255,7 +254,11 @@ def test_startup_diagnostic_exception_vocabulary_uses_exact_type_identity():
 
 
 @pytest.mark.parametrize("failure_stage", [
-    "root_claim", "route", "agent_setup", "conversation", "terminal", "success", "close",
+    "root_claim", "route", "agent_setup", "prompt_cached", "prompt_empty_cache",
+    "prompt_cache_wrong_type",
+    "prompt_helper", "prompt_composer", "prompt_wrong_type", "prompt_identity_missing",
+    "prompt_oversized", "prompt_closure_changed", "prompt_digest_changed",
+    "conversation", "terminal", "success", "close",
 ])
 def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         monkeypatch, tmp_path, failure_stage):
@@ -291,8 +294,48 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                         lambda _resolver: cohort.account_fingerprint)
     monkeypatch.setattr(lifecycle_startup, "apply_native_child_tool_closure",
                         lambda *_args: None)
-    monkeypatch.setattr(lifecycle_startup, "lifecycle_startup_probe_scope",
-                        lambda *_args, **_kwargs: contextlib.nullcontext())
+    helper_calls = []
+    composer_calls = []
+    composed_instructions = []
+    attempt_calls = []
+    terminal_calls = []
+    native_base = "Fixed native Hermes system prompt\n"
+
+    conversation_loop = ModuleType("agent.conversation_loop")
+
+    def restore_or_build(agent, system_message, conversation_history):
+        helper_calls.append((agent, system_message, conversation_history))
+        if failure_stage == "prompt_helper":
+            raise RuntimeError("PRIVATE_NATIVE_PREP_FAILURE")
+        if failure_stage == "prompt_empty_cache":
+            agent._cached_system_prompt = ""
+        elif failure_stage == "prompt_cache_wrong_type":
+            agent._cached_system_prompt = {"prompt": native_base}
+        else:
+            agent._cached_system_prompt = native_base
+        if failure_stage == "prompt_closure_changed":
+            agent.tools = ["terminal"]
+        return agent._cached_system_prompt
+
+    conversation_loop._restore_or_build_system_prompt = restore_or_build
+    codex_runtime = ModuleType("agent.codex_runtime")
+
+    def compose_developer_instructions(agent):
+        composer_calls.append(agent)
+        if failure_stage == "prompt_composer":
+            raise ValueError("PRIVATE_CODEX_COMPOSER_FAILURE")
+        if failure_stage == "prompt_wrong_type":
+            return {"instructions": native_base}
+        if failure_stage == "prompt_identity_missing":
+            return native_base
+        if failure_stage == "prompt_oversized":
+            return native_base + ("x" * (256 * 1024)) + identity
+        result = (agent._cached_system_prompt + "\n\n"
+                  + agent.ephemeral_system_prompt).strip()
+        composed_instructions.append(result)
+        return result
+
+    codex_runtime._codex_developer_instructions = compose_developer_instructions
 
     hermes_constants = ModuleType("hermes_constants")
     hermes_constants.get_hermes_home = lambda: home
@@ -334,17 +377,54 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
             self._session_db = None
             self._checkpoint_mgr = SimpleNamespace(enabled=False)
             self.prefill_messages = []
-
-        def _build_system_prompt(self):
-            return identity
+            self.ephemeral_system_prompt = kwargs["ephemeral_system_prompt"]
+            self._cached_system_prompt = (
+                native_base if failure_stage == "prompt_cached" else None)
 
         def run_conversation(self, **_kwargs):
+            if self._cached_system_prompt is None:
+                restore_or_build(self, None, [])
+            assert len(helper_calls) == 1
             if failure_stage == "conversation":
                 raise RuntimeError("PRIVATE_CONVERSATION_FAILURE")
             if failure_stage == "terminal":
                 return {"completed": False}
-            return {"completed": True, "final_response":
-                    lifecycle_startup._PROMPT_PREFIX + context.nonce}
+            if failure_stage in {"success", "close", "prompt_digest_changed"}:
+                final_response = lifecycle_startup._PROMPT_PREFIX + context.nonce
+                instructions = composed_instructions[-1]
+                assert _kwargs["user_message"] == (
+                    lifecycle_startup._PROMPT_PREFIX + context.nonce
+                    + lifecycle_startup._PROMPT_SUFFIX)
+                assert _kwargs["conversation_history"] == []
+                request = {
+                    "instructions": instructions,
+                    "input": [{"type": "message", "role": "user", "content": [
+                        {"type": "input_text", "text": _kwargs["user_message"]}]}],
+                    "tools": [], "tool_choice": "none",
+                }
+                if failure_stage == "prompt_digest_changed":
+                    request["instructions"] += "\n"
+                native_response = SimpleNamespace(
+                    status="completed", error=None, incomplete_details=None,
+                    output_text=final_response, output=[],
+                    model_dump=lambda **_kwargs: {
+                        "status": "completed", "output_text": final_response})
+                observed_requests = []
+                observed = startup_callback(
+                    provider=self.provider, api_mode=self.api_mode, base_url=context.base_url,
+                    model=self.model, request=request, session_id=context.session_id,
+                    turn_id="turn-1", api_request_id="api-1",
+                    next_call=lambda value: observed_requests.append(value) or native_response)
+                if failure_stage == "prompt_digest_changed":
+                    assert observed.status == "completed"
+                    assert observed_requests == []
+                    return {"completed": True, "final_response": final_response}
+                assert observed is native_response
+                assert len(observed_requests) == 1
+                assert observed_requests[0]["instructions"] == instructions
+                assert "private-runtime-credential" not in repr(observed_requests)
+                return {"completed": True, "final_response": final_response}
+            raise AssertionError("unexpected stage reached conversation")
 
         def close(self):
             self.closed = True
@@ -352,8 +432,12 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                 raise OSError("PRIVATE_CLOSE_FAILURE")
 
     run_agent.AIAgent = FakeAgent
+    agent_package.conversation_loop = conversation_loop
+    agent_package.codex_runtime = codex_runtime
     for name, module in (
         ("hermes_constants", hermes_constants), ("agent", agent_package),
+        ("agent.conversation_loop", conversation_loop),
+        ("agent.codex_runtime", codex_runtime),
         ("agent.prompt_builder", prompt_builder), ("hermes_cli", hermes_cli),
         ("hermes_cli.runtime_provider", runtime_provider),
         ("hermes_cli.auth_codex", auth_codex), ("run_agent", run_agent),
@@ -375,14 +459,29 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
 
     server = Server()
     register_lifecycle_startup_probe(server, client=client)
-    if failure_stage in {"success", "close"}:
-        final_response = lifecycle_startup._PROMPT_PREFIX + context.nonce
-        monkeypatch.setattr(lifecycle_startup, "take_lifecycle_startup_terminal",
-                            lambda _context: {
-                                "completion_handle": "Q" * 43,
-                                "response_text_sha256": hashlib.sha256(
-                                    final_response.encode("utf-8")).hexdigest(),
-                            })
+
+    def register_attempt(*_args, **kwargs):
+        attempt_calls.append(kwargs)
+        return "A" * 43
+
+    def register_terminal(*_args, **kwargs):
+        terminal_calls.append(kwargs)
+        return "Q" * 43
+
+    client.register_lifecycle_startup_attempt = register_attempt
+    client.register_lifecycle_startup_response = register_terminal
+
+    class PluginContext:
+        def __init__(self):
+            self.middleware = {}
+
+        def register_middleware(self, name, callback):
+            self.middleware.setdefault(name, []).append(callback)
+            return callback
+
+    plugin_context = PluginContext()
+    observer.install_native_codex_process_observer(plugin_context, client=client)
+    startup_callback = plugin_context.middleware["llm_execution"][0]
     response = server.handler("request-3", {"probe_handle": "P" * 43})
     expected = {
         "root_claim": ("root_claim", "CoreNativeObservationUnavailable"),
@@ -390,6 +489,16 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         "agent_setup": ("agent_setup", "ValueError"),
         "conversation": ("conversation", "RuntimeError"),
         "terminal": ("terminal", "CoreNativeObservationUnavailable"),
+        "prompt_cached": ("prompt", "CoreNativeObservationUnavailable"),
+        "prompt_empty_cache": ("prompt", "CoreNativeObservationUnavailable"),
+        "prompt_cache_wrong_type": ("prompt", "CoreNativeObservationUnavailable"),
+        "prompt_helper": ("prompt", "RuntimeError"),
+        "prompt_composer": ("prompt", "ValueError"),
+        "prompt_wrong_type": ("prompt", "CoreNativeObservationUnavailable"),
+        "prompt_identity_missing": ("prompt", "CoreNativeObservationUnavailable"),
+        "prompt_oversized": ("prompt", "CoreNativeObservationUnavailable"),
+        "prompt_closure_changed": ("prompt", "CoreNativeObservationUnavailable"),
+        "prompt_digest_changed": ("terminal", "CoreNativeObservationUnavailable"),
         "close": ("response", "OSError"),
     }
     if failure_stage == "success":
@@ -409,7 +518,33 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
     elif failure_stage == "agent_setup":
         assert len(agents) == 1 and agents[0].closed is False
     else:
-        assert agents == []
+        if failure_stage.startswith("prompt_"):
+            assert len(agents) == 1 and agents[0].closed is True
+        else:
+            assert agents == []
+    if failure_stage in {"success", "close"}:
+        assert len(helper_calls) == 1 and len(composer_calls) == 1
+        assert helper_calls[0][0] is agents[0]
+        assert helper_calls[0][1] is None and helper_calls[0][2] == []
+        assert composer_calls == [agents[0]]
+        assert len(composed_instructions) == 1
+        assert identity not in agents[0]._cached_system_prompt
+        assert identity in composed_instructions[0]
+    elif failure_stage == "prompt_cached":
+        assert helper_calls == [] and composer_calls == []
+    elif failure_stage in {"conversation", "terminal"}:
+        assert len(helper_calls) == len(composer_calls) == 1
+    elif failure_stage.startswith("prompt_"):
+        assert len(helper_calls) == 1
+        assert len(composer_calls) == (0 if failure_stage in {
+            "prompt_empty_cache", "prompt_cache_wrong_type", "prompt_helper",
+            "prompt_closure_changed"} else 1)
+    else:
+        assert helper_calls == [] and composer_calls == []
+    if failure_stage in {"success", "close"}:
+        assert len(attempt_calls) == len(terminal_calls) == 1
+    else:
+        assert attempt_calls == [] and terminal_calls == []
     assert "PRIVATE_" not in repr(response)
     assert "private-runtime-credential" not in repr(response)
 

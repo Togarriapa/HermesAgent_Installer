@@ -33,6 +33,7 @@ _RPC_DIAGNOSTIC_EXCEPTION_TYPES = frozenset({
 _PROMPT_PREFIX = "Reply with exactly JARVIS-STARTUP-"
 _PROMPT_SUFFIX = ". Do not use tools."
 _MAX_SOUL_BYTES = 1024 * 1024
+_UNSET_STARTUP_PROMPT_CACHE = object()
 
 
 class _StartupProbeRefusal(Exception):
@@ -98,6 +99,26 @@ def _read_primary_identity(home: Path) -> tuple[bytes, tuple[int, ...]]:
         os.close(fd)
 
 
+def _startup_agent_matches_fixed_route(agent: Any,
+                                       context: LifecycleStartupProbeContext) -> bool:
+    return (
+        getattr(agent, "provider", None) == context.provider
+        and getattr(agent, "model", None) == context.model
+        and getattr(agent, "api_mode", None) == context.api_mode
+        and getattr(agent, "enabled_toolsets", None) == []
+        and getattr(agent, "tools", None) == []
+        and tuple(sorted(getattr(agent, "valid_tool_names", ()))) == ()
+        and getattr(agent, "skip_context_files", None) is True
+        and getattr(agent, "load_soul_identity", None) is False
+        and getattr(agent, "skip_background_review", None) is True
+        and getattr(agent, "_memory_store", None) is None
+        and getattr(agent, "_memory_manager", None) is None
+        and getattr(agent, "_session_db", None) is None
+        and getattr(getattr(agent, "_checkpoint_mgr", None), "enabled", None) is False
+        and getattr(agent, "prefill_messages", None) in (None, [])
+    )
+
+
 def _run_probe(params: Any, *, client: CoreNativeObservationClient) -> dict[str, Any]:
     stage = "parameters"
     agent = None
@@ -157,31 +178,26 @@ def _run_probe(params: Any, *, client: CoreNativeObservationClient) -> dict[str,
             save_trajectories=False, quiet_mode=True,
         )
         apply_native_child_tool_closure(agent, NativeChildMode.PLANNER)
-        if (getattr(agent, "provider", None) != context.provider
-                or getattr(agent, "model", None) != context.model
-                or getattr(agent, "api_mode", None) != context.api_mode
-                or getattr(agent, "enabled_toolsets", None) != []
-                or getattr(agent, "tools", None) != []
-                or tuple(sorted(getattr(agent, "valid_tool_names", ())))
-                or getattr(agent, "skip_context_files", None) is not True
-                or getattr(agent, "load_soul_identity", None) is not False
-                or getattr(agent, "skip_background_review", None) is not True
-                or getattr(agent, "_memory_store", None) is not None
-                or getattr(agent, "_memory_manager", None) is not None
-                or getattr(agent, "_session_db", None) is not None
-                or getattr(getattr(agent, "_checkpoint_mgr", None), "enabled", None) is not False
-                or getattr(agent, "prefill_messages", None) not in (None, [])):
+        if not _startup_agent_matches_fixed_route(agent, context):
             raise CoreNativeObservationUnavailable("ephemeral startup agent is not the fixed no-tools route")
 
         stage = "prompt"
         prompt = _PROMPT_PREFIX + context.nonce + _PROMPT_SUFFIX
-        prompt_builder = getattr(agent, "_build_system_prompt", None)
-        if not callable(prompt_builder):
-            raise CoreNativeObservationUnavailable("official native system-prompt builder is unavailable")
-        expected_instructions = prompt_builder()
-        if (not isinstance(expected_instructions, str) or identity not in expected_instructions
+        if getattr(agent, "_cached_system_prompt", _UNSET_STARTUP_PROMPT_CACHE) is not None:
+            raise CoreNativeObservationUnavailable("fresh startup agent already has native prompt state")
+        from agent.conversation_loop import _restore_or_build_system_prompt
+        _restore_or_build_system_prompt(agent, None, [])
+        native_base = getattr(agent, "_cached_system_prompt", None)
+        if (not isinstance(native_base, str) or not native_base
+                or not _startup_agent_matches_fixed_route(agent, context)):
+            raise CoreNativeObservationUnavailable("native startup initialization changed the fixed agent")
+        from agent.codex_runtime import _codex_developer_instructions
+        expected_instructions = _codex_developer_instructions(agent)
+        if (not isinstance(expected_instructions, str) or not expected_instructions
+                or identity not in expected_instructions
                 or len(expected_instructions) > 256 * 1024):
             raise CoreNativeObservationUnavailable("native startup prompt does not contain the selected identity")
+        expected_instructions.encode("utf-8", "strict")
         stage = "conversation"
         with lifecycle_startup_probe_scope(
                 context, identity=identity, expected_instructions=expected_instructions):
