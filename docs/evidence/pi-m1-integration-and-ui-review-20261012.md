@@ -1792,9 +1792,42 @@ reviewed fix, and its 11 unit contract tests passed in 0.05s against a fake
 module API. Those tests establish the binding/AST contract only; the genuine
 registered Core recovery call has not yet been qualified.
 
-At this evidence point, no actual transport/recovery attempt had run. The four
-Pi services were inactive following the earlier candidate-181 failure, and
-there was no M1 acceptance, journal recreation, history change, or deadline
-change. Root still needs the combined registered interruption/restart test on
-the Pi, followed by actual recovery and service/readback qualification. These
-source and fixture results do not establish live acceptance.
+At the Candidate 186 evidence point, no actual transport/recovery attempt had
+run. The four Pi services were inactive following the earlier candidate-181
+failure, and there was no M1 acceptance, journal recreation, history change,
+or deadline change. The subsequent registered recovery qualification and
+service restoration are recorded below. These earlier source and fixture
+results did not establish live acceptance.
+
+## Candidate 187–188 fixed-transport recovery and service restoration
+
+The normal candidate-187 registered Core test passed its actual adoption,
+primary unlink, SOUL/stage/backup/symlink refusal, and replay sequence (log
+SHA-256 `a9b21ff373f52658dcc284162b46d44e18bd87d27b0bf6f4e8e15d0cf7232fa7`).
+The dual-transport test initially failed only its test-side current-versus-prior
+journal assertion. Root candidate 188 (`68a7f4e880f4c8d594f4ba300dd9062523b41f08`),
+archive SHA-256
+`d85453ec7f334cf54dfdb5ea8810e8ac6a66d862d53d8217a53ed413599540fa`, carried
+the corrected test (`5674d...`) without changing Core or transport code. Its
+first harness run omitted the leading `d` in the archive pin and refused before
+effects. The corrected unique-188b helper (SHA-256
+`e90fede61d08d2558ad401d703dee1f71b12e6fa6952c189b7dc76ad60cc37c5`) then
+passed the genuine unchanged-c91 public recovery API with the actual fixed
+transport: 1 test passed in 270.45s. Log:
+`p/candidate181-qualified-fixed-recovery.log`.
+
+The production candidate-185 tool (`30396d...`) was invoked once. It exited 0
+with `restore-api-returned` and `function_bindings_restored=true`; it retained
+the failed c91 Core identity (`6992`) and verified the reviewed fix-184 Core
+identity (`e9e0...`). The original protected candidate-181 rollback then exited
+0 and restored the exact prior Core plus Inspector, Gateway and tunnel. All
+four services were active afterward. Log:
+`p/candidate181-post-fixed-ingress-rollback.log`.
+
+The authenticated public `/chat` page subsequently showed Secure connection,
+Jarvis idle/current-process status, and the existing 11 accepted, 9 completed,
+2 failed requests across 5 chats. This was restored availability on the prior
+`0cb` source, not acceptance of candidate 181, M1, or the newer feature work.
+No new candidate apply is recorded here. The earlier candidate-181 apply
+remains outside acceptance until its source, recovery, and runtime gates are
+closed and read back on the Pi.
