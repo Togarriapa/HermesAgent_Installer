@@ -2820,3 +2820,21 @@ The installer SHALL bound parse-only reuse to one native probe while preserving 
 - **THEN** contents, full scans and path-read counts match baseline while actual parse work/time decreases and write/network/process/PM-import denials stay enforced. A bounded full396 native functional readback and exact candidate qualification precede a current adoption; audited measurements and extrapolations do not establish live acceptance.
 
 This finite parse-reuse correction remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and all prior obligations.
+
+### Requirement: Exact partial primary rollback can resume its remaining recovery
+The installer SHALL resume a completed primary rollback substep only from its exact protected rolling-back evidence, preserving original owner bytes, all recovery guards and execution budgets.
+
+#### Scenario: Recovery was interrupted after the primary journal was legitimately removed
+- **WHEN** the cohort and initial row are rolling-back, the original primary was absent, the current journal is absent, and written-stage progress remains retained
+- **THEN** currentness additionally requires exact original SOUL hash/stable restored metadata, the highest fixed digest-selected Root retained manager stage with closed transaction/source/artifact/prompt/backup joins, and immutable original backup hash/custody. Absence alone supplies no authority; no directory enumeration, record recreation or history reset occurs.
+- **AND** the existing recovery flow restores the remaining exact owner generation, Resources, plugin/files/prior-source listener and ingress under its original locks/currentness/CAS/recipe checks. Unwritten/prior-adopted paths and all deadlines stay unchanged.
+
+#### Scenario: Any supposedly completed primary rollback proof differs
+- **WHEN** phase, prior absence, current owner SOUL/metadata, fixed retained stage, immutable backup or transaction/source/artifact binding does not match
+- **THEN** recovery refuses before later effects and preserves protected backups/owner data; it never converts arbitrary journal absence into permission to overwrite or start services.
+
+#### Scenario: A genuine unlink-to-generation interruption is replayed
+- **WHEN** Pi executes actual primary rollback/unlink and interrupts before remaining generation/Resources recovery
+- **THEN** a subsequent existing API invocation restores the exact prior tuple/live source, while a companion owner-data drift retry refuses. Strict artifacts, exact source/pin review and focused effects precede actual recovery; original downstream cause and new-adoption acceptance remain separate.
+
+This resumability correction remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and all prior obligations.
