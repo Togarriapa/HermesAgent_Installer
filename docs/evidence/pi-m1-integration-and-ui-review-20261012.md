@@ -1834,3 +1834,71 @@ or the newer feature work.
 No new candidate apply is recorded here. The earlier candidate-181 apply
 remains outside acceptance until its source, recovery, and runtime gates are
 closed and read back on the Pi.
+
+## Candidate 190 measured validation and effect-run status
+
+This evidence is for OpenSpec #35 R0201.
+Root candidate 190 (`4f9b0bfc0533868ccf9e2a67faccb1c580aa5eb0`), archive
+SHA-256 `e4f630f8769e6bddd8255486604a4396f4b55f52f26028c4153e6098f46c073a`,
+used Core `95022d` and manual source `93d02`. Pi strict spec and plan
+validation passed with 0 errors; eight cache contract tests passed in 12.41s.
+The executed measurement helper was SHA-256
+`bbd0f6448f37534d98212bfabe3ee8c828fb354a6c769db63a47d35bf5f7cfc0`.
+`p/candidate190-base-measure.log` recorded uncached 10474ms, miss 10514ms,
+hit 104ms, exact content match across 6936513 bytes with SHA-256
+`74fda8bc068484621e26bc29f0d3a988925dfd0130c85c86b88794a15bb58788`, counts
+1/1/0, exit 0. An unused local draft is not part of this evidence.
+
+The native helper (`eeefd455a97ef0cf9b6022ff09feccca24a9249443ef831483205331565953bf`)
+completed an audited 396-view run in 19021ms with 396 calls, 179388 fresh path
+reads, 454 parses, and all content matching. The write attempts (`23/pm_import6`)
+were denied; network and process effects were 0, exit 0. Log:
+`p/candidate190-native396.log`. These audited measurements do not establish
+unconstrained native behavior or full acceptance.
+
+The first candidate-190 effect runner lacked the required prior private `/opt`
+alias and failed before update. Corrected runner `190b`
+uses the read-only alias; its six-group Pi qualification was
+running when this entry was prepared; its status was superseded by the result
+below. No candidate-190 apply or acceptance is claimed.
+The prior `0cb` public source and four active services remained the observed
+live state.
+
+### Candidate 190b and 191 interrupted-runner evidence
+
+Candidate 190b passed the first five qualification groups. Its last
+interrupted-runner test failed after 96.23s on a stale zero-argument wait
+fixture (`TypeError`); Sol reviewed the test-only correction `906058`. This
+was a fixture failure, not a product acceptance result.
+
+Candidate 191 (`a8274697b99667c889bf5b563ee228a559b72f75`), archive SHA-256
+`2e7a30ee136413f7875137b694f298f1bd3b45eeec9336f7bd10a6827e6a316a`, passed
+Pi spec and plan validation with 0 errors. Its Core and manual source were
+byte-identical to candidate 190. The single interrupted-runner test passed
+with helper SHA-256
+`4a073d1a29394daa395980ec412175df7065dbd1d15447be9a26d8a7119133aa`; log
+SHA-256 `1c7fa6b90149948b7fef1894821bca5606365331726d91c3663b8e64bdc7bd4e` at
+`p/candidate191-interrupted.log`. The protected candidate-191 apply was
+running when this entry was prepared at `p/candidate191-actual-adoption.log`;
+its result was pending. No candidate-191 apply success or M1 acceptance is
+claimed. The previously observed `0cb` source and four active services remain
+the last confirmed live state before the pending apply result.
+
+### Candidate 191 protected apply result
+
+The protected apply later failed before switch after 3.317s in
+`loaded_compiler_identity` (line 488), with `ManualJarvisSkillsError`: the
+pinned Python invocation path differed. The qualification child used fixed
+`/usr/bin/python3 -I` (adopter 1143); the source witness covered the gateway
+parent and test contexts, not this actual system-Python child. The inner return
+code was 4; the report CLI exited 1 with no cohort. Log:
+`p/candidate191-actual-adoption.log`.
+
+Automatic recovery verified the prior Core and ingress, and all four services
+were freshly observed active. There was no candidate-191 runtime adoption.
+Sol authorized a finite third-row witness for actual system Python 3.13.5 and
+YAML 6.0.2 within the existing candidate-189 scope. Native was implementing
+that correction, which had not yet been accepted. The candidate-190
+measurements and candidate-191 interrupted-runner pass above remain valid for
+their stated scopes. This failure and restoration do not establish M1
+acceptance.
