@@ -2999,7 +2999,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
             ("systemctl", "disable"), ("native-plugin", "install"),
             ("native-plugin", "restore"),
             } for call in _calls[len(calls_before_guard_denial):])
-            assert core.JOURNAL.read_bytes() == prior
+            assert core.JOURNAL.read_bytes() == protected_before_refusals[0]
             assert primary_manager._read_soul(core)[0] == original_soul
             assert stage_path.read_bytes() == stage_raw
             assert backup_path.read_bytes() == backup_raw
