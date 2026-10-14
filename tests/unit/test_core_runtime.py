@@ -2398,7 +2398,11 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
             if (enabled["value"] and "Restart=on-failure" in core.UNIT.read_text()
                     and core.LAUNCHER.read_bytes() == core._launcher()):
                 enabled["value"] = False
-                status = _exec_start_pre(core.UNIT.read_bytes(), expect_success=True)
+                current_unit = core.UNIT.read_bytes()
+                status = _exec_start_pre(
+                    current_unit, expect_success=True,
+                    systemd_argv=_systemd_decoded_exec_start_pre(current_unit),
+                    credential_projection=True)
                 if status:
                     guard_denials.append(status)
                 else:
@@ -2589,7 +2593,9 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     expected_new_unit = core._unit(
         adapter_source=Path(updated["adapter_source"]), cohort_gate=True,
         backup_generation=prior["adapter_generation"], native_plugin_transition=True,
-        failure_diagnostics=True, whole_guard_encoding=True)
+        failure_diagnostics=True, whole_guard_encoding=True,
+        credential_projection=True)
+    expected_new_unit_argv = _systemd_decoded_exec_start_pre(expected_new_unit)
     backup_credentials = [row for row in expected_new_unit.decode().splitlines()
         if row.startswith("LoadCredential=adapter-backup-")]
     assert len(backup_credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 3
@@ -2600,10 +2606,13 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     assert core.UNIT.read_bytes() == expected_new_unit
     assert hashlib.sha256(expected_new_unit).hexdigest() == updated["unit_sha256"]
     assert _exec_start_pre(expected_new_unit, expect_success=True,
-                           runner=guard_runner, diagnostic=True) == 0
+                           runner=guard_runner, diagnostic=True,
+                           systemd_argv=expected_new_unit_argv,
+                           credential_projection=True) == 0
     assert _exec_start_pre(expected_new_unit,
         credential_mutations={"adapter-backup-native-plugin-__init__-py": ("remove",)},
-        expect_success=False, runner=guard_runner) != 0
+        expect_success=False, runner=guard_runner,
+        systemd_argv=expected_new_unit_argv, credential_projection=True) != 0
     assert _exec_start_pre(prior_unit, expect_success=False,
                            runner=guard_runner) != 0
     installed_plugin_module = (core.HERMES_HOME / "plugins" /
@@ -2612,12 +2621,14 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     os.chown(installed_plugin_module, core.ROOT_UID, core.ROOT_UID)
     os.chmod(installed_plugin_module, 0o444)
     assert _exec_start_pre(expected_new_unit, expect_success=False,
-                           runner=guard_runner) != 0
+                           runner=guard_runner, systemd_argv=expected_new_unit_argv,
+                           credential_projection=True) != 0
     installed_plugin_module.write_bytes(b"new native tools\n")
     os.chown(installed_plugin_module, core.ROOT_UID, core.ROOT_UID)
     os.chmod(installed_plugin_module, 0o444)
     assert _exec_start_pre(expected_new_unit, expect_success=True,
-                           runner=guard_runner) == 0
+                           runner=guard_runner, systemd_argv=expected_new_unit_argv,
+                           credential_projection=True) == 0
     assert core.TOKEN.read_bytes() == token
     assert memory.read_text() == "existing owner memory"
     backup = core.ADAPTER_UPDATE_BACKUPS / prior["adapter_generation"]
@@ -2824,8 +2835,11 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
         attempted_starting).hexdigest()
     assert core.LAUNCHER.read_bytes() != launcher
     assert core.UNIT.read_bytes() != unit
-    assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=False,
-                           runner=guard_runner) != 0
+    interrupted_unit = core.UNIT.read_bytes()
+    assert _exec_start_pre(interrupted_unit, expect_success=False,
+                           runner=guard_runner,
+                           systemd_argv=_systemd_decoded_exec_start_pre(interrupted_unit),
+                           credential_projection=True) != 0
 
     monkeypatch.setattr(core, "_atomic_replace", replace_atomic)
     with _bounded_cohort_exception_sites():
@@ -2863,8 +2877,11 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     real_run = core._run
     def interrupt_after_starting_recipe(argv, check=True):
         if argv == ["systemctl", "start", core.SERVICE]:
-            assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=True,
-                                   runner=guard_runner, diagnostic=True) == 0
+            starting_unit = core.UNIT.read_bytes()
+            assert _exec_start_pre(starting_unit, expect_success=True,
+                                   runner=guard_runner, diagnostic=True,
+                                   systemd_argv=_systemd_decoded_exec_start_pre(starting_unit),
+                                   credential_projection=True) == 0
             raise KeyboardInterrupt()
         return real_run(argv, check)
     monkeypatch.setattr(core, "_run", interrupt_after_starting_recipe)
@@ -2884,8 +2901,11 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     with pytest.raises(KeyboardInterrupt):
         core._recover_interrupted_adapter_update()
     assert core.LAUNCHER.read_bytes() == prior_launcher
-    assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=False,
-                           runner=guard_runner) != 0
+    partial_unit = core.UNIT.read_bytes()
+    assert _exec_start_pre(partial_unit, expect_success=False,
+                           runner=guard_runner,
+                           systemd_argv=_systemd_decoded_exec_start_pre(partial_unit),
+                           credential_projection=True) != 0
 
     monkeypatch.setattr(core, "_atomic_replace", atomic_replace)
     monkeypatch.setattr(core, "_run", real_run)
