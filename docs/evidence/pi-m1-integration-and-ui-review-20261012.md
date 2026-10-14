@@ -2018,6 +2018,24 @@ spec/plan gates passed;139 focused contracts passed in1.47s, including native
 composition and actual observer digest-mismatch refusal without downstream
 dispatch. Evidence: `candidate199-{stage,gates,status,apply}` and
 `candidate200-stage.log`, `candidate200-specs.json`, `candidate200-gates.log`
-under the same Pi directory. A separately qualified protected observation is
-pending in `candidate200-actual-adoption.log`; these tests do not attest an
-actual model response or successful installation.
+under the same Pi directory. These tests do not attest an actual model response
+or successful installation.
+
+The exact protected candidate200 observation failed after144.393s with
+validated returncode4 and CLI exit4; report emission occurred at144.213s.
+Its closed origin retained `_startup_refused_terminal` and
+`_startup_native_core_observation_unavailable`. Native prompt preparation
+therefore advanced to the conversation result check, but genuine provider,
+native and Root completion is still unproven. Evidence:
+`candidate200-actual-adoption.log` and the exact-candidate validated failure
+report. Automatic recovery verified the prior Core/ingress cohort, and a fresh
+read confirmed all four owned services active.
+
+Source inspection found a separate exact-response contract defect: the
+instruction prefix `Reply with exactly JARVIS-STARTUP-` was also used as the
+expected answer in the producer and observer. The requested answer itself is
+`JARVIS-STARTUP-<nonce>`. Correcting this requires distinct instruction and
+response constants while preserving all exact nonce, native/provider terminal,
+response digest and Root consume checks. This source defect does not establish
+what the private candidate200 response contained. M1 acceptance remains open;
+the failed result alone does not qualify another apply.
