@@ -2702,3 +2702,8 @@ The installer SHALL admit projected backup credentials only through an explicit 
 - **AND** meaningful Pi evidence proves actual dummy projection ACL, installed-manager argument fidelity and private success/denial effects for both plugin flags, followed by genuine update/recovery qualification and reviewed Core pin before one observed actual adoption. Source-only review or fixture custody does not establish deployment acceptance.
 
 This projection clarification remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and every original obligation.
+
+#### Scenario: The closed credential set uses one coherent projection
+- **WHEN** the fourth recipe validates journal, token, cohort, Resources record, manifest and fixed backup-member credentials
+- **THEN** its measured metadata/ACL contract applies consistently to that exact set, and every parsed record or digest operand comes from, or equals, the stable no-follow descriptor capture. All original content, schema, bounds and authority joins remain mandatory; directory inode currentness is checked without inventing owner/mode expectations.
+- **AND** no new binding code or condition is emitted in historical/default variants. Pi byte comparisons against Core0727 cover all three historical recipes for both plugin flags, while readable extra-ACL denial reaches the actual guard. Invalid fixture construction alone is not denial evidence.
