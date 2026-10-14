@@ -2121,3 +2121,24 @@ Evidence: `candidate204-stage.log`, `candidate204-specs.json`,
 `candidate204-gates.log`. One exact separately qualified protected observation
 was started in `candidate204-actual-adoption.log`. Neither a diagnostic nor
 these fixtures establish native/provider completion or M1 acceptance.
+
+The exact candidate204 observation failed after144.742s with validated
+returncode4 and CLI exit4; report emission144.557s,seven valid phase records.
+The closed origin now identifies `observer_input` /
+`CoreNativeObservationUnavailable`. The callback passed the original route,
+fixed request and full instruction checks before refusing its input/no-tools
+predicate; account validation and provider dispatch follow that predicate and
+are not established. Automatic recovery verified the prior Core/ingress,
+and fresh reads confirmed all four owned services active.
+
+Pinned official7085 Codex transport intentionally omits `tools` for an empty
+inventory, and its preflight preserves that absence. Native role-message
+normalization retains the typed user-message shape. The installer's ordinary
+tool inventory helper requires an explicit list, so the startup callback
+incorrectly rejects the native omitted-key representation. A bounded startup-
+only correction must accept this canonical absence as no tools while retaining
+rejection of explicit null, malformed or nonempty tools, the strict single
+typed user message and every real completion gate. The ordinary tool inventory
+helper must remain unchanged. This source mismatch and exact refusal boundary
+justify refinement; no private request content was collected and no successful
+provider response is inferred.
