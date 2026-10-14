@@ -2874,3 +2874,16 @@ The installer SHALL reuse only verified immutable base artifact bytes within one
 - **THEN** repeated in-operation builds have identical fresh bytes and one actual builder invocation while every mutable/native check remains. Root qualifies the exact source/pins and current candidate before actual adoption; Jarvis/provider/Resources/public UI proof remains separately required, and300s/110s deadlines stay unchanged.
 
 This narrow build-reuse refinement remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and every earlier obligation.
+
+### Requirement: Startup provider authority comes from protected selection and native completion
+The installer SHALL bind startup to the independently protected configured Codex provider/model and current config digest, rather than treating the official model-prefix hint as routing authority.
+
+#### Scenario: A selected Codex model has no provider prefix
+- **WHEN** the native hint is unknown or openai-codex, credentials are exactly configured and the existing protected config projection selects Codex with the exact native model and valid current digest
+- **THEN** startup may enroll only the fixed Root Codex cohort; the native resolver, account, API mode/base URL, no-tools agent and genuine provider/native completion remain independently required before acceptance.
+
+#### Scenario: Selection or status changes around startup
+- **WHEN** config custody/schema/provider/model/digest, native model/credential status, account, peer, lease or completion joins differ before enrollment or during/after native work
+- **THEN** startup refuses and uses existing protected recovery; unknown hint or authentication alone supplies no authority. No owner configuration, credential location, source history, provider route or execution budget is rewritten.
+
+This bounded startup correction preserves R0055/R0201, RT-T266.3/VD-T266.5 (#35),219/62/18/eight OPEN groups. Actual provider completion and live acceptance remain open until the exact candidate proves them.
