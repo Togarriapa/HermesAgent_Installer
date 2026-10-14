@@ -2039,3 +2039,18 @@ response constants while preserving all exact nonce, native/provider terminal,
 response digest and Root consume checks. This source defect does not establish
 what the private candidate200 response contained. M1 acceptance remains open;
 the failed result alone does not qualify another apply.
+
+### Candidate 201 exact nonce-response refinement
+
+Planning candidate `474b5e4d5ae52137541287779e2d6e65693b5673`, archive SHA-256
+`dad8a7e698116e91b0929065a458b4afb273c98ba3dc0c3216d24922fbb49695`, contains
+the Sol-owned four-artifact refinement and append-only exact-response
+amendment. Pi verified staging exited0. Strict specification, plan, status and
+apply-instructions checks each exited0; all four artifacts were complete,
+apply ready, with one complete and84 remaining of85 tasks. The confirmed
+OpenSpec project root was the identified sealed source, not a new store.
+Evidence: `candidate201-stage.log`, `candidate201-specs.json`,
+`candidate201-gates.log`, `candidate201-status.json`, `candidate201-apply.json`
+under the same Pi evidence directory. This establishes planning validation
+only. Source implementation, Sol review and focused Pi contracts must precede
+one protected startup observation; native/provider and M1 acceptance stay open.
