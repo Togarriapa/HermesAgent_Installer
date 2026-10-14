@@ -1508,3 +1508,16 @@ focused unit files passed 128 tests in 0.65s; log:
 `p/candidate171-spec-contracts.log`. Protected apply with union stdin had just
 launched at `p/candidate171-actual-adoption.log`; phase evidence and outcome
 were pending. Core `6992` remained unchanged. No full acceptance is claimed.
+
+### Candidate 171 apply outcome
+
+The protected candidate-171 adopter exited 4 with a canonical qualification
+report: candidate `bffc9b160968497f2d80ab851ddb149db9109b6b`, archive
+`fcaedd33113ff65bd835eccedacfc04ddcd79994262a3346de25f1e1a262a495`, reason
+`timeout`, capped elapsed 300000ms, null return code/stdout and 1053 stderr
+bytes. Its `HERMES_CORE_QUALIFICATION_LAST_PHASE_V1` record (schema 1) reported
+phase `adapter_update`, elapsed 1230ms, sequence 4, record count 4 and rejected
+0. This indicates the fixed Root CLI was entered after 1.23s before the outer
+timeout; the inner Core function or stage cause remains unknown. Automatic
+recovery verified prior Core and ingress; all four services were active. The
+log is `p/candidate171-actual-adoption.log`. No other acceptance is inferred.
