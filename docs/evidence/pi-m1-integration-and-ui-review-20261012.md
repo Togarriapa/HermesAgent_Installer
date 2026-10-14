@@ -1702,3 +1702,32 @@ acceptance. Source audit found `skills_tool._locate_skill` scans each view; a
 pure exact-text parse memo was considered viable. Sol was planning a per-PROBE
 parse memo that preserves fresh reads, scans and all 396 native views. No source
 fix or Core/deadline change had landed.
+
+## Candidates 180–181 memo comparison and gate
+
+Candidate 180's four-artifact source `39f7f3d` was imported as Root
+`94660d6f7a87b132736375d9f19f20401084ba94`, archive SHA-256
+`2daceba5d299827ce0e35f4ce4ae00d97928bf7576f572c5e22bbfde26378f91`; strict
+Pi spec/plan validation passed with 0 errors. Native source `90c0` passed Sol
+review for scoped `PROBE` only. Pin `63c2` covers only native install SHA-256
+`6dd59ab96155d94964976171a6797a2be9e89b588ead59e4d1f804f4d021ef27`.
+
+Combined candidate 181 (`c91b4f4ba1a7f2652cf21fb598f3ad2338849a18`), archive
+SHA-256 `e855f96f349527e97993d5d303ede313ff72e932298b02333358190e723bdc42`,
+used unchanged Core `6992`. It passed Pi staging and spec/plan validation with
+0 errors. Tests passed 158 with 3 native-target skips in 1.01s, covering
+`native_handoff` and both verifier tool/unit files. V5 helper SHA-256
+`f58c29b24ab48a055a9926daa57574590e06ea6f67f4994dbbaba7cd4cc8878b` extracted
+the actual SHA-pinned candidate-181 memo AST literal. In the audited comparison,
+baseline one-view was 393ms / 453 PATH reads / locator 1ms / parse 454ms;
+baseline ten-view was 3867ms / 4530 reads / locator 10ms / parse 4540ms. Memo
+one-view was 408ms / 453 reads / locator 1ms / parse 454ms; memo ten-view was
+827ms / 4530 reads / locator 10ms / parse 4540ms. All content matched, all
+exits were 0, and each probe retained blocked write `23/pm_import6` with
+network/process effects 0. Log:
+`p/candidate181-native-parse-comparison.log`.
+
+These are audited-probe measurements, not a normal baseline or full M1
+acceptance. The full 396-view memo probe had just started at
+`p/candidate181-native-parse-full396.log`; its result was pending. No actual
+candidate-181 apply had occurred.
