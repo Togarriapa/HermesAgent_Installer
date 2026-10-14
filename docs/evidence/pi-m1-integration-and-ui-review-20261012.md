@@ -1419,3 +1419,22 @@ fast and listener groups passed as already recorded (7 in 7.53s and 2 in
 candidate-165 `--apply` with union stdin launched as PID 3241564; its log is
 `p/candidate165-actual-adoption.log`, with result pending. No adoption
 acceptance is claimed.
+
+### Candidate 165 wrapper qualification failure and recovery
+
+The protected candidate-165 apply failed wrapper qualification with adopter
+exit 4. Automatic recovery succeeded: prior Core and ingress were verified,
+all four services were active, and old source `0cb`, unit and launcher were
+preserved. Core PID was 3243625, `Result=success`, `NRestarts=0`. The actual log
+is `p/candidate165-actual-adoption.log`. The retained last-failure report
+matched candidate/archive 165 but reported `False` and was stale; it cannot
+attribute this failure to the earlier candidate-159 event. The inner failure
+cause remains unknown.
+
+The approved V5 closed journal collector for the last hour showed valid 0,
+rejected 0, empty groups, exception types, process-exit failures and categories.
+This absence is not qualification success. Sol's four-artifact refinement
+`ccf6f537`, imported as Root `dba05fda960d07f9d1db32144d6108f5912327fa`, was
+pending strict Pi gate. It adds only a dedicated `RuntimeError` enum and
+bounded counts at the unchanged 300s wrapper; it does not establish the inner
+cause. No candidate-165 adoption or acceptance is claimed.
