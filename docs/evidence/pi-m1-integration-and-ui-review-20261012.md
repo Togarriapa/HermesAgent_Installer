@@ -1445,3 +1445,20 @@ Root candidate 166 (`dba05fda960d07f9d1db32144d6108f5912327fa`), archive
 `96c0ada…3e7ba5`, passed strict validation with 0 spec errors and 0 plan errors.
 The four artifact sets 219/62/18/8 remain open. This gate result adds no new
 runtime or adoption acceptance.
+
+## Candidate 168 source and adoption status
+
+Root candidate 168 (`56832d13049505c4fb63a41f21e2d2d00d4c413c`), archive SHA-256
+`bad473833ac3fd1bcd503508074f05286c03098e95965c064bf8b694b63f224b`, uses
+Core `6992`, unchanged from candidate 165's four passing qualification groups.
+Tool `d59d370e4a9c470b2ed47a14489e2519afbc0066defbaf6c67926a6203966b89` and
+test `34f4d7389327e3041b77b449a157ccef5ce863ed37e16136251538d986eeeb7c`
+passed Sol source review, as did source `f65` and four-artifact refinements
+`ccf6`/`6394`/`ee0`. Pi strict spec/plan validation had 0 errors, and
+`test_pi_native_core_adopt.py` plus
+`test_pi_core_lifecycle_qualification.py` passed 124 tests in 0.59s (log
+`p/candidate168-spec-contracts.log`). The protected candidate-168 apply with
+union stdin had just launched; result was pending at
+`p/candidate168-actual-adoption.log`. Queue composition #21
+(`999933ec`) passed Sol source review but remained on hold. No adoption or
+acceptance is claimed pending actual readback.
