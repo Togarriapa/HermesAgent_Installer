@@ -119,6 +119,58 @@ def selected_profile_materialization(
     return mapping
 
 
+_PROBE_FRONTMATTER_MEMO = r'''from contextlib import contextmanager
+from copy import deepcopy
+
+@contextmanager
+def _memoize_probe_frontmatter(skills_tool):
+    """Memoize only exact parser inputs for this probe's native skill pass."""
+    original = skills_tool._parse_frontmatter
+    parsed_by_text = {}
+    cached_utf8_bytes = 0
+
+    def memoized(*args, **kwargs):
+        nonlocal cached_utf8_bytes
+        if len(args) != 1 or kwargs:
+            return original(*args, **kwargs)
+        text = args[0]
+        if type(text) is not str:
+            return original(*args, **kwargs)
+        try:
+            key_bytes = text.encode("utf-8", "strict")
+        except UnicodeEncodeError:
+            return original(*args, **kwargs)
+        size = len(key_bytes)
+        if size > 16 * 1024 * 1024:
+            return original(*args, **kwargs)
+        if text in parsed_by_text:
+            try:
+                frontmatter, body = parsed_by_text[text]
+                return deepcopy(frontmatter), body
+            except Exception:
+                return original(*args, **kwargs)
+        if len(parsed_by_text) >= 1024 or cached_utf8_bytes + size > 16 * 1024 * 1024:
+            return original(*args, **kwargs)
+        parsed = original(*args, **kwargs)
+        if (type(parsed) is not tuple or len(parsed) != 2
+                or not isinstance(parsed[0], dict) or not isinstance(parsed[1], str)):
+            return parsed
+        try:
+            stored_frontmatter = deepcopy(parsed[0])
+        except Exception:
+            return parsed
+        parsed_by_text[text] = (stored_frontmatter, parsed[1])
+        cached_utf8_bytes += size
+        return parsed
+
+    skills_tool._parse_frontmatter = memoized
+    try:
+        yield
+    finally:
+        skills_tool._parse_frontmatter = original
+'''
+
+
 _PROBE = r'''import hashlib, json, os, re, stat, sys
 from pathlib import Path
 
@@ -206,27 +258,29 @@ effective_prompt_truncated = "[...truncated SOUL.md:" in soul
 # carry no pm deps, so this path cannot request lazy package installation.
 os.environ["HERMES_HOME"] = str(profile_home)
 from tools import skills_tool
-listed = json.loads(skills_tool.skills_list())
-if listed.get("success") is not True:
-    raise RuntimeError("Hermes skill discovery failed")
-names = {item.get("name") for item in listed.get("skills", []) if isinstance(item, dict)}
-loaded = []
-digests = {"profile:" + profile_id: hashlib.sha256(soul.encode()).hexdigest()}
-for name in skill_ids:
-    if name not in names:
-        raise RuntimeError("selected skill was not discoverable by Hermes")
-    result = json.loads(skills_tool.skill_view(name, preprocess=False))
-    if result.get("success") is not True or result.get("name") != name:
-        raise RuntimeError("Hermes skill loader rejected selected skill")
-    content = result.get("content")
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("Hermes skill loader returned empty content")
-    # The native view API may ensure declared PM dependencies. Generated
-    # Resources SKILL.md files must remain instruction-only here.
-    if result.get("deps_note"):
-        raise RuntimeError("selected skill requested a PM dependency during discovery")
-    loaded.append(name)
-    digests["skill:" + name] = hashlib.sha256(content.encode()).hexdigest()
+__PROBE_FRONTMATTER_MEMO__
+with _memoize_probe_frontmatter(skills_tool):
+    listed = json.loads(skills_tool.skills_list())
+    if listed.get("success") is not True:
+        raise RuntimeError("Hermes skill discovery failed")
+    names = {item.get("name") for item in listed.get("skills", []) if isinstance(item, dict)}
+    loaded = []
+    digests = {"profile:" + profile_id: hashlib.sha256(soul.encode()).hexdigest()}
+    for name in skill_ids:
+        if name not in names:
+            raise RuntimeError("selected skill was not discoverable by Hermes")
+        result = json.loads(skills_tool.skill_view(name, preprocess=False))
+        if result.get("success") is not True or result.get("name") != name:
+            raise RuntimeError("Hermes skill loader rejected selected skill")
+        content = result.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise RuntimeError("Hermes skill loader returned empty content")
+        # The native view API may ensure declared PM dependencies. Generated
+        # Resources SKILL.md files must remain instruction-only here.
+        if result.get("deps_note"):
+            raise RuntimeError("selected skill requested a PM dependency during discovery")
+        loaded.append(name)
+        digests["skill:" + name] = hashlib.sha256(content.encode()).hexdigest()
 print(json.dumps({"python_version": sys.version.split()[0], "profile": profile_id,
                   "skills": sorted(names), "loaded": loaded,
                   "visible_profiles": visible_profiles,
@@ -240,6 +294,8 @@ print(json.dumps({"python_version": sys.version.split()[0], "profile": profile_i
                   "expected_managed_block_sha256": expected_managed_block_sha256,
                   "digests": digests}, sort_keys=True))
 '''
+
+_PROBE = _PROBE.replace("__PROBE_FRONTMATTER_MEMO__", _PROBE_FRONTMATTER_MEMO)
 
 
 _BUNDLE_PROBE = r'''import hashlib, json, os, sys

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -13,9 +14,175 @@ from hermes_installer.registry.native_install import (
     discover_and_load_selected,
     selected_profile_materialization,
     discover_and_load_bundle,
+    _PROBE,
+    _PROBE_FRONTMATTER_MEMO,
 )
 from hermes_installer.registry.native import NativeRegistry
 from hermes_installer.registry.source import BundledRegistrySource, PinnedSource
+
+
+def _probe_frontmatter_memo_context():
+    namespace = {}
+    exec(_PROBE_FRONTMATTER_MEMO, namespace)
+    return namespace["_memoize_probe_frontmatter"]
+
+
+def test_probe_parser_memo_scopes_listing_and_selected_skill_views():
+    scope = _PROBE.index("with _memoize_probe_frontmatter(skills_tool):")
+    listing = _PROBE.index("skills_tool.skills_list()", scope)
+    view = _PROBE.index("skills_tool.skill_view(name, preprocess=False)", scope)
+    output = _PROBE.index('print(json.dumps({"python_version"', view)
+    assert scope < listing < view < output
+    assert "__PROBE_FRONTMATTER_MEMO__" not in _PROBE
+    assert _PROBE.count("_memoize_probe_frontmatter(skills_tool)") == 2
+
+
+def test_probe_parser_memo_uses_exact_text_and_isolates_nested_mutation():
+    calls = []
+
+    def parse(text):
+        calls.append(text)
+        return ({"labels": [text], "nested": {"source": text}}, "immutable body")
+
+    tool = SimpleNamespace(_parse_frontmatter=parse)
+    with _probe_frontmatter_memo_context()(tool):
+        first, first_body = tool._parse_frontmatter("same text")
+        first["labels"].append("caller mutation")
+        first["nested"]["source"] = "caller mutation"
+        second, second_body = tool._parse_frontmatter("same text")
+        assert second == {"labels": ["same text"], "nested": {"source": "same text"}}
+        assert second is not first and first_body == second_body == "immutable body"
+        distinct, distinct_body = tool._parse_frontmatter("same text ")
+        assert distinct == {"labels": ["same text "], "nested": {"source": "same text "}}
+        assert distinct_body == "immutable body"
+    assert calls == ["same text", "same text "]
+    assert tool._parse_frontmatter is parse
+
+
+def test_probe_parser_memo_falls_back_without_eviction_at_entry_cap():
+    calls = []
+
+    def parse(text):
+        calls.append(text)
+        return ({"text": text}, "body")
+
+    tool = SimpleNamespace(_parse_frontmatter=parse)
+    with _probe_frontmatter_memo_context()(tool):
+        for index in range(1024):
+            assert tool._parse_frontmatter(f"entry-{index}") == ({"text": f"entry-{index}"}, "body")
+        assert tool._parse_frontmatter("entry-0") == ({"text": "entry-0"}, "body")
+        assert tool._parse_frontmatter("uncached") == ({"text": "uncached"}, "body")
+        assert tool._parse_frontmatter("entry-0") == ({"text": "entry-0"}, "body")
+    assert len(calls) == 1025
+    assert calls[-1] == "uncached"
+    assert tool._parse_frontmatter is parse
+
+
+def test_probe_parser_memo_enforces_utf8_budget_and_uncacheable_fallback():
+    calls = []
+
+    def parse(text):
+        calls.append(text)
+        return ({"text_length": len(text) if isinstance(text, str) else 4}, "body")
+
+    tool = SimpleNamespace(_parse_frontmatter=parse)
+    exact_limit = "x" * (16 * 1024 * 1024)
+    oversized = "y" * (16 * 1024 * 1024 + 1)
+    invalid_utf8 = "unpaired-\ud800"
+    with _probe_frontmatter_memo_context()(tool):
+        assert tool._parse_frontmatter(exact_limit) == ({"text_length": len(exact_limit)}, "body")
+        assert tool._parse_frontmatter(exact_limit) == ({"text_length": len(exact_limit)}, "body")
+        assert tool._parse_frontmatter("next") == ({"text_length": 4}, "body")
+        assert tool._parse_frontmatter("next") == ({"text_length": 4}, "body")
+        assert tool._parse_frontmatter(oversized) == ({"text_length": len(oversized)}, "body")
+        assert tool._parse_frontmatter(oversized) == ({"text_length": len(oversized)}, "body")
+        assert tool._parse_frontmatter(invalid_utf8) == ({"text_length": len(invalid_utf8)}, "body")
+        assert tool._parse_frontmatter(invalid_utf8) == ({"text_length": len(invalid_utf8)}, "body")
+        assert tool._parse_frontmatter(None) == ({"text_length": 4}, "body")
+    assert calls == [exact_limit, "next", "next", oversized, oversized,
+                     invalid_utf8, invalid_utf8, None]
+    assert tool._parse_frontmatter is parse
+
+
+def test_probe_parser_memo_restores_original_after_native_parse_failure():
+    def parse(text):
+        if text == "bad":
+            raise ValueError("fixture parse failure")
+        return {"value": text}, "body"
+
+    tool = SimpleNamespace(_parse_frontmatter=parse)
+    with pytest.raises(ValueError, match="fixture parse failure"):
+        with _probe_frontmatter_memo_context()(tool):
+            tool._parse_frontmatter("good")
+            tool._parse_frontmatter("bad")
+    assert tool._parse_frontmatter is parse
+    assert tool._parse_frontmatter("after") == ({"value": "after"}, "body")
+
+
+def test_probe_parser_memo_skips_unrecognized_results_and_copy_failures():
+    calls = []
+
+    class Uncopyable(dict):
+        def __deepcopy__(self, memo):
+            raise RuntimeError("synthetic copy refusal")
+
+    def parse(text):
+        calls.append(text)
+        if text == "bad-shape":
+            return {"not": "the native pair"}
+        return Uncopyable(value=text), "body"
+
+    tool = SimpleNamespace(_parse_frontmatter=parse)
+    with _probe_frontmatter_memo_context()(tool):
+        assert tool._parse_frontmatter("bad-shape") == {"not": "the native pair"}
+        assert tool._parse_frontmatter("bad-shape") == {"not": "the native pair"}
+        assert tool._parse_frontmatter("copy-error")[0]["value"] == "copy-error"
+        assert tool._parse_frontmatter("copy-error")[0]["value"] == "copy-error"
+    assert calls == ["bad-shape", "bad-shape", "copy-error", "copy-error"]
+    assert tool._parse_frontmatter is parse
+
+
+def test_probe_parser_memo_falls_back_if_a_cached_hit_cannot_be_copied():
+    calls = []
+
+    class CopyFailsOnHit(dict):
+        copies = 0
+
+        def __deepcopy__(self, memo):
+            type(self).copies += 1
+            if type(self).copies > 1:
+                raise RuntimeError("synthetic cached hit copy refusal")
+            return type(self)(self)
+
+    def parse(content):
+        calls.append(content)
+        return CopyFailsOnHit(content=content), "body"
+
+    tool = SimpleNamespace(_parse_frontmatter=parse)
+    with _probe_frontmatter_memo_context()(tool):
+        first, body = tool._parse_frontmatter("same")
+        hit_fallback, fallback_body = tool._parse_frontmatter("same")
+        assert first == hit_fallback == {"content": "same"}
+        assert body == fallback_body == "body"
+    assert calls == ["same", "same"]
+    assert tool._parse_frontmatter is parse
+
+
+def test_probe_parser_memo_preserves_keyword_call_signature():
+    calls = []
+
+    def parse(content):
+        calls.append(content)
+        return {"content": content}, "body"
+
+    tool = SimpleNamespace(_parse_frontmatter=parse)
+    with _probe_frontmatter_memo_context()(tool):
+        assert tool._parse_frontmatter(content="native keyword") == (
+            {"content": "native keyword"}, "body")
+        assert tool._parse_frontmatter(content="native keyword") == (
+            {"content": "native keyword"}, "body")
+    assert calls == ["native keyword", "native keyword"]
+    assert tool._parse_frontmatter is parse
 
 
 def test_profile_scoped_materialization_maps_skill_closure_to_hermes_profile_home(tmp_path: Path) -> None:
