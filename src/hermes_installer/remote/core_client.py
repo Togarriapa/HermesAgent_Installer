@@ -46,6 +46,229 @@ _MAX_CONTEXT_TOKENS = 2_000_000
 _EXTENSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@/-]{0,159}$", re.ASCII)
 _LIFECYCLE_PROBE_HANDLE = re.compile(r"^[A-Za-z0-9_-]{32,128}$", re.ASCII)
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
+_STARTUP_RPC_ERROR_MESSAGE = "lifecycle startup probe refused"
+_STARTUP_RPC_DIAGNOSTIC_STAGES = frozenset({
+    "parameters", "root_claim", "primary_identity", "route", "account",
+    "agent_setup", "prompt", "conversation", "terminal", "response",
+})
+_STARTUP_RPC_DIAGNOSTIC_TYPES = frozenset({
+    "CoreNativeObservationUnavailable", "ImportError", "ModuleNotFoundError", "NameError",
+    "AttributeError", "TypeError", "ValueError", "OSError", "TimeoutError", "RuntimeError",
+    "other",
+})
+
+
+class _StartupNativeCoreObservationUnavailableDenied(JarvisChatDenied):
+    pass
+
+
+class _StartupNativeImportErrorDenied(JarvisChatDenied):
+    pass
+
+
+class _StartupNativeModuleNotFoundErrorDenied(JarvisChatDenied):
+    pass
+
+
+class _StartupNativeNameErrorDenied(JarvisChatDenied):
+    pass
+
+
+class _StartupNativeAttributeErrorDenied(JarvisChatDenied):
+    pass
+
+
+class _StartupNativeTypeErrorDenied(JarvisChatDenied):
+    pass
+
+
+class _StartupNativeValueErrorDenied(JarvisChatDenied):
+    pass
+
+
+class _StartupNativeOSErrorDenied(JarvisChatDenied):
+    pass
+
+
+class _StartupNativeTimeoutErrorDenied(JarvisChatDenied):
+    pass
+
+
+class _StartupNativeRuntimeErrorDenied(JarvisChatDenied):
+    pass
+
+
+class _StartupNativeOtherDenied(JarvisChatDenied):
+    pass
+
+
+def _startup_native_core_observation_unavailable() -> None:
+    raise _StartupNativeCoreObservationUnavailableDenied("official core startup probe was refused")
+
+
+def _startup_native_import_error() -> None:
+    raise _StartupNativeImportErrorDenied("official core startup probe was refused")
+
+
+def _startup_native_module_not_found_error() -> None:
+    raise _StartupNativeModuleNotFoundErrorDenied("official core startup probe was refused")
+
+
+def _startup_native_name_error() -> None:
+    raise _StartupNativeNameErrorDenied("official core startup probe was refused")
+
+
+def _startup_native_attribute_error() -> None:
+    raise _StartupNativeAttributeErrorDenied("official core startup probe was refused")
+
+
+def _startup_native_type_error() -> None:
+    raise _StartupNativeTypeErrorDenied("official core startup probe was refused")
+
+
+def _startup_native_value_error() -> None:
+    raise _StartupNativeValueErrorDenied("official core startup probe was refused")
+
+
+def _startup_native_os_error() -> None:
+    raise _StartupNativeOSErrorDenied("official core startup probe was refused")
+
+
+def _startup_native_timeout_error() -> None:
+    raise _StartupNativeTimeoutErrorDenied("official core startup probe was refused")
+
+
+def _startup_native_runtime_error() -> None:
+    raise _StartupNativeRuntimeErrorDenied("official core startup probe was refused")
+
+
+def _startup_native_other() -> None:
+    raise _StartupNativeOtherDenied("official core startup probe was refused")
+
+
+_STARTUP_NATIVE_TYPE_HELPERS = {
+    "CoreNativeObservationUnavailable": _startup_native_core_observation_unavailable,
+    "ImportError": _startup_native_import_error,
+    "ModuleNotFoundError": _startup_native_module_not_found_error,
+    "NameError": _startup_native_name_error,
+    "AttributeError": _startup_native_attribute_error,
+    "TypeError": _startup_native_type_error,
+    "ValueError": _startup_native_value_error,
+    "OSError": _startup_native_os_error,
+    "TimeoutError": _startup_native_timeout_error,
+    "RuntimeError": _startup_native_runtime_error,
+    "other": _startup_native_other,
+}
+
+
+def _startup_refused_native_type(exception_type: str) -> None:
+    _STARTUP_NATIVE_TYPE_HELPERS.get(exception_type, _startup_native_other)()
+
+
+def _startup_refused_parameters(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_root_claim(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_primary_identity(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_route(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_account(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_agent_setup(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_prompt(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_conversation(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_terminal(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_response(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+_STARTUP_REFUSAL_STAGE_HELPERS = {
+    "parameters": _startup_refused_parameters,
+    "root_claim": _startup_refused_root_claim,
+    "primary_identity": _startup_refused_primary_identity,
+    "route": _startup_refused_route,
+    "account": _startup_refused_account,
+    "agent_setup": _startup_refused_agent_setup,
+    "prompt": _startup_refused_prompt,
+    "conversation": _startup_refused_conversation,
+    "terminal": _startup_refused_terminal,
+    "response": _startup_refused_response,
+}
+
+
+def _raise_startup_refusal(stage: str, exception_type: str) -> None:
+    _STARTUP_REFUSAL_STAGE_HELPERS.get(stage, _startup_refused_response)(exception_type)
+
+
+def _strict_json_object_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _parse_startup_error(error: Any) -> tuple[str, str]:
+    if type(error) is not dict:
+        raise ValueError("startup error shape is invalid")
+    code = error.get("code")
+    if type(code) is not int:
+        raise ValueError("startup error code is invalid")
+    if code == -32601:
+        if (set(error) != {"code", "message", "data"}
+                or type(error.get("message")) is not str):
+            raise ValueError("startup missing-method response is invalid")
+        return "method_missing", "other"
+    if (set(error) != {"code", "message", "data"} or code != -32000
+            or error.get("message") != _STARTUP_RPC_ERROR_MESSAGE):
+        raise ValueError("startup refusal code or message is invalid")
+    data = error.get("data")
+    if type(data) is not str:
+        raise ValueError("startup diagnostic data is invalid")
+    encoded = data.encode("ascii", "strict")
+    if len(encoded) > 512:
+        raise ValueError("startup diagnostic data exceeds its bound")
+    parsed = json.loads(data, object_pairs_hook=_strict_json_object_pairs)
+    if type(parsed) is not dict or set(parsed) != {"schema", "stage", "exception_type"}:
+        raise ValueError("startup diagnostic schema is invalid")
+    stage = parsed.get("stage")
+    exception_type = parsed.get("exception_type")
+    if (type(parsed.get("schema")) is not int or parsed["schema"] != 1
+            or type(stage) is not str or type(exception_type) is not str
+            or stage not in _STARTUP_RPC_DIAGNOSTIC_STAGES
+            or exception_type not in _STARTUP_RPC_DIAGNOSTIC_TYPES
+            or json.dumps(parsed, ensure_ascii=True, sort_keys=True, separators=(",", ":"),
+                          allow_nan=False) != data):
+        raise ValueError("startup diagnostic is noncanonical or outside its closed values")
+    return stage, exception_type
+
+
+def _raise_startup_method_missing() -> None:
+    raise _StartupNativeOtherDenied("official core startup method is unavailable")
 
 
 def _safe_extension_identifier(value: Any) -> bool:
@@ -165,7 +388,8 @@ class CoreRpcClient:
     async def _receive(self, ws, ws_types, *, expected_id: str | None = None,
                        session_id: str | None = None, deadline: float | None = None,
                        early_events: list[dict] | None = None,
-                       early_session_info: list[dict] | None = None) -> dict:
+                       early_session_info: list[dict] | None = None,
+                       startup_response: bool = False) -> dict:
         while True:
             timeout = self._timeout_seconds
             if deadline is not None:
@@ -185,13 +409,32 @@ class CoreRpcClient:
             if len(message.data.encode("utf-8", "replace")) > MAX_RPC_FRAME_BYTES:
                 raise JarvisChatDenied("official core gateway frame exceeded its bound")
             try:
-                frame = json.loads(message.data)
+                frame = json.loads(message.data,
+                                   object_pairs_hook=_strict_json_object_pairs
+                                   if startup_response else None)
             except (ValueError, TypeError):
                 raise JarvisChatDenied("official core gateway frame was invalid") from None
             if not isinstance(frame, dict):
+                if startup_response:
+                    raise JarvisChatDenied("official core startup probe was refused")
                 continue
+            if startup_response and (expected_id is None or frame.get("id") != expected_id):
+                raise JarvisChatDenied("official core startup probe was refused")
             if expected_id is not None and frame.get("id") == expected_id:
+                if (startup_response and (frame.get("jsonrpc") != "2.0"
+                        or set(frame) not in ({"jsonrpc", "id", "error"},
+                                             {"jsonrpc", "id", "result"}))):
+                    raise JarvisChatDenied("official core startup probe was refused")
                 if "error" in frame:
+                    if startup_response:
+                        try:
+                            stage, exception_type = _parse_startup_error(frame.get("error"))
+                        except (ValueError, TypeError, UnicodeError):
+                            raise JarvisChatDenied(
+                                "official core startup probe was refused") from None
+                        if stage == "method_missing":
+                            _raise_startup_method_missing()
+                        _raise_startup_refusal(stage, exception_type)
                     raise JarvisChatDenied("official core gateway rejected the request")
                 result = frame.get("result")
                 if not isinstance(result, dict):
@@ -263,7 +506,8 @@ class CoreRpcClient:
                 "params": {"probe_handle": probe_handle},
             })
             result = await self._receive(
-                ws, ws_types, expected_id=request_id, deadline=deadline)
+                ws, ws_types, expected_id=request_id, deadline=deadline,
+                startup_response=True)
             if (set(result) != {"schema", "probe_handle", "completion_handle",
                                 "status", "response_sha256"}
                     or type(result.get("schema")) is not int or result["schema"] != 1

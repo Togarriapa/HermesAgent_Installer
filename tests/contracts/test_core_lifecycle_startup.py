@@ -12,6 +12,7 @@ import pytest
 
 import hermes_installer.core_runtime as core_runtime
 import hermes_installer.remote.core_native_observer as observer
+import hermes_installer.remote.core_lifecycle_startup as lifecycle_startup
 from hermes_installer.remote.core_lifecycle_startup import register_lifecycle_startup_probe
 
 
@@ -166,14 +167,78 @@ def test_lifecycle_handler_registers_only_the_fixed_method_and_rejects_extra_par
         def _ok(rid, result):
             return {"jsonrpc": "2.0", "id": rid, "result": result}
 
+        @staticmethod
+        def _err(rid, code, message, data=None):
+            error = {"code": code, "message": message}
+            if data is not None:
+                error["data"] = data
+            return {"jsonrpc": "2.0", "id": rid, "error": error}
+
     server = Server()
     client = observer.CoreNativeObservationClient(socket_path=Path("/unused"))
     client.claim_lifecycle_startup_probe = lambda _handle: pytest.fail(
         "malformed RPC must be rejected before claim")
     register_lifecycle_startup_probe(server, client=client)
     assert [name for name, _handler in server.rows] == ["jarvis.lifecycle_startup_probe"]
+    refusal = server.rows[0][1]("request-1", {
+        "probe_handle": "P" * 43, "prompt": "caller controlled"})
+    assert refusal == {
+        "jsonrpc": "2.0", "id": "request-1", "error": {
+            "code": -32000, "message": "lifecycle startup probe refused",
+            "data": '{"exception_type":"CoreNativeObservationUnavailable","schema":1,"stage":"parameters"}',
+        },
+    }
+
+
+@pytest.mark.parametrize("stage", sorted(lifecycle_startup._RPC_DIAGNOSTIC_STAGES))
+def test_startup_refusal_emits_only_canonical_bounded_stage_and_type(monkeypatch, stage):
+    class Server:
+        def register_method(self, name, handler):
+            self.handler = handler
+
+        @staticmethod
+        def _ok(rid, result):
+            return {"jsonrpc": "2.0", "id": rid, "result": result}
+
+        @staticmethod
+        def _err(rid, code, message, data=None):
+            return {"jsonrpc": "2.0", "id": rid, "error": {
+                "code": code, "message": message, "data": data}}
+
+    server = Server()
+    client = observer.CoreNativeObservationClient(socket_path=Path("/unused"))
+
+    def refuse(_params, *, client):
+        raise lifecycle_startup._StartupProbeRefusal(stage, "RuntimeError")
+
+    monkeypatch.setattr(lifecycle_startup, "_run_probe", refuse)
+    register_lifecycle_startup_probe(server, client=client)
+    result = server.handler("request-2", {"probe_handle": "P" * 43})
+    error = result["error"]
+    assert set(result) == {"jsonrpc", "id", "error"}
+    assert set(error) == {"code", "message", "data"}
+    assert error["code"] == -32000
+    assert error["message"] == "lifecycle startup probe refused"
+    assert error["data"] == lifecycle_startup._startup_refusal_data(stage, "RuntimeError")
+    assert len(error["data"].encode("ascii")) <= 512
+
+
+def test_lifecycle_handler_refuses_registration_without_pinned_error_seam():
+    class Server:
+        registered = False
+
+        def register_method(self, _name, _handler):
+            self.registered = True
+
+        @staticmethod
+        def _ok(rid, result):
+            return {"jsonrpc": "2.0", "id": rid, "result": result}
+
+    server = Server()
+    client = observer.CoreNativeObservationClient(socket_path=Path("/unused"))
     with pytest.raises(observer.CoreNativeObservationUnavailable):
-        server.rows[0][1]("request-1", {"probe_handle": "P" * 43, "prompt": "caller controlled"})
+        register_lifecycle_startup_probe(server, client=client)
+    assert server.registered is False
 
 
 def test_root_probe_claim_is_current_peer_only_and_single_use(monkeypatch):

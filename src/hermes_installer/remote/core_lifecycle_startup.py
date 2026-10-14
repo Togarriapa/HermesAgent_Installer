@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import stat
 from pathlib import Path
@@ -17,9 +18,48 @@ from .core_native_observer import (
 from .native_child_adapter import NativeChildMode, apply_native_child_tool_closure
 
 _METHOD = "jarvis.lifecycle_startup_probe"
+_RPC_ERROR_CODE = -32000
+_RPC_ERROR_MESSAGE = "lifecycle startup probe refused"
+_RPC_DIAGNOSTIC_SCHEMA = 1
+_RPC_DIAGNOSTIC_STAGES = frozenset({
+    "parameters", "root_claim", "primary_identity", "route", "account",
+    "agent_setup", "prompt", "conversation", "terminal", "response",
+})
+_RPC_DIAGNOSTIC_EXCEPTION_TYPES = frozenset({
+    "CoreNativeObservationUnavailable", "ImportError", "ModuleNotFoundError", "NameError",
+    "AttributeError", "TypeError", "ValueError", "OSError", "TimeoutError", "RuntimeError",
+    "other",
+})
 _PROMPT_PREFIX = "Reply with exactly JARVIS-STARTUP-"
 _PROMPT_SUFFIX = ". Do not use tools."
 _MAX_SOUL_BYTES = 1024 * 1024
+
+
+class _StartupProbeRefusal(Exception):
+    """Closed, per-call refusal metadata with no original exception text."""
+
+    def __init__(self, stage: str, exception_type: str):
+        self.stage = stage
+        self.exception_type = exception_type
+
+
+def _startup_refusal_data(stage: str, exception_type: str) -> str:
+    if stage not in _RPC_DIAGNOSTIC_STAGES or exception_type not in _RPC_DIAGNOSTIC_EXCEPTION_TYPES:
+        raise CoreNativeObservationUnavailable("startup refusal diagnostic is outside the fixed schema")
+    data = json.dumps({"schema": _RPC_DIAGNOSTIC_SCHEMA, "stage": stage,
+                       "exception_type": exception_type}, ensure_ascii=True,
+                      sort_keys=True, separators=(",", ":"), allow_nan=False)
+    encoded = data.encode("ascii", "strict")
+    if len(encoded) > 512:
+        raise CoreNativeObservationUnavailable("startup refusal diagnostic exceeded its fixed bound")
+    return data
+
+
+def _startup_exception_type(exc: Exception) -> str:
+    if type(exc) is CoreNativeObservationUnavailable:
+        return "CoreNativeObservationUnavailable"
+    name = type(exc).__name__
+    return name if name in _RPC_DIAGNOSTIC_EXCEPTION_TYPES else "other"
 
 
 def _read_primary_identity(home: Path) -> tuple[bytes, tuple[int, ...]]:
@@ -55,47 +95,54 @@ def _read_primary_identity(home: Path) -> tuple[bytes, tuple[int, ...]]:
 
 
 def _run_probe(params: Any, *, client: CoreNativeObservationClient) -> dict[str, Any]:
-    if (type(params) is not dict or set(params) != {"probe_handle"}
-            or type(client) is not CoreNativeObservationClient):
-        raise CoreNativeObservationUnavailable("fixed startup probe parameters are required")
-    context = client.claim_lifecycle_startup_probe(params["probe_handle"])
-    if type(context) is not LifecycleStartupProbeContext or not context.is_root_issued():
-        raise CoreNativeObservationUnavailable("Root startup probe context is unavailable")
-    if os.geteuid() <= 0:
-        raise CoreNativeObservationUnavailable("startup probe requires the selected Hermes account")
-
-    from hermes_constants import get_hermes_home
-    from agent.prompt_builder import load_soul_md
-    from hermes_cli.runtime_provider import resolve_runtime_provider
-    from hermes_cli.auth_codex import resolve_codex_runtime_credentials
-    from run_agent import AIAgent
-    from .core_native_observer import _codex_account_fingerprint
-
-    home = Path(get_hermes_home()).resolve(strict=True)
-    raw_before, signature_before = _read_primary_identity(home)
-    identity = load_soul_md(home_override=home)
-    raw_after, signature_after = _read_primary_identity(home)
-    if (raw_before != raw_after or signature_before != signature_after
-            or hashlib.sha256(raw_before).hexdigest() != context.primary_source_sha256
-            or not isinstance(identity, str) or not identity.strip()
-            or "[...truncated SOUL.md:" in identity
-            or hashlib.sha256(identity.encode("utf-8", "strict")).hexdigest()
-               != context.active_soul_sha256):
-        raise CoreNativeObservationUnavailable("loaded primary identity differs from Root readback")
-
-    runtime = resolve_runtime_provider(requested=context.provider, target_model=context.model)
-    if (not isinstance(runtime, dict) or runtime.get("provider") != context.provider
-            or runtime.get("api_mode") != context.api_mode
-            or runtime.get("base_url", "").rstrip("/") != context.base_url):
-        raise CoreNativeObservationUnavailable("selected Codex route changed before startup probe")
-    credentials = resolve_codex_runtime_credentials(read_only=True)
-    account = _codex_account_fingerprint(lambda: credentials)
-    if account != context.account_fingerprint:
-        raise CoreNativeObservationUnavailable("selected Codex account changed before startup probe")
-
-    prompt = _PROMPT_PREFIX + context.nonce + _PROMPT_SUFFIX
+    stage = "parameters"
     agent = None
     try:
+        if (type(params) is not dict or set(params) != {"probe_handle"}
+                or type(client) is not CoreNativeObservationClient):
+            raise CoreNativeObservationUnavailable("fixed startup probe parameters are required")
+
+        stage = "root_claim"
+        context = client.claim_lifecycle_startup_probe(params["probe_handle"])
+        if type(context) is not LifecycleStartupProbeContext or not context.is_root_issued():
+            raise CoreNativeObservationUnavailable("Root startup probe context is unavailable")
+        if os.geteuid() <= 0:
+            raise CoreNativeObservationUnavailable("startup probe requires the selected Hermes account")
+
+        stage = "primary_identity"
+        from hermes_constants import get_hermes_home
+        from agent.prompt_builder import load_soul_md
+
+        home = Path(get_hermes_home()).resolve(strict=True)
+        raw_before, signature_before = _read_primary_identity(home)
+        identity = load_soul_md(home_override=home)
+        raw_after, signature_after = _read_primary_identity(home)
+        if (raw_before != raw_after or signature_before != signature_after
+                or hashlib.sha256(raw_before).hexdigest() != context.primary_source_sha256
+                or not isinstance(identity, str) or not identity.strip()
+                or "[...truncated SOUL.md:" in identity
+                or hashlib.sha256(identity.encode("utf-8", "strict")).hexdigest()
+                   != context.active_soul_sha256):
+            raise CoreNativeObservationUnavailable("loaded primary identity differs from Root readback")
+
+        stage = "route"
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        runtime = resolve_runtime_provider(requested=context.provider, target_model=context.model)
+        if (not isinstance(runtime, dict) or runtime.get("provider") != context.provider
+                or runtime.get("api_mode") != context.api_mode
+                or runtime.get("base_url", "").rstrip("/") != context.base_url):
+            raise CoreNativeObservationUnavailable("selected Codex route changed before startup probe")
+
+        stage = "account"
+        from hermes_cli.auth_codex import resolve_codex_runtime_credentials
+        from .core_native_observer import _codex_account_fingerprint
+        credentials = resolve_codex_runtime_credentials(read_only=True)
+        account = _codex_account_fingerprint(lambda: credentials)
+        if account != context.account_fingerprint:
+            raise CoreNativeObservationUnavailable("selected Codex account changed before startup probe")
+
+        stage = "agent_setup"
+        from run_agent import AIAgent
         agent = AIAgent(
             base_url=runtime["base_url"], api_key=runtime.get("api_key"),
             provider=context.provider, api_mode=context.api_mode, model=context.model,
@@ -121,6 +168,9 @@ def _run_probe(params: Any, *, client: CoreNativeObservationClient) -> dict[str,
                 or getattr(getattr(agent, "_checkpoint_mgr", None), "enabled", None) is not False
                 or getattr(agent, "prefill_messages", None) not in (None, [])):
             raise CoreNativeObservationUnavailable("ephemeral startup agent is not the fixed no-tools route")
+
+        stage = "prompt"
+        prompt = _PROMPT_PREFIX + context.nonce + _PROMPT_SUFFIX
         prompt_builder = getattr(agent, "_build_system_prompt", None)
         if not callable(prompt_builder):
             raise CoreNativeObservationUnavailable("official native system-prompt builder is unavailable")
@@ -128,10 +178,13 @@ def _run_probe(params: Any, *, client: CoreNativeObservationClient) -> dict[str,
         if (not isinstance(expected_instructions, str) or identity not in expected_instructions
                 or len(expected_instructions) > 256 * 1024):
             raise CoreNativeObservationUnavailable("native startup prompt does not contain the selected identity")
+        stage = "conversation"
         with lifecycle_startup_probe_scope(
                 context, identity=identity, expected_instructions=expected_instructions):
             result = agent.run_conversation(
                 user_message=prompt, conversation_history=[])
+
+        stage = "terminal"
         if (type(result) is not dict or result.get("completed") is not True
                 or result.get("failed") is True or result.get("partial") is True
                 or result.get("interrupted") is True or result.get("error") not in (None, "")
@@ -139,6 +192,8 @@ def _run_probe(params: Any, *, client: CoreNativeObservationClient) -> dict[str,
                 or result["final_response"] != _PROMPT_PREFIX + context.nonce):
             raise CoreNativeObservationUnavailable("native startup conversation did not complete exactly")
         terminal = take_lifecycle_startup_terminal(context)
+
+        stage = "response"
         response = result["final_response"].encode("utf-8", "strict")
         response_sha256 = hashlib.sha256(response).hexdigest()
         if response_sha256 != terminal["response_text_sha256"]:
@@ -148,20 +203,33 @@ def _run_probe(params: Any, *, client: CoreNativeObservationClient) -> dict[str,
             "completion_handle": terminal["completion_handle"],
             "status": "completed", "response_sha256": response_sha256,
         }
+    except _StartupProbeRefusal:
+        raise
+    except Exception as exc:
+        raise _StartupProbeRefusal(stage, _startup_exception_type(exc)) from None
     finally:
         if agent is not None:
-            agent.close()
+            try:
+                agent.close()
+            except Exception as exc:
+                raise _StartupProbeRefusal("response", _startup_exception_type(exc)) from None
 
 
 def register_lifecycle_startup_probe(server_module: Any, *,
                                      client: CoreNativeObservationClient) -> None:
     """Register exactly one private handler at the pinned native gateway seam."""
     register = getattr(server_module, "register_method", None)
-    if not callable(register) or type(client) is not CoreNativeObservationClient:
+    make_error = getattr(server_module, "_err", None)
+    if (not callable(register) or not callable(make_error)
+            or type(client) is not CoreNativeObservationClient):
         raise CoreNativeObservationUnavailable("pinned native register_method seam is unavailable")
 
     def lifecycle_startup_probe(rid: Any, params: Any) -> dict[str, Any]:
-        result = _run_probe(params, client=client)
+        try:
+            result = _run_probe(params, client=client)
+        except _StartupProbeRefusal as refusal:
+            return make_error(rid, _RPC_ERROR_CODE, _RPC_ERROR_MESSAGE,
+                              _startup_refusal_data(refusal.stage, refusal.exception_type))
         make_ok = getattr(server_module, "_ok", None)
         if not callable(make_ok):
             raise CoreNativeObservationUnavailable("pinned native JSON-RPC response seam is unavailable")

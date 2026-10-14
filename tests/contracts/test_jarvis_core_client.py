@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import hermes_installer.remote.core_client as core_client
 from hermes_installer.remote.core_client import CoreRpcClient, CoreTurnEvent
 from hermes_installer.remote.jarvis_chat import JarvisChatDenied
 
@@ -138,6 +139,7 @@ def test_lifecycle_startup_probe_uses_only_fixed_rpc_and_closed_single_use_recei
     async def receive(_ws, _types, *, expected_id=None, deadline=None, **_kwargs):
         assert expected_id == socket.frames[0]["id"]
         assert deadline is not None
+        assert _kwargs["startup_response"] is True
         return {"schema": 1, "probe_handle": "p" * 32,
                 "completion_handle": "c" * 32, "status": "completed",
                 "response_sha256": "a" * 64}
@@ -193,6 +195,111 @@ def test_lifecycle_startup_probe_rejects_caller_control_and_malformed_handles():
     client = CoreRpcClient(token_file=Path("/private/fake/token"))
     with pytest.raises(JarvisChatDenied):
         asyncio.run(client.lifecycle_startup_probe("short"))
+
+
+def test_matched_startup_refusal_uses_fixed_stage_and_native_type_helpers():
+    class Socket:
+        async def receive(self):
+            return SimpleNamespace(type=1, data=json.dumps({
+                "jsonrpc": "2.0", "id": "request-1", "error": {
+                    "code": -32000, "message": "lifecycle startup probe refused",
+                    "data": '{"exception_type":"RuntimeError","schema":1,"stage":"route"}',
+                },
+            }))
+
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    ws_types = SimpleNamespace(TEXT=1, CLOSED=2, CLOSE=3, ERROR=4)
+    with pytest.raises(core_client._StartupNativeRuntimeErrorDenied) as caught:
+        asyncio.run(client._receive(Socket(), ws_types, expected_id="request-1",
+                                    startup_response=True))
+    assert str(caught.value) == "official core startup probe was refused"
+
+
+def test_matched_startup_missing_method_has_fixed_refusal_origin():
+    class Socket:
+        async def receive(self):
+            return SimpleNamespace(type=1, data=json.dumps({
+                "jsonrpc": "2.0", "id": "request-1", "error": {
+                    "code": -32601, "message": "unknown method: private-selector",
+                    "data": {"private": "body"},
+                },
+            }))
+
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    ws_types = SimpleNamespace(TEXT=1, CLOSED=2, CLOSE=3, ERROR=4)
+    with pytest.raises(core_client._StartupNativeOtherDenied) as caught:
+        asyncio.run(client._receive(Socket(), ws_types, expected_id="request-1",
+                                    startup_response=True))
+    assert str(caught.value) == "official core startup method is unavailable"
+
+
+def test_foreign_startup_error_is_a_generic_refusal():
+    class Socket:
+        async def receive(self):
+            return SimpleNamespace(type=1, data=json.dumps({
+                "jsonrpc": "2.0", "id": "foreign-request", "error": {
+                    "code": -32000, "message": "lifecycle startup probe refused",
+                    "data": '{"exception_type":"RuntimeError","schema":1,"stage":"route"}',
+                },
+            }))
+
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    ws_types = SimpleNamespace(TEXT=1, CLOSED=2, CLOSE=3, ERROR=4)
+    with pytest.raises(JarvisChatDenied) as caught:
+        asyncio.run(client._receive(Socket(), ws_types, expected_id="request-1",
+                                    startup_response=True))
+    assert type(caught.value) is JarvisChatDenied
+    assert str(caught.value) == "official core startup probe was refused"
+
+
+def test_nonstartup_rpc_error_keeps_generic_refusal_behavior():
+    class Socket:
+        async def receive(self):
+            return SimpleNamespace(type=1, data=json.dumps({
+                "jsonrpc": "2.0", "id": "request-1", "error": {
+                    "code": -32000, "message": "private native detail",
+                    "data": "private native body",
+                },
+            }))
+
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    ws_types = SimpleNamespace(TEXT=1, CLOSED=2, CLOSE=3, ERROR=4)
+    with pytest.raises(JarvisChatDenied) as caught:
+        asyncio.run(client._receive(Socket(), ws_types, expected_id="request-1"))
+    assert type(caught.value) is JarvisChatDenied
+    assert str(caught.value) == "official core gateway rejected the request"
+
+
+@pytest.mark.parametrize("data", [
+    '{"stage":"route","schema":1,"exception_type":"RuntimeError"}',
+    '{"exception_type":"RuntimeError","schema":1,"stage":"route","stage":"account"}',
+    '{"exception_type":"RuntimeError", "schema":1,"stage":"route"}',
+    '{"exception_type":"RuntimeError","schema":1,"stage":"not-a-stage"}',
+    '{"exception_type":"KeyError","schema":1,"stage":"route"}',
+    '{"exception_type":"RuntimeError","schema":1,"stage":[]}',
+    '{"exception_type":"RuntimeError","schema":1,"stage":"route"}' + (" " * 513),
+    '"RuntimeError"',
+])
+def test_startup_refusal_parser_rejects_noncanonical_or_open_data(data):
+    with pytest.raises((ValueError, UnicodeError)):
+        core_client._parse_startup_error({
+            "code": -32000, "message": "lifecycle startup probe refused", "data": data,
+        })
+
+
+@pytest.mark.parametrize("error", [
+    {"code": -32001, "message": "lifecycle startup probe refused",
+     "data": '{"exception_type":"RuntimeError","schema":1,"stage":"route"}'},
+    {"code": -32000, "message": "different",
+     "data": '{"exception_type":"RuntimeError","schema":1,"stage":"route"}'},
+    {"code": -32601, "message": "unknown method: private-selector", "data": None,
+     "extra": "foreign"},
+    {"code": True, "message": "lifecycle startup probe refused",
+     "data": '{"exception_type":"RuntimeError","schema":1,"stage":"route"}'},
+])
+def test_startup_refusal_parser_rejects_foreign_or_malformed_rpc_errors(error):
+    with pytest.raises(ValueError):
+        core_client._parse_startup_error(error)
 
 
 def test_models_status_projects_only_codex_authentication_and_known_catalog():
