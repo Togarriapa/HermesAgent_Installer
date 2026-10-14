@@ -2691,13 +2691,69 @@ def _journal_adapter_backup_generation(record):
   raise CoreRuntimeError("journaled adapter update backup generation is unavailable")
  return generation
 
+def _projected_credential_guard_code(backup_members):
+ """Build the exact systemd root-owned 0440/ACL credential projection check."""
+ names=("core-ownership-journal","hermes-session-token","adapter-update-cohort",
+        "resources-discovery")
+ backup_credentials=tuple("adapter-backup-"+name.removesuffix(".json").replace(".","-")
+                          for name in backup_members)
+ expected=names+backup_credentials+("adapter-backup-manifest",)
+ limits={"core-ownership-journal":65536,"hermes-session-token":65536,
+         "adapter-update-cohort":131072,"resources-discovery":16384,
+         "adapter-backup-manifest":4096}
+ limits.update({name:262144 for name in backup_credentials})
+ optional=tuple("adapter-backup-"+name.removesuffix(".json").replace(".","-")
+                for name in _ADAPTER_UPDATE_OPTIONAL_EMPTY_BACKUP_MEMBERS)
+ return (
+  "import os,stat,struct\n"
+  "expected_names="+repr(expected)+"\n"
+  "limits="+repr(limits)+"\n"
+  "optional_empty="+repr(optional)+"\n"
+  "expected_acl=((1,4,0xffffffff),(2,4,1000),(4,0,0xffffffff),(16,4,0xffffffff),(32,0,0xffffffff))\n"
+  "def _projection_sig(s): return (s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_nlink,s.st_size,s.st_mtime_ns,s.st_ctime_ns)\n"
+  "def _projection_acl(fd):\n"
+  " try:\n"
+  "  raw=os.getxattr(fd,'system.posix_acl_access')\n"
+  "  return len(raw)==44 and struct.unpack_from('<I',raw,0)[0]==2 and tuple(struct.unpack_from('<HHI',raw,4+8*i) for i in range(5))==expected_acl\n"
+  " except (OSError,ValueError,struct.error): return False\n"
+  "credential_data={}; projection_ok=False; _credential_dir_fd=None\n"
+  "try:\n"
+  " _credential_dir_fd=os.open(base,os.O_RDONLY|getattr(os,'O_DIRECTORY',0)|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_CLOEXEC',0))\n"
+  " _credential_dir_before=os.fstat(_credential_dir_fd); _credential_dir_named=os.stat(base,follow_symlinks=False)\n"
+  " if not stat.S_ISDIR(_credential_dir_before.st_mode) or (_credential_dir_before.st_dev,_credential_dir_before.st_ino)!=(_credential_dir_named.st_dev,_credential_dir_named.st_ino): raise ValueError()\n"
+  " if set(os.listdir(_credential_dir_fd))!=set(expected_names): raise ValueError()\n"
+  " for _name in expected_names:\n"
+  "  _fd=os.open(_name,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_CLOEXEC',0),dir_fd=_credential_dir_fd)\n"
+  "  try:\n"
+  "   _before=os.fstat(_fd); _named=os.stat(_name,dir_fd=_credential_dir_fd,follow_symlinks=False); _maximum=limits[_name]\n"
+  "   if (not stat.S_ISREG(_before.st_mode) or (_before.st_uid,_before.st_gid)!=(0,0) or stat.S_IMODE(_before.st_mode)!=0o440 or _before.st_nlink!=1 or _before.st_size>_maximum or (_before.st_size==0 and _name not in optional_empty) or not _projection_acl(_fd)): raise ValueError()\n"
+  "   _data=bytearray()\n"
+  "   while len(_data)<=_maximum:\n"
+  "    _block=os.read(_fd,min(65536,_maximum+1-len(_data)))\n"
+  "    if not _block: break\n"
+  "    _data.extend(_block)\n"
+  "   _after=os.fstat(_fd); _named_after=os.stat(_name,dir_fd=_credential_dir_fd,follow_symlinks=False); _credential_dir_after=os.fstat(_credential_dir_fd); _credential_dir_named_after=os.stat(base,follow_symlinks=False)\n"
+  "   if (len(_data)!=_before.st_size or len(_data)>_maximum or _projection_sig(_before)!=_projection_sig(_after) or _projection_sig(_before)!=_projection_sig(_named) or _projection_sig(_before)!=_projection_sig(_named_after) or not _projection_acl(_fd) or _projection_sig(_credential_dir_before)!=_projection_sig(_credential_dir_after) or _projection_sig(_credential_dir_before)!=_projection_sig(_credential_dir_named_after)): raise ValueError()\n"
+  "   credential_data[_name]=bytes(_data)\n"
+  "  finally: os.close(_fd)\n"
+  " projection_ok=True\n"
+  "except Exception:\n"
+  " credential_data={}; projection_ok=False\n"
+  "finally:\n"
+  " if _credential_dir_fd is not None: os.close(_credential_dir_fd)\n")
+
+
 def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generation=None,
-                           native_plugin_transition=False,failure_diagnostics=False):
+                           native_plugin_transition=False,failure_diagnostics=False,
+                           credential_projection=False):
  """Validate systemd's journal snapshot and the exact fixed service recipe."""
  if type(native_plugin_transition) is not bool:
   raise CoreRuntimeError("native plugin guard mode must be fixed")
  if type(failure_diagnostics) is not bool or (failure_diagnostics and not cohort_gate):
   raise CoreRuntimeError("failure diagnostics require an explicitly selected source cohort")
+ if (type(credential_projection) is not bool
+     or (credential_projection and not (cohort_gate and failure_diagnostics))):
+  raise CoreRuntimeError("credential projection requires an explicitly diagnosed source cohort")
  expected_source=str(adapter_source or ADAPTER_SOURCE)
  base_code=("import hashlib,json,os,stat; "
          f"service={SERVICE!r}; source={expected_source!r}; "
@@ -2784,6 +2840,18 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
    )
   else:
    transition_code="transition_ok=(c.get('native_plugin_transition') is None); "
+  projection_code=("exec(bytes.fromhex("+
+      repr(_projected_credential_guard_code(backup_members).encode("ascii").hex())+
+      ").decode('ascii')); ") if credential_projection else ""
+  if credential_projection:
+   manifest_read=("backup_manifest_path=os.path.join(base,backup_manifest_name); backup_manifest_stat=None; backup_raw=credential_data.get(backup_manifest_name,b''); ")
+   backup_shape=("(projection_ok and isinstance(backup,dict) and type(backup_files) is dict and set(backup_files)==set(backup_members) and backup.get('source_generation')==backup_generation and backup.get('path')=="+repr(str(ADAPTER_UPDATE_BACKUPS)+"/")+"+backup_generation and backup_raw==canonical(backup_files) and 0<len(backup_raw)<=4096)")
+   backup_validation=("backup_credential_name=lambda n:'adapter-backup-'+n.removesuffix('.json').replace('.','-'); "
+    "backup_valid=lambda n,h:(lambda b:((0<len(b)<=262144) or (n in optional_empty_backup_members and len(b)==0 and h==hashlib.sha256(b'').hexdigest())) and hashlib.sha256(b).hexdigest()==h)(credential_data.get(backup_credential_name(n),b'')); ")
+  else:
+   manifest_read=("backup_manifest_path=os.path.join(base,backup_manifest_name); backup_manifest_stat=os.stat(backup_manifest_path,follow_symlinks=False); backup_raw=open(backup_manifest_path,'rb').read(4097); ")
+   backup_shape=("(isinstance(backup,dict) and type(backup_files) is dict and set(backup_files)==set(backup_members) and backup.get('source_generation')==backup_generation and backup.get('path')=="+repr(str(ADAPTER_UPDATE_BACKUPS))+"+'/'+backup_generation and backup_raw==canonical(backup_files) and stat.S_ISREG(backup_manifest_stat.st_mode) and (backup_manifest_stat.st_uid,backup_manifest_stat.st_gid)==(1000,1000) and stat.S_IMODE(backup_manifest_stat.st_mode)==0o400 and backup_manifest_stat.st_nlink==1 and len(backup_raw)==backup_manifest_stat.st_size)")
+   backup_validation=("backup_valid=lambda n,h:(lambda p,s,b:stat.S_ISREG(s.st_mode) and (s.st_uid,s.st_gid)==(1000,1000) and stat.S_IMODE(s.st_mode)==0o400 and s.st_nlink==1 and ((0<s.st_size<=262144) or (n in optional_empty_backup_members and s.st_size==0 and h==hashlib.sha256(b'').hexdigest())) and len(b)==s.st_size and hashlib.sha256(b).hexdigest()==h)(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),os.stat(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),follow_symlinks=False),open(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),'rb').read(262145)); ")
   gate_code=("import hashlib,json,os,stat; "
     "cp=os.path.join(base,'adapter-update-cohort'); rp=os.path.join(base,'resources-discovery'); "
     "cs=os.stat(cp,follow_symlinks=False); rs=os.stat(rp,follow_symlinks=False); "
@@ -2800,11 +2868,12 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
     "backup=d.get('adapter_update_backup'); backup_members="+repr(backup_members)+"; "
     "backup_generation="+repr(backup_generation)+"; "
     "backup_manifest_name='adapter-backup-manifest'; "
-    "backup_manifest_path=os.path.join(base,backup_manifest_name); backup_manifest_stat=os.stat(backup_manifest_path,follow_symlinks=False); backup_raw=open(backup_manifest_path,'rb').read(4097); "
+    projection_code+
+    manifest_read+
     "backup_files=(backup.get('files') if isinstance(backup,dict) else None); "
-    "backup_ok=(isinstance(backup,dict) and type(backup_files) is dict and set(backup_files)==set(backup_members) and backup.get('source_generation')==backup_generation and backup.get('path')=="+repr(str(ADAPTER_UPDATE_BACKUPS))+"+'/'+backup_generation and backup_raw==canonical(backup_files) and stat.S_ISREG(backup_manifest_stat.st_mode) and (backup_manifest_stat.st_uid,backup_manifest_stat.st_gid)==(1000,1000) and stat.S_IMODE(backup_manifest_stat.st_mode)==0o400 and backup_manifest_stat.st_nlink==1 and len(backup_raw)==backup_manifest_stat.st_size); "
+    "backup_ok="+backup_shape+"; "
     "optional_empty_backup_members="+repr(_ADAPTER_UPDATE_OPTIONAL_EMPTY_BACKUP_MEMBERS)+"; "
-    "backup_valid=lambda n,h:(lambda p,s,b:stat.S_ISREG(s.st_mode) and (s.st_uid,s.st_gid)==(1000,1000) and stat.S_IMODE(s.st_mode)==0o400 and s.st_nlink==1 and ((0<s.st_size<=262144) or (n in optional_empty_backup_members and s.st_size==0 and h==hashlib.sha256(b'').hexdigest())) and len(b)==s.st_size and hashlib.sha256(b).hexdigest()==h)(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),os.stat(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),follow_symlinks=False),open(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),'rb').read(262145)); "
+    backup_validation+
     "backup_ok=backup_ok and all(backup_valid(name,backup_files.get(name)) for name in backup_members) and hashlib.sha256(backup_raw).hexdigest()==hashlib.sha256(canonical(backup_files)).hexdigest(); "
     "initial=c.get('initial_primary_transition'); initial_ok=(initial is None or (isinstance(initial,dict) and initial.get('purpose')=='initial-primary-adoption' and initial.get('prior_record_state')=='absent' and initial.get('state') in ('pending','adopted') and ((initial.get('state')=='pending' and c.get('primary_record_sha256')=='absent' and initial.get('owner_backup_sha256') is None) or (initial.get('state')=='adopted' and initial.get('adopted_record_sha256')==c.get('primary_record_sha256') and initial.get('after_resources_record_sha256')==c.get('starting_resources_record_sha256'))))); "
     "keys_ok=(set(c)==keys or (set(c)==legacy_keys and c.get('native_plugin_transition') is None)); "
@@ -2852,7 +2921,7 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
  return base_code+gate_code+diagnostic_code+"raise SystemExit(0 if ok else 1)"
 def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False,backup_generation=None,
           native_plugin_transition=False,failure_diagnostics=False,
-          whole_guard_encoding=False):
+          whole_guard_encoding=False,credential_projection=False):
  if type(native_plugin_transition) is not bool or (native_plugin_transition and not cohort_gate):
   raise CoreRuntimeError("native plugin unit mode must be cohort-bound")
  if type(failure_diagnostics) is not bool or (failure_diagnostics and not cohort_gate):
@@ -2860,12 +2929,15 @@ def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False,backup_gene
  if (type(whole_guard_encoding) is not bool
      or (whole_guard_encoding and not (cohort_gate and failure_diagnostics))):
   raise CoreRuntimeError("whole-program guard encoding requires a diagnostic source-cohort unit")
+ if (type(credential_projection) is not bool
+     or (credential_projection and not (cohort_gate and failure_diagnostics and whole_guard_encoding))):
+  raise CoreRuntimeError("projected credentials require an encoded diagnostic source-cohort unit")
  a=pwd.getpwnam("admin")
  if a.pw_uid!=1000 or a.pw_gid!=1000 or a.pw_dir!="/home/admin": raise CoreRuntimeError("admin identity mismatch")
  guard=""
  if startup_guard:
   program=_core_start_guard_code(adapter_source,cohort_gate,backup_generation,
-    native_plugin_transition,failure_diagnostics)
+    native_plugin_transition,failure_diagnostics,credential_projection)
   command=("exec(bytes.fromhex("+repr(program.encode("utf-8").hex())+").decode('utf-8'))"
     if whole_guard_encoding else program)
   guard=(f'ExecStartPre={PYTHON} -I -S -c "{command}"\n'
@@ -2923,6 +2995,9 @@ def _cohort_guard_unit(cohort,*,source,backup_generation,native_plugin_transitio
  candidates += (_unit(adapter_source=source,cohort_gate=True,
         backup_generation=backup_generation,native_plugin_transition=native_plugin_transition,
         failure_diagnostics=True,whole_guard_encoding=True),)
+ candidates += (_unit(adapter_source=source,cohort_gate=True,
+        backup_generation=backup_generation,native_plugin_transition=native_plugin_transition,
+        failure_diagnostics=True,whole_guard_encoding=True,credential_projection=True),)
  matches=[]
  for candidate in candidates:
   candidate_sha=hashlib.sha256(candidate).hexdigest()
@@ -6282,7 +6357,7 @@ def _update_owned_core_adapter_locked():
   raise CoreRuntimeError("verified prior A0 archive changed during transition preparation")
  new_unit=_unit(adapter_source=ADAPTER_SOURCE,cohort_gate=True,backup_generation=old_adapter,
   native_plugin_transition=plugin_transition is not None,failure_diagnostics=True,
-  whole_guard_encoding=True)
+  whole_guard_encoding=True,credential_projection=True)
  new_launcher=_launcher(adapter_source=ADAPTER_SOURCE)
  old_unit=old_files[UNIT]; old_launcher=old_files[LAUNCHER]
  new_unit_sha=hashlib.sha256(new_unit).hexdigest(); new_launcher_sha=hashlib.sha256(new_launcher).hexdigest()

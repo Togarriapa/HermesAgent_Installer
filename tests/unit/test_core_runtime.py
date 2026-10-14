@@ -15,6 +15,7 @@ import select
 import shlex
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -508,7 +509,8 @@ def _systemd_decoded_exec_start_pre(unit_bytes):
 
 def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None,
                     runner=None, diagnostic=False, service_sources=None,
-                    return_result=False, systemd_argv=None):
+                    return_result=False, systemd_argv=None,
+                    credential_projection=False):
     """Run the untouched generated guard as admin in a private mount view."""
     if os.geteuid() != 0:
         raise AssertionError("the Pi startup-guard fixture requires root to model admin")
@@ -548,6 +550,15 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
             if not separator:
                 raise AssertionError("generated service credential declaration is malformed")
             credentials.append((name, Path(source)))
+        def set_projected_credential(target, content):
+            target.write_bytes(content)
+            os.chown(target, core.ROOT_UID, core.ROOT_UID)
+            target.chmod(0o440)
+            acl = struct.pack("<I", 2) + b"".join(
+                struct.pack("<HHI", *entry) for entry in (
+                    (1, 4, 0xffffffff), (2, 4, 1000), (4, 0, 0xffffffff),
+                    (16, 4, 0xffffffff), (32, 0, 0xffffffff)))
+            os.setxattr(target, "system.posix_acl_access", acl, follow_symlinks=False)
         for name, source in credentials:
             target = cred_dir / name
             try:
@@ -556,23 +567,40 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
                 raise AssertionError(
                     f"generated LoadCredential source is unreadable: {name}"
                 ) from None
-            target.write_bytes(content)
-            target.chmod(0o400)
-            os.chown(target, admin.pw_uid, admin.pw_gid)
+            if credential_projection:
+                set_projected_credential(target, content)
+            else:
+                target.write_bytes(content)
+                target.chmod(0o400)
+                os.chown(target, admin.pw_uid, admin.pw_gid)
         for name, mutation in (credential_mutations or {}).items():
             target = cred_dir / name
             if mutation[0] == "remove":
                 target.unlink()
             elif mutation[0] == "bytes":
-                target.write_bytes(mutation[1])
-                target.chmod(0o400)
-                os.chown(target, admin.pw_uid, admin.pw_gid)
+                if credential_projection:
+                    set_projected_credential(target, mutation[1])
+                else:
+                    target.write_bytes(mutation[1])
+                    target.chmod(0o400)
+                    os.chown(target, admin.pw_uid, admin.pw_gid)
             elif mutation[0] == "mode":
                 target.chmod(mutation[1])
             elif mutation[0] == "owner":
                 os.chown(target, mutation[1], mutation[2])
-        os.chown(cred_dir, admin.pw_uid, admin.pw_gid)
-        os.chmod(cred_dir, 0o500)
+            elif mutation[0] == "acl":
+                os.setxattr(target, "system.posix_acl_access", b"invalid-acl",
+                            follow_symlinks=False)
+            elif mutation[0] == "acl-wrong":
+                acl = struct.pack("<I", 2) + b"".join(
+                    struct.pack("<HHI", *entry) for entry in (
+                        (1, 4, 0xffffffff), (2, 0, 1000), (4, 0, 0xffffffff),
+                        (16, 4, 0xffffffff), (32, 0, 0xffffffff)))
+                os.setxattr(target, "system.posix_acl_access", acl,
+                            follow_symlinks=False)
+        os.chown(cred_dir, core.ROOT_UID if credential_projection else admin.pw_uid,
+                 core.ROOT_UID if credential_projection else admin.pw_gid)
+        os.chmod(cred_dir, 0o755 if credential_projection else 0o500)
         command = (list(systemd_argv) if systemd_argv is not None
                    else shlex.split(line.partition("=")[2]))
         original_command = list(command)
@@ -3099,7 +3127,8 @@ def test_atomic_primary_restore_accepts_new_inode_but_keeps_original_owner_metad
 
 
 def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request, *, empty_optional_backups=False,
-                                     empty_required_backup=None):
+                                     empty_required_backup=None,
+                                     credential_projection=False):
     """Build the exact on-disk systemd inputs used by the M1 source-start gate."""
     from hermes_installer.remote import obsidian_owner_lifecycle as obsidian
 
@@ -3158,7 +3187,8 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request, *, empty_op
                           backup_generation=old_adapter)
     new_unit = core._unit(adapter_source=new_source, cohort_gate=True,
                           backup_generation=old_adapter,
-                          failure_diagnostics=True, whole_guard_encoding=True)
+                          failure_diagnostics=True, whole_guard_encoding=True,
+                          credential_projection=credential_projection)
     core.LAUNCHER.write_bytes(new_launcher)
     core.LAUNCHER.chmod(0o755)
     core.UNIT.write_bytes(new_unit)
@@ -3768,6 +3798,49 @@ def test_m1_boot_gate_rejects_empty_required_backup_even_with_matching_manifest(
     assert _exec_start_pre(unit, expect_success=False) != 0
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="credential projection gate requires the enrolled Pi root actor")
+def test_m1_fresh_cohort_accepts_only_exact_root_acl_credential_projection(
+        tmp_path, monkeypatch, request):
+    unit, cohort, _journal, _resources = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request, credential_projection=True)
+    source = Path(cohort["new_source"])
+    assert core._cohort_guard_unit(cohort, source=source,
+        backup_generation=cohort["old_adapter_generation"],
+        native_plugin_transition=False) == unit
+    credentials = {row.partition("=")[2].partition(":")[0]
+                   for row in unit.decode().splitlines()
+                   if row.startswith("LoadCredential=")}
+    assert credentials == {
+        "core-ownership-journal", "hermes-session-token", "adapter-update-cohort",
+        "resources-discovery", "adapter-backup-manifest",
+        *("adapter-backup-" + name.removesuffix(".json").replace(".", "-")
+          for name in core._ADAPTER_UPDATE_BACKUP_MEMBERS),
+    }
+    argv = _systemd_decoded_exec_start_pre(unit)
+    cohort_now, _raw = core._read_adapter_update_cohort()
+    expected_program = core._core_start_guard_code(
+        adapter_source=source, cohort_gate=True,
+        backup_generation=cohort_now["old_adapter_generation"],
+        failure_diagnostics=True, credential_projection=True)
+    assert argv[4] == "exec(bytes.fromhex(" + repr(
+        expected_program.encode("utf-8").hex()) + ").decode('utf-8'))"
+    assert _exec_start_pre(unit, expect_success=True, systemd_argv=argv,
+                           credential_projection=True) == 0
+
+    required = "adapter-backup-journal"
+    optional = "adapter-backup-overlay-record"
+    for mutation in (
+        {required: ("acl",)},
+        {required: ("acl-wrong",)},
+        {required: ("mode", 0o400)},
+        {required: ("owner", 1000, 1000)},
+        {optional: ("remove",)},
+    ):
+        assert _exec_start_pre(unit, credential_mutations=mutation,
+            expect_success=False, systemd_argv=argv,
+            credential_projection=True) != 0
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="native start gate requires the enrolled Pi root actor")
 def test_m1_boot_gate_accepts_only_manifested_empty_optional_native_backups(
         tmp_path, monkeypatch, request):
@@ -3777,14 +3850,16 @@ def test_m1_boot_gate_accepts_only_manifested_empty_optional_native_backups(
                    for row in unit.decode().splitlines()
                    if row.startswith("LoadCredential=adapter-backup-")}
     assert len(credentials) == len(core._ADAPTER_UPDATE_BACKUP_MEMBERS) + 3
-    assert _exec_start_pre(unit, expect_success=True) == 0
+    assert _exec_start_pre(unit, expect_success=True, credential_projection=True) == 0
 
     required = next(name for name in credentials if name.endswith("unit"))
     optional = next(name for name in credentials if name.endswith("cohort"))
     assert _exec_start_pre(unit, credential_mutations={required: ("bytes", b"")},
-                           expect_success=False) != 0
+                           expect_success=False, credential_projection=True) != 0
     assert _exec_start_pre(unit, credential_mutations={optional: ("bytes", b"wrong hash")},
-                           expect_success=False) != 0
+                           expect_success=False, credential_projection=True) != 0
+    assert _exec_start_pre(unit, credential_mutations={optional: ("acl",)},
+                           expect_success=False, credential_projection=True) != 0
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
@@ -3825,7 +3900,7 @@ def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypat
     compile(decoded_guard, "<systemd-decoded-native-guard>", "exec")
 
     successful = _exec_start_pre(unit, expect_success=True, return_result=True,
-                                 systemd_argv=guard_argv)
+                                 systemd_argv=guard_argv, credential_projection=True)
     assert successful.returncode == 0
     assert successful.stdout == b"FIXTURE_NAMESPACE_READY\n"
     assert successful.stderr == b""
@@ -3835,7 +3910,8 @@ def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypat
     token_name = token_row.partition("=")[2].partition(":")[0]
     sentinel = b"guard-telemetry-secret-sentinel"
     denied = _exec_start_pre(unit, credential_mutations={token_name: ("bytes", sentinel)},
-        expect_success=False, return_result=True, systemd_argv=guard_argv)
+        expect_success=False, return_result=True, systemd_argv=guard_argv,
+        credential_projection=True)
     assert denied.returncode == 1
     assert denied.stdout == b"FIXTURE_NAMESPACE_READY\n"
     assert sentinel not in denied.stderr
@@ -3868,7 +3944,7 @@ def test_m1_new_cohort_guard_emits_only_closed_failure_flags(tmp_path, monkeypat
     cohort_name = cohort_row.partition("=")[2].partition(":")[0]
     denied_cohort = _exec_start_pre(unit, credential_mutations={
         cohort_name: ("bytes", b"{}\n")}, expect_success=False, return_result=True,
-        systemd_argv=guard_argv)
+        systemd_argv=guard_argv, credential_projection=True)
     assert denied_cohort.returncode == 1
     assert denied_cohort.stdout == b"FIXTURE_NAMESPACE_READY\n"
     assert len(denied_cohort.stderr.splitlines()) == 1
@@ -3893,13 +3969,15 @@ def test_m1_cohort_accepts_only_its_exact_legacy_or_diagnostic_guard_recipe(
     source = Path(cohort["new_source"])
     launcher_sha = hashlib.sha256(core._launcher(adapter_source=source)).hexdigest()
     for native_transition in (False, True):
-        variants = [(False, False), (True, False), (True, True)]
-        for diagnostic, whole_encoded in variants:
+        variants = [(False, False, False), (True, False, False),
+                    (True, True, False), (True, True, True)]
+        for diagnostic, whole_encoded, projected in variants:
             unit = core._unit(adapter_source=source, cohort_gate=True,
                 backup_generation=cohort["old_adapter_generation"],
                 native_plugin_transition=native_transition,
                 failure_diagnostics=diagnostic,
-                whole_guard_encoding=whole_encoded)
+                whole_guard_encoding=whole_encoded,
+                credential_projection=projected)
             unit_sha = hashlib.sha256(unit).hexdigest()
             recipe = core._adapter_recipe_sha256(
                 str(source), cohort["new_adapter_generation"], unit_sha, launcher_sha)
@@ -3923,10 +4001,14 @@ def test_m1_cohort_accepts_only_its_exact_legacy_or_diagnostic_guard_recipe(
                 core._cohort_guard_unit(forged, source=source,
                     backup_generation=cohort["old_adapter_generation"],
                     native_plugin_transition=native_transition)
-            if native_transition and whole_encoded:
+            if native_transition and whole_encoded and not projected:
                 assert unit != core._unit(adapter_source=source, cohort_gate=True,
                     backup_generation=cohort["old_adapter_generation"],
                     native_plugin_transition=True, failure_diagnostics=True)
+        with pytest.raises(core.CoreRuntimeError, match="projected credentials"):
+            core._unit(adapter_source=source, cohort_gate=True,
+                backup_generation=cohort["old_adapter_generation"],
+                failure_diagnostics=True, credential_projection=True)
     with pytest.raises(core.CoreRuntimeError, match="source-cohort unit"):
         core._unit(adapter_source=source, failure_diagnostics=True)
 
@@ -3994,7 +4076,8 @@ def _native_plugin_starting_fixture(tmp_path, monkeypatch, request, *, empty_opt
 
     new_unit = core._unit(adapter_source=Path(cohort["new_source"]), cohort_gate=True,
         backup_generation=cohort["old_adapter_generation"], native_plugin_transition=True,
-        failure_diagnostics=True, whole_guard_encoding=True)
+        failure_diagnostics=True, whole_guard_encoding=True,
+        credential_projection=True)
     journal["unit_sha256"] = hashlib.sha256(new_unit).hexdigest()
     journal_raw = core._canonical_json(journal)
     core.JOURNAL.write_bytes(journal_raw)
@@ -4045,7 +4128,8 @@ def test_m1_boot_gate_checks_typed_native_plugin_transition_quickly(
     expected_program = core._core_start_guard_code(
         adapter_source=Path(cohort["new_source"]),
         cohort_gate=True, backup_generation=cohort["old_adapter_generation"],
-        native_plugin_transition=True, failure_diagnostics=True)
+        native_plugin_transition=True, failure_diagnostics=True,
+        credential_projection=True)
     assert systemd_argv[4] == "exec(bytes.fromhex(" + repr(
         expected_program.encode("utf-8").hex()) + ").decode('utf-8'))"
     # The retained inline diagnostic recipe is intentionally still available
@@ -4058,19 +4142,23 @@ def test_m1_boot_gate_checks_typed_native_plugin_transition_quickly(
     legacy_argv = _systemd_decoded_exec_start_pre(legacy_inline)
     with pytest.raises(SyntaxError):
         compile(legacy_argv[4], "<systemd-decoded-retained-inline-guard>", "exec")
-    assert _exec_start_pre(unit, expect_success=True, systemd_argv=systemd_argv) == 0
+    assert _exec_start_pre(unit, expect_success=True, systemd_argv=systemd_argv,
+                           credential_projection=True) == 0
     assert _exec_start_pre(unit, credential_mutations={
         "adapter-backup-native-plugin-__init__-py": ("remove",)},
-        expect_success=False, systemd_argv=systemd_argv) != 0
+        expect_success=False, systemd_argv=systemd_argv,
+        credential_projection=True) != 0
     module = plugin / "__init__.py"
     module.write_bytes(b"foreign plugin bytes\n")
     os.chown(module, core.ROOT_UID, core.ROOT_UID)
     module.chmod(0o444)
-    assert _exec_start_pre(unit, expect_success=False, systemd_argv=systemd_argv) != 0
+    assert _exec_start_pre(unit, expect_success=False, systemd_argv=systemd_argv,
+                           credential_projection=True) != 0
     module.write_bytes(new_members["__init__.py"])
     os.chown(module, core.ROOT_UID, core.ROOT_UID)
     module.chmod(0o444)
-    assert _exec_start_pre(unit, expect_success=True, systemd_argv=systemd_argv) == 0
+    assert _exec_start_pre(unit, expect_success=True, systemd_argv=systemd_argv,
+                           credential_projection=True) == 0
 
 
 def _committed_initial_primary_guard_fixture(tmp_path, monkeypatch, request):
@@ -4150,15 +4238,22 @@ def test_m1_boot_gate_committed_primary_uses_adoption_starting_resources_digest(
 @pytest.mark.skipif(os.geteuid() != 0, reason="unit recipe stability is qualified on the enrolled Pi")
 def test_core_service_unit_bytes_are_stable_across_fresh_hash_seeds():
     source = Path("/opt/hermes-installer-core-fixture/src")
+    variants = ((False, False, False), (True, False, False),
+                (True, True, False), (True, True, True))
     expected = b"".join(core._unit(adapter_source=source, cohort_gate=True,
-        backup_generation="a" * 64, native_plugin_transition=transition)
-        for transition in (False, True))
+        backup_generation="a" * 64, native_plugin_transition=transition,
+        failure_diagnostics=diagnostic, whole_guard_encoding=whole,
+        credential_projection=projection)
+        for transition in (False, True)
+        for diagnostic, whole, projection in variants)
     repository = Path(__file__).resolve().parents[2]
     code = (
         "from pathlib import Path; import sys; from hermes_installer import core_runtime as core; "
+        "variants=((False,False,False),(True,False,False),(True,True,False),(True,True,True)); "
         "sys.stdout.buffer.write(b''.join(core._unit(adapter_source=Path('/opt/hermes-installer-core-fixture/src'), "
-        "cohort_gate=True, backup_generation='a'*64, native_plugin_transition=mode) "
-        "for mode in (False, True)))"
+        "cohort_gate=True, backup_generation='a'*64, native_plugin_transition=mode, "
+        "failure_diagnostics=diag, whole_guard_encoding=whole, credential_projection=projection) "
+        "for mode in (False,True) for diag,whole,projection in variants))"
     )
     for seed in ("1", "2"):
         environment = dict(os.environ)
