@@ -2142,3 +2142,16 @@ typed user message and every real completion gate. The ordinary tool inventory
 helper must remain unchanged. This source mismatch and exact refusal boundary
 justify refinement; no private request content was collected and no successful
 provider response is inferred.
+
+### Candidate 205 canonical absent-tools refinement
+
+Planning candidate `3dfdfd05860e3a16be36e3e3db2c0ffc43f114a2`, archive SHA-256
+`0104277e9856467dec5c94c8261b2a508b7a17d0852bb3c03536a855aa87f46a`, contains
+the Sol-owned four-artifact startup-only no-tools refinement and append-only
+amendment. Identified Pi staging/spec/plan/status/apply-instructions checks each
+exited0. All four artifacts were complete; apply ready,one complete and90
+remaining of91 tasks. Evidence: `candidate205-stage.log`,
+`candidate205-specs.json`, `candidate205-gates.log`, `candidate205-status.json`,
+`candidate205-apply.json`. Source implementation, Sol review and focused Pi
+contracts remain required before one exact protected observation. Actual
+provider/native/Root and M1 acceptance remain open.
