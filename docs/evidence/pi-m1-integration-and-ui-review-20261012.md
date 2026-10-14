@@ -1662,3 +1662,20 @@ Candidate 179 passed Pi staging, spec/plan validation and 143 contracts in
 launched at `p/candidate179-actual-adoption.log`; outcome was pending. The
 matched-archive benchmark remains roughly 9.9s normal/monitored versus 28.6s
 under global tracing; it does not establish actual full-adoption acceptance.
+
+### Candidate 179 apply outcome
+
+The candidate-179 adopter exited 4 with a capped 300000ms timeout, 1512 stderr
+bytes, and null stdout/return code. Exact source/archive:
+`8b98c930cea250650718f26f6a6b4bbc63afa61f` /
+`53ddc10f6d4445ea04e1a271134ed36dbe429fcc5abbc185c1df78e4a9bd2a62`. Last
+phase was `adapter_update` (1231ms, sequence 4, count 4, rejected 0). V2 stack
+sample at 250000ms examined 12 frames, 11 unmatched, with label `updater` at
+Core line 6696, `_verified_resources_payload`; `unknown=False`, `truncated=False`.
+This progressed beyond candidate 177's line 6694 call site but is a sample,
+not full cost or root-cause proof. Automatic recovery verified prior Core and
+ingress; all four services were active. Log:
+`p/candidate179-actual-adoption.log`. The tracing-overhead fix passed its
+source qualification but did not resolve full adoption. Nested payload/native
+loader cost remained under investigation; no deadline change or M1 acceptance
+is claimed.
