@@ -283,3 +283,7 @@ Actual171's validated partial checkpoints place the300s timeout inside adapter_u
 The one-shot protocol uses the exact nine-field record and eight literal module/function labels below; no additional role, selector or sampled data is introduced.
 
 Cancellation prevents new sampling/publication attempts; an already-entered atomic nonblocking write may finish after CLI return. Preserve an explicit50ms publication-barrier bound and50ms join bound, with no strict no-late-arrival claim or changed300s deadline.
+
+### R0201/#35 exact matched-code public callsite
+
+Actual175's sample retained only updater among23 examined frames, with no truncation; that label does not identify the inner operation. Extend only those existing eight exact-code matches with their public candidate-relative source path, fixed function and current bounded source line. The updater callsite can locate the invoked helper without admitting arbitrary frames or private data. Use an explicit V2 sample protocol; Core, one250s sample, caps and all execution/acceptance gates remain unchanged.

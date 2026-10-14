@@ -341,3 +341,9 @@ All four encoding-correction checkboxes above are bounded leaves of existing R00
 - [ ] In the same one-shot leaf, implement/test only the exact nine fields, distinct sample/observation prefixes and eight literal mappings; prove empty unknown absent/invalid state, retained unknown/truncated capped state, ordered repeated exact labels and unchanged checkpoint protocol. No new task group or sampling selector.
 
 - [ ] Qualify exactly one atomic nonblocking pipe write≤min4096/PIPE_BUF through an independently held description: original flags unchanged, worker-owned descriptor cleanup, busy/full/nonpipe drop, no blocking TextIO fallback and no duplicate. Preserve measured in-call observation and honest bounded cancellation semantics.
+
+### Existing R0201/#35 matched-code source callsite
+
+- [ ] Root Pi strict-validates four artifacts; preserve actual175 adapter-update timeout/updater-only sample and automatic restoration without inferring an inner cause.
+- [ ] Existing Luna owner adds only V2 parallel public frames to the eight exact code matches, strict fixed label/path/function/line pairing and two-file source hash/currentness under existing provenance. Keep250s/32-12caps/pipe/cancellation/Core/deadline/report/recovery unchanged; no arbitrary frame admission or private data.
+- [ ] Pi contracts exercise live matched updater line, all fixed pairings, same-name foreign code, bad source/hash/line/currentness and privacy/parser/cap denials; preserve V1 evidence separation and existing checks. Sol reviews exact tools/tests before Root qualification and one current callsite observation. No acceptance or source fix is inferred from a label alone.

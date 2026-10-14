@@ -2770,3 +2770,17 @@ This one-shot observation refines R0055/R0201 and RT-T266.3/VD-T266.5 (#35) with
 #### Scenario: The diagnostic pipe cannot accept the one atomic write
 - **WHEN** the held original stderr pipe is busy/full/unavailable or cancellation has prevented a new publication attempt
 - **THEN** the best-effort sample is dropped with no blocking fallback, duplicate emission, shared flag mutation, authority or deadline change; an already-entered bounded atomic write may finish under the stated timing limitation.
+
+### Requirement: Matched stack labels retain only verified public source callsites
+The qualifier SHALL add bounded public source-frame rows only for its existing exact candidate code matches, retaining all one-shot timing, privacy and execution gates.
+
+#### Scenario: A known matched helper is on the sampled stack
+- **WHEN** one of the eight exact verified code objects is retained
+- **THEN** V2 records its literal candidate-relative path/function and actual positive line within the exact verified file's line count, parallel to the label; source hash/currentness and exact pairing are checked. No arbitrary frame, outside path, code text or private state is exposed.
+- **AND** the strict ten-key schema2/4096-byte V2 protocol retains prior32/12 caps, unknown/truncated and bounded pipe/cancellation semantics; missing/changed/foreign/inconsistent data stays unknown. Historical V1 is not reinterpreted as callsite evidence.
+
+#### Scenario: A public caller line narrows the inner update
+- **WHEN** a current verified updater row identifies its sampled source line
+- **THEN** it is an observed callsite, not completion or native acceptance; unchanged300s, Core, report/persistence/recovery gates and meaningful Pi identity/privacy/parser tests precede any further conclusion or fix.
+
+This callsite refinement stays within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups.
