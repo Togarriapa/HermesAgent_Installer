@@ -2943,3 +2943,16 @@ The installer SHALL classify a startup refusal through only the existing bounded
 - **THEN** no state carries forward or becomes authority, existing generic refusal and cleanup remain, and nonstartup behavior is unchanged. Every successful startup still requires exact current native/provider/both-registry Root terminal and digest joins.
 
 This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) leaf adds exactly13 closed stages and no fields, preserving219/62/18/eight OPEN groups and300s/110s. Actual202 aggregate terminal diagnostics establish no inner cause or live acceptance.
+
+### Requirement: Canonical absent tools are empty only for private startup
+The installer SHALL recognize an absent tools key as the pinned native empty inventory only in its existing private lifecycle startup request gate, retaining every other tool and completion boundary.
+
+#### Scenario: Native startup omits empty tools
+- **WHEN** the current verified startup request has exactly one typed user message with the exact challenge/instructions and its tools key is absent or explicitly an empty list
+- **THEN** only this private gate recognizes empty inventory and continues through the unchanged account/attempt/provider/native/Root completion checks and existing downstream no-tools closure. Absence alone supplies no authority or success.
+
+#### Scenario: Tools are explicitly invalid or belong to ordinary traffic
+- **WHEN** startup tools is explicitly None, a wrong type, malformed or nonempty inventory, or an ordinary parent/tool caller lacks its required inventory
+- **THEN** existing strict refusal occurs without startup attempt/provider dispatch or widened tools. Ordinary _request_tool_names semantics remain unchanged; no falsy-value fallback is used.
+
+This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) correction preserves219/62/18/eight OPEN groups and300s/110s. Actual204 observer_input metadata does not prove account/provider completion or live acceptance.
