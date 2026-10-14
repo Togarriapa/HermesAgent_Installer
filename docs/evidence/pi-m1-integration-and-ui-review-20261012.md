@@ -2054,3 +2054,23 @@ Evidence: `candidate201-stage.log`, `candidate201-specs.json`,
 under the same Pi evidence directory. This establishes planning validation
 only. Source implementation, Sol review and focused Pi contracts must precede
 one protected startup observation; native/provider and M1 acceptance stay open.
+
+### Candidate 202 reviewed exact nonce response
+
+Implementation candidate `a96cd035ee43720cb989b5c7c789b9d0206f53bb`, archive
+SHA-256 `8e898f321c67077da200cc94ae26d29f22a66aff95e1e1f41a57962e6aba53b6`,
+contains the reviewed producer/observer response-prefix correction and
+meaningful contracts, with a separate two-row Inspector source-pin commit.
+The fixed request text and all four request-digest sites are unchanged. Core,
+RPC client, manual importer and native installer source pins remain unchanged.
+Both registry terminal paths reject instruction echoes, whitespace/newlines
+and wrong nonces without granting completion; their genuine enrollment hash
+paths and the native observer/producer exact response are exercised.
+
+The identified Pi verified sealed staging; strict specification and plan checks
+both exited0. The three focused lifecycle, RPC client and qualification-origin
+suites passed155 tests in1.55s, without skips, with contracts exit0.
+Evidence: `candidate202-stage.log`, `candidate202-specs.json`,
+`candidate202-gates.log`. One separately qualified protected observation was
+started in `candidate202-actual-adoption.log`; tests alone do not establish
+genuine model completion or M1 acceptance.
