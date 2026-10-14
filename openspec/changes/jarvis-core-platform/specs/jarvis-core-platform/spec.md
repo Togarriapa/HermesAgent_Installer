@@ -2721,3 +2721,7 @@ The adopter SHALL distinguish fixed qualification-boundary failures with closed 
 - **THEN** metadata survives only the existing failure handling, successful adoption emits no failure record, and exact report validation remains independently required. Meaningful Pi branch/privacy/schema/persistence/recovery contracts and four-artifact validation precede another actual attempt; original165 inner cause stays pending until current evidence is observed.
 
 This diagnostic leaf remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35);219/62/18/eight OPEN groups remain unchanged.
+
+#### Scenario: Eligible failure report cannot be persisted
+- **WHEN** the unchanged persistence attempt for a validated nonzero failure report raises
+- **THEN** the wrapper emits the distinct closed `failure_report_persistence` reason with the same bounded metadata, no exception value/path and no claim of a newly persisted report; original eligibility and recovery remain unchanged.

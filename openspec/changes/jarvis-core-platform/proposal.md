@@ -265,3 +265,5 @@ The new explicit mode applies coherently to the closed manager-projected set: jo
 ### R0201/#35 qualification wrapper failure classification
 
 Actual165 failed at the fixed qualification subprocess, automatically restored the prior runtime and left only a stale last-failure report. No timeout, guard or inner Core cause is established. Source review found that the adopter maps distinct wrapper refusal branches to one generic RuntimeError. Refine only safe failure classification at that existing boundary: a closed reason and bounded numeric metadata emitted through the existing failed-adoption output. Preserve all validation, original300s deadline, report custody and recovery; no new apply before current evidence is classified.
+
+Distinguish an attempted valid failure-report persistence refusal with the closed `failure_report_persistence` reason; do not disguise it as a normally persisted validated child failure. This changes diagnostic attribution only.
