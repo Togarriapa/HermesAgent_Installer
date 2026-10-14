@@ -2913,3 +2913,16 @@ The installer SHALL derive expected startup instructions from the pinned native 
 - **THEN** startup refuses with original cleanup/recovery and unchanged route/account/peer/lease/no-tools/completion gates; cache state and prompt metadata never supply acceptance or authority.
 
 This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) correction preserves219/62/18/eight OPEN groups and300s/110s. Actual provider completion and live acceptance remain OPEN.
+
+### Requirement: Startup challenge response is distinct and exact
+The installer SHALL retain its fixed nonce instruction and accept only the distinct byte-exact assistant response `JARVIS-STARTUP-<nonce>` through genuine provider/native/Root terminal joins.
+
+#### Scenario: The native assistant returns the exact requested sentinel
+- **WHEN** the unchanged fixed request and instructions, current route/account/peer/custody and no-tools gates are verified and actual provider/native completed terminals return the exact distinct response at the enrolled nonce
+- **THEN** both registry response checks and enrolled expected-response hashes agree with that exact text, allowing only the existing one-use Root completion consumption. Metadata or a supplied string alone never proves completion.
+
+#### Scenario: A response echoes instructions or differs from the sentinel
+- **WHEN** response text includes instruction words, leading/trailing whitespace, a different nonce or another byte difference, or any existing completion/error/tool/currentness join fails
+- **THEN** startup denies with original cleanup/recovery; no trimming, dual-prefix acceptance, arbitrary normalization or authority fallback occurs. Request prompt digests remain unchanged.
+
+This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) correction preserves219/62/18/eight OPEN groups and300s/110s. Actual200 terminal diagnostics do not establish provider completion or live acceptance.
