@@ -2137,6 +2137,8 @@ _LIFECYCLE_STARTUP_DIAGNOSTIC_TYPES = frozenset({
 
 @dataclass(slots=True)
 class _LifecycleStartupDiagnostic:
+    context: LifecycleStartupProbeContext = field(repr=False)
+    owner_thread_id: int = field(repr=False)
     entered: bool = False
     completed: bool = False
     first_stage: str | None = None
@@ -2163,6 +2165,10 @@ def _record_lifecycle_startup_refusal(
     record = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
     if (_CURRENT_LIFECYCLE_STARTUP_PROBE.get() is not context
             or type(record) is not _LifecycleStartupDiagnostic
+            or record.context is not context
+            or type(record.owner_thread_id) is not int
+            or record.owner_thread_id != threading.get_ident()
+            or type(record.entered) is not bool or type(record.completed) is not bool
             or stage not in _LIFECYCLE_STARTUP_DIAGNOSTIC_STAGES
             or record.first_stage is not None):
         return
@@ -2173,16 +2179,38 @@ def _record_lifecycle_startup_refusal(
     record.exception_type = name
 
 
+def _mark_lifecycle_startup_observer(context: LifecycleStartupProbeContext, *,
+                                     completed: bool = False) -> None:
+    record = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
+    if (_CURRENT_LIFECYCLE_STARTUP_PROBE.get() is context
+            and type(record) is _LifecycleStartupDiagnostic
+            and record.context is context
+            and type(record.owner_thread_id) is int
+            and record.owner_thread_id == threading.get_ident()):
+        if type(record.entered) is not bool or type(record.completed) is not bool:
+            return
+        record.entered = True
+        if completed:
+            record.completed = True
+
+
 def _lifecycle_startup_diagnostic_snapshot(
         context: LifecycleStartupProbeContext) -> tuple[bool, bool, str | None, str | None] | None:
     record = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
     if (_CURRENT_LIFECYCLE_STARTUP_PROBE.get() is not context
             or type(record) is not _LifecycleStartupDiagnostic
+            or record.context is not context
+            or type(record.owner_thread_id) is not int
+            or record.owner_thread_id != threading.get_ident()
+            or type(record.entered) is not bool or type(record.completed) is not bool
+            or (record.completed and not record.entered)
             or (record.first_stage is not None
                 and record.first_stage not in _LIFECYCLE_STARTUP_DIAGNOSTIC_STAGES)
             or (record.exception_type is not None
                 and record.exception_type not in _LIFECYCLE_STARTUP_DIAGNOSTIC_TYPES)
             or ((record.first_stage is None) != (record.exception_type is None))):
+        return None
+    if record.first_stage is not None and not record.entered:
         return None
     return record.entered, record.completed, record.first_stage, record.exception_type
 
@@ -2200,7 +2228,8 @@ def lifecycle_startup_probe_scope(context: LifecycleStartupProbeContext, *, iden
     token = _CURRENT_LIFECYCLE_STARTUP_PROBE.set(context)
     identity_token = _CURRENT_LIFECYCLE_STARTUP_IDENTITY.set(identity)
     instructions_token = _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.set(expected_sha256)
-    diagnostic_token = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.set(_LifecycleStartupDiagnostic())
+    diagnostic_token = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.set(
+        _LifecycleStartupDiagnostic(context=context, owner_thread_id=threading.get_ident()))
     try:
         yield context
     finally:
@@ -9083,9 +9112,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
         stage = "observer_request"
         if (type(context) is LifecycleStartupProbeContext and context.is_root_issued()
                 and _CURRENT_LIFECYCLE_STARTUP_PROBE.get() is context):
-            diagnostic = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
-            if type(diagnostic) is _LifecycleStartupDiagnostic:
-                diagnostic.entered = True
+            _mark_lifecycle_startup_observer(context)
 
         def refused(at_stage: str) -> Any:
             _record_lifecycle_startup_refusal(
@@ -9195,10 +9222,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 "response_text_sha256": hashlib.sha256(
                     output_text.encode("utf-8", "strict")).hexdigest(),
             })
-            diagnostic = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
-            if (type(diagnostic) is _LifecycleStartupDiagnostic
-                    and _CURRENT_LIFECYCLE_STARTUP_PROBE.get() is context):
-                diagnostic.completed = True
+            _mark_lifecycle_startup_observer(context, completed=True)
             return response
         except Exception as exc:
             _record_lifecycle_startup_refusal(context, stage, type(exc))

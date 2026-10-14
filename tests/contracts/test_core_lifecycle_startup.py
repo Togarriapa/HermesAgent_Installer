@@ -1,6 +1,7 @@
 """Closed-cohort startup-chat seam contracts; this is not Pi acceptance evidence."""
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import os
 import sys
@@ -298,6 +299,8 @@ def test_startup_diagnostic_exception_vocabulary_uses_exact_type_identity():
     assert lifecycle_startup._startup_exception_type(ValueError("private")) == "ValueError"
     assert observer._lifecycle_startup_exception_type(RuntimeError) == "other"
     assert observer._lifecycle_startup_exception_type(ValueError) == "ValueError"
+    spoofed_value_error = type("ValueError", (Exception,), {})
+    assert observer._lifecycle_startup_exception_type(spoofed_value_error) == "other"
     assert (lifecycle_startup._startup_exception_type(
         observer.CoreNativeObservationUnavailable("private"))
         == "CoreNativeObservationUnavailable")
@@ -313,7 +316,8 @@ def test_startup_diagnostic_exception_vocabulary_uses_exact_type_identity():
     "observer_route", "observer_request", "observer_instructions", "observer_input",
     "observer_account", "observer_attempt", "observer_provider", "observer_output",
     "observer_receipt", "result_shape", "result_status", "result_answer", "observer_missing",
-    "observer_context_mismatch",
+    "observer_context_mismatch", "observer_context_thread", "observer_malformed_marker",
+    "observer_attempt_spoof",
     "success", "close",
 ])
 def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
@@ -322,6 +326,7 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
     home = tmp_path / "hermes-home"
     home.mkdir()
     identity = "private startup identity sentinel"
+    spoofed_value_error = type("ValueError", (Exception,), {})
     raw_identity = identity.encode("utf-8")
     (home / "SOUL.md").write_bytes(raw_identity)
     context = observer.LifecycleStartupProbeContext(
@@ -461,11 +466,48 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                     observer._lifecycle_startup_diagnostic_snapshot(context))
                 return {"completed": True,
                         "final_response": lifecycle_startup._RESPONSE_PREFIX + context.nonce}
+            if failure_stage == "observer_context_thread":
+                original_record = observer._CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
+                original_state = (original_record.entered, original_record.completed,
+                                  original_record.first_stage, original_record.exception_type)
+                copied_context = contextvars.copy_context()
+                copied_states = []
+
+                def copied_callback():
+                    copied_record = observer._CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
+                    copied_states.append(copied_record is original_record)
+                    copied_states.append(
+                        observer._lifecycle_startup_diagnostic_snapshot(context))
+                    observer._record_lifecycle_startup_refusal(
+                        context, "observer_route", ValueError)
+                    observer._mark_lifecycle_startup_observer(context, completed=True)
+                    copied_states.append(
+                        observer._lifecycle_startup_diagnostic_snapshot(context))
+                    copied_states.append((copied_record.entered, copied_record.completed,
+                                          copied_record.first_stage, copied_record.exception_type))
+
+                thread = threading.Thread(target=lambda: copied_context.run(copied_callback))
+                thread.start()
+                thread.join(timeout=2)
+                assert not thread.is_alive()
+                diagnostic_states.append(("copied", tuple(copied_states)))
+                diagnostic_states.append(observer._lifecycle_startup_diagnostic_snapshot(context))
+                assert original_state == (False, False, None, None)
+                return {"completed": True,
+                        "final_response": lifecycle_startup._RESPONSE_PREFIX + context.nonce}
+            if failure_stage == "observer_malformed_marker":
+                record = observer._CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
+                record.entered = 1
+                diagnostic_states.append(
+                    observer._lifecycle_startup_diagnostic_snapshot(context))
+                return {"completed": True,
+                        "final_response": lifecycle_startup._RESPONSE_PREFIX + context.nonce}
             if failure_stage in {"success", "close", "prompt_digest_changed", "response_echo",
                                  "response_leading_space", "response_trailing_space",
                                  "response_trailing_newline", "response_wrong_nonce",
                                  "observer_route", "observer_request", "observer_instructions",
                                  "observer_input", "observer_account", "observer_attempt",
+                                 "observer_attempt_spoof",
                                  "observer_provider", "observer_output", "observer_receipt",
                                  "result_status", "result_answer", "observer_context_mismatch"}:
                 final_response = lifecycle_startup._RESPONSE_PREFIX + context.nonce
@@ -520,6 +562,10 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                 observed_provider = ("wrong-provider" if failure_stage == "observer_route"
                                      else self.provider)
                 callback_kwargs = {
+                    "telemetry_schema_version": "hermes.observer.v1",
+                    "middleware_schema_version": "hermes.middleware.v1",
+                    "original_request": request, "platform": "linux", "api_call_count": 1,
+                    "middleware_trace": [],
                     "provider": observed_provider, "api_mode": self.api_mode,
                     "base_url": context.base_url, "model": self.model, "request": request,
                     "session_id": context.session_id, "turn_id": "turn-1",
@@ -543,6 +589,8 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                 diagnostic_states.append(observer._lifecycle_startup_diagnostic_snapshot(context))
                 if failure_stage == "observer_attempt":
                     assert observed is not native_response and observed_requests == []
+                elif failure_stage == "observer_attempt_spoof":
+                    assert observed is not native_response and observed_requests == []
                 elif failure_stage in {"prompt_digest_changed", "observer_instructions",
                                        "observer_request", "observer_input", "observer_route",
                                        "observer_account"}:
@@ -555,6 +603,16 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                 else:
                     assert observed is native_response
                     assert len(observed_requests) == 1
+                    assert list(callback_kwargs)[:6] == [
+                        "telemetry_schema_version", "middleware_schema_version", "original_request",
+                        "platform", "api_call_count", "middleware_trace",
+                    ]
+                    assert callback_kwargs["telemetry_schema_version"] == "hermes.observer.v1"
+                    assert callback_kwargs["middleware_schema_version"] == "hermes.middleware.v1"
+                    assert callback_kwargs["original_request"] is request
+                    assert callback_kwargs["platform"] == "linux"
+                    assert callback_kwargs["api_call_count"] == 1
+                    assert callback_kwargs["middleware_trace"] == []
                     assert observed_requests[0]["instructions"] == instructions
                     assert "private-runtime-credential" not in repr(observed_requests)
                 if failure_stage.startswith("response_") or failure_stage.startswith("observer_"):
@@ -604,6 +662,8 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
     def register_attempt(*_args, **kwargs):
         if failure_stage == "observer_attempt":
             raise ValueError("PRIVATE_ATTEMPT_FAILURE")
+        if failure_stage == "observer_attempt_spoof":
+            raise spoofed_value_error("PRIVATE_SPOOFED_ATTEMPT_FAILURE")
         attempt_calls.append(kwargs)
         return "A" * 43
 
@@ -655,6 +715,7 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         "observer_input": ("observer_input", "CoreNativeObservationUnavailable"),
         "observer_account": ("observer_account", "CoreNativeObservationUnavailable"),
         "observer_attempt": ("observer_attempt", "ValueError"),
+        "observer_attempt_spoof": ("observer_attempt", "other"),
         "observer_provider": ("observer_provider", "CoreNativeObservationUnavailable"),
         "observer_output": ("observer_output", "CoreNativeObservationUnavailable"),
         "observer_receipt": ("observer_receipt", "RuntimeError"),
@@ -663,6 +724,8 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         "result_answer": ("result_answer", "CoreNativeObservationUnavailable"),
         "observer_missing": ("observer_missing", "CoreNativeObservationUnavailable"),
         "observer_context_mismatch": ("observer_missing", "CoreNativeObservationUnavailable"),
+        "observer_context_thread": ("observer_missing", "CoreNativeObservationUnavailable"),
+        "observer_malformed_marker": ("terminal", "CoreNativeObservationUnavailable"),
         "close": ("response", "OSError"),
     }
     if failure_stage == "success":
@@ -719,13 +782,15 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         assert len(attempt_calls) == len(terminal_calls) == 1
     elif failure_stage in {"observer_route", "observer_request", "observer_instructions",
                            "observer_input", "observer_account", "observer_attempt",
+                           "observer_attempt_spoof",
                            "observer_missing", "result_shape", "result_status"}:
         assert attempt_calls == [] and terminal_calls == []
     else:
         assert attempt_calls == [] and terminal_calls == []
     assert observer._lifecycle_startup_diagnostic_snapshot(context) is None
     if diagnostic_states and failure_stage.startswith("observer_") and failure_stage not in {
-            "observer_missing", "observer_context_mismatch"}:
+            "observer_missing", "observer_context_mismatch", "observer_context_thread",
+            "observer_malformed_marker"}:
         recorded = diagnostic_states[-1]
         assert recorded == (True, False, *expected[failure_stage])
     if failure_stage == "observer_context_mismatch":
@@ -733,6 +798,13 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
             ("foreign", (True, False, "observer_request", "CoreNativeObservationUnavailable")),
             (False, False, None, None),
         ]
+    if failure_stage == "observer_context_thread":
+        assert diagnostic_states == [
+            ("copied", (True, None, None, (False, False, None, None))),
+            (False, False, None, None),
+        ]
+    if failure_stage == "observer_malformed_marker":
+        assert diagnostic_states == [None]
     if failure_stage == "success":
         assert diagnostic_states == [(True, True, None, None)]
     if failure_stage in {"result_answer", "result_status"}:
