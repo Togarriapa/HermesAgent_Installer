@@ -1572,3 +1572,20 @@ recovery verified prior Core and ingress; all four services were active. The
 log is `p/candidate175-actual-adoption.log`. No M1 acceptance is claimed. Sol
 was refining public source-relative frame metadata without private values or
 Core/deadline changes to identify the slow function.
+
+## Candidates 176–177 source and gate status
+
+Candidate 176's four-artifact refinement (`c589`), Root candidate
+`32ed461826d90e40a6f40951b2e37136a886f41c`, archive SHA-256
+`ce90bc9800d1cd3019e7e3fafd6d6fef58a5607dd2d474369a567bbfa8a01235`, passed
+strict spec/plan validation with 0 errors. Native source `4f447ec` passed Sol
+review; its V2 matched call sites in four tool/test files. Root candidate
+`14fde987b2c2975a959022c914a24b50f504a3a8`, archive SHA-256
+`f5499b4cae11bba55097cf349bd8ba8f37b4da44db837cf260faa939e158e5c3`, imported
+the refinement; Core `6992` remained unchanged.
+
+Candidate 177 passed Pi staging and spec/plan validation with 0 errors. Its
+focused suite passed 137 tests in 0.75s; log:
+`p/candidate177-spec-contracts.log`. Protected apply with union stdin had just
+launched at `p/candidate177-actual-adoption.log`; call-site evidence and outcome
+were pending. No M1 acceptance or Core/peripheral change is claimed.
