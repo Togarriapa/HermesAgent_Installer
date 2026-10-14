@@ -2926,3 +2926,20 @@ The installer SHALL retain its fixed nonce instruction and accept only the disti
 - **THEN** startup denies with original cleanup/recovery; no trimming, dual-prefix acceptance, arbitrary normalization or authority fallback occurs. Request prompt digests remain unchanged.
 
 This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) correction preserves219/62/18/eight OPEN groups and300s/110s. Actual200 terminal diagnostics do not establish provider completion or live acceptance.
+
+### Requirement: Observer refusal diagnostics remain same-call and closed
+The installer SHALL classify a startup refusal through only the existing bounded stage/type schema, using a private first-failure record bound to the exact lexical sealed startup context and unchanged native/provider/Root gates.
+
+#### Scenario: The registered native observer refuses at an existing boundary
+- **WHEN** this call's existing route/request/instructions/input/account/attempt/provider/output/receipt gate refuses or raises Exception
+- **THEN** its first fixed stage and exact allowlisted exception identity are retained privately and classified as refusal, while the original denied response, action/dispatch behavior and cleanup remain unchanged. No content or authority is recorded.
+
+#### Scenario: Native result or observer participation is unavailable
+- **WHEN** no same-call observer refusal exists and the original native result shape/status/exact-answer predicate fails, or all those predicates pass without actual observer entry
+- **THEN** the fixed result_shape/result_status/result_answer/observer_missing classification describes failure only; missing or mismatched diagnostic state cannot substitute for genuine terminal proof or supply success.
+
+#### Scenario: Another call or malformed metadata supplies diagnostic state
+- **WHEN** lexical context identity, first-failure custody, closed stage/type vocabulary or canonical bounded failure parsing cannot be verified
+- **THEN** no state carries forward or becomes authority, existing generic refusal and cleanup remain, and nonstartup behavior is unchanged. Every successful startup still requires exact current native/provider/both-registry Root terminal and digest joins.
+
+This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) leaf adds exactly13 closed stages and no fields, preserving219/62/18/eight OPEN groups and300s/110s. Actual202 aggregate terminal diagnostics establish no inner cause or live acceptance.
