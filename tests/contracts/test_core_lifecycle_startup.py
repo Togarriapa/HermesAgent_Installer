@@ -306,6 +306,11 @@ def test_startup_diagnostic_exception_vocabulary_uses_exact_type_identity():
         == "CoreNativeObservationUnavailable")
 
 
+def test_ordinary_request_tool_inventory_still_requires_an_explicit_list():
+    with pytest.raises(observer.CoreNativeObservationUnavailable):
+        observer._request_tool_names({"input": []})
+
+
 @pytest.mark.parametrize("failure_stage", [
     "root_claim", "route", "agent_setup", "prompt_cached", "prompt_empty_cache",
     "prompt_cache_wrong_type",
@@ -318,6 +323,8 @@ def test_startup_diagnostic_exception_vocabulary_uses_exact_type_identity():
     "observer_receipt", "result_shape", "result_status", "result_answer", "observer_missing",
     "observer_context_mismatch", "observer_context_thread", "observer_malformed_marker",
     "observer_attempt_spoof",
+    "observer_tools_empty", "observer_tools_none", "observer_tools_dict",
+    "observer_tools_string", "observer_tools_malformed", "observer_tools_nonempty",
     "success", "close",
 ])
 def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
@@ -509,7 +516,10 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                                  "observer_input", "observer_account", "observer_attempt",
                                  "observer_attempt_spoof",
                                  "observer_provider", "observer_output", "observer_receipt",
-                                 "result_status", "result_answer", "observer_context_mismatch"}:
+                                 "result_status", "result_answer", "observer_context_mismatch",
+                                 "observer_tools_empty", "observer_tools_none",
+                                 "observer_tools_dict", "observer_tools_string",
+                                 "observer_tools_malformed", "observer_tools_nonempty"}:
                 final_response = lifecycle_startup._RESPONSE_PREFIX + context.nonce
                 provider_text = final_response
                 if failure_stage == "response_echo":
@@ -537,8 +547,20 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                     "instructions": instructions,
                     "input": [{"type": "message", "role": "user", "content": [
                         {"type": "input_text", "text": _kwargs["user_message"]}]}],
-                    "tools": [], "tool_choice": "none",
+                    "tool_choice": "none",
                 }
+                if failure_stage == "observer_tools_empty":
+                    request["tools"] = []
+                elif failure_stage == "observer_tools_none":
+                    request["tools"] = None
+                elif failure_stage == "observer_tools_dict":
+                    request["tools"] = {}
+                elif failure_stage == "observer_tools_string":
+                    request["tools"] = "private-malformed-inventory"
+                elif failure_stage == "observer_tools_malformed":
+                    request["tools"] = [{}]
+                elif failure_stage == "observer_tools_nonempty":
+                    request["tools"] = [{"type": "function", "name": "private_tool"}]
                 if failure_stage == "prompt_digest_changed":
                     request["instructions"] += "\n"
                 elif failure_stage == "observer_instructions":
@@ -571,6 +593,10 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                     "session_id": context.session_id, "turn_id": "turn-1",
                     "api_request_id": "api-1", "next_call": next_provider,
                 }
+                if failure_stage == "success":
+                    assert "tools" not in request
+                elif failure_stage == "observer_tools_empty":
+                    assert request["tools"] == []
                 if failure_stage == "observer_context_mismatch":
                     foreign_context = replace(context, nonce="f" * 32)
                     with observer.lifecycle_startup_probe_scope(
@@ -593,7 +619,9 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                     assert observed is not native_response and observed_requests == []
                 elif failure_stage in {"prompt_digest_changed", "observer_instructions",
                                        "observer_request", "observer_input", "observer_route",
-                                       "observer_account"}:
+                                       "observer_account", "observer_tools_none",
+                                       "observer_tools_dict", "observer_tools_string",
+                                       "observer_tools_malformed", "observer_tools_nonempty"}:
                     assert observed is not native_response and observed_requests == []
                 elif failure_stage.startswith("response_") or failure_stage in {
                         "observer_provider", "observer_output", "observer_receipt"}:
@@ -614,6 +642,8 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                     assert callback_kwargs["api_call_count"] == 1
                     assert callback_kwargs["middleware_trace"] == []
                     assert observed_requests[0]["instructions"] == instructions
+                    assert observed_requests[0]["tools"] == []
+                    assert observed_requests[0]["tool_choice"] == "none"
                     assert "private-runtime-credential" not in repr(observed_requests)
                 if failure_stage.startswith("response_") or failure_stage.startswith("observer_"):
                     return {"completed": True, "final_response": final_response}
@@ -716,6 +746,11 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         "observer_account": ("observer_account", "CoreNativeObservationUnavailable"),
         "observer_attempt": ("observer_attempt", "ValueError"),
         "observer_attempt_spoof": ("observer_attempt", "other"),
+        "observer_tools_none": ("observer_input", "CoreNativeObservationUnavailable"),
+        "observer_tools_dict": ("observer_input", "CoreNativeObservationUnavailable"),
+        "observer_tools_string": ("observer_input", "CoreNativeObservationUnavailable"),
+        "observer_tools_malformed": ("observer_input", "CoreNativeObservationUnavailable"),
+        "observer_tools_nonempty": ("observer_input", "CoreNativeObservationUnavailable"),
         "observer_provider": ("observer_provider", "CoreNativeObservationUnavailable"),
         "observer_output": ("observer_output", "CoreNativeObservationUnavailable"),
         "observer_receipt": ("observer_receipt", "RuntimeError"),
@@ -728,7 +763,7 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         "observer_malformed_marker": ("terminal", "CoreNativeObservationUnavailable"),
         "close": ("response", "OSError"),
     }
-    if failure_stage == "success":
+    if failure_stage in {"success", "observer_tools_empty"}:
         assert response == {"jsonrpc": "2.0", "id": "request-3", "result": {
             "schema": 1, "probe_handle": "P" * 43, "completion_handle": "Q" * 43,
             "status": "completed", "response_sha256": hashlib.sha256(
@@ -752,7 +787,7 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
             assert len(agents) == 1 and agents[0].closed is True
         else:
             assert agents == []
-    if failure_stage in {"success", "close"}:
+    if failure_stage in {"success", "observer_tools_empty", "close"}:
         assert len(helper_calls) == 1 and len(composer_calls) == 1
         assert helper_calls[0][0] is agents[0]
         assert helper_calls[0][1] is None and helper_calls[0][2] == []
@@ -772,8 +807,15 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
             "prompt_closure_changed"} else 1)
     else:
         assert helper_calls == [] and composer_calls == []
-    if failure_stage in {"success", "close", "result_answer", "result_status"}:
+    if failure_stage in {"success", "observer_tools_empty", "close", "result_answer", "result_status"}:
         assert len(attempt_calls) == len(terminal_calls) == 1
+        if failure_stage in {"success", "observer_tools_empty"}:
+            expected_prompt_sha256 = hashlib.sha256((
+                lifecycle_startup._PROMPT_PREFIX + context.nonce
+                + lifecycle_startup._PROMPT_SUFFIX).encode("ascii")).hexdigest()
+            assert attempt_calls[0]["prompt_sha256"] == expected_prompt_sha256
+            assert attempt_calls[0]["tool_names"] == ()
+            assert terminal_calls[0]["tool_call_count"] == 0
     elif failure_stage.startswith("response_"):
         assert len(attempt_calls) == 1 and terminal_calls == []
     elif failure_stage in {"observer_provider", "observer_output"}:
@@ -790,7 +832,7 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
     assert observer._lifecycle_startup_diagnostic_snapshot(context) is None
     if diagnostic_states and failure_stage.startswith("observer_") and failure_stage not in {
             "observer_missing", "observer_context_mismatch", "observer_context_thread",
-            "observer_malformed_marker"}:
+            "observer_malformed_marker", "observer_tools_empty"}:
         recorded = diagnostic_states[-1]
         assert recorded == (True, False, *expected[failure_stage])
     if failure_stage == "observer_context_mismatch":
@@ -805,7 +847,7 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         ]
     if failure_stage == "observer_malformed_marker":
         assert diagnostic_states == [None]
-    if failure_stage == "success":
+    if failure_stage in {"success", "observer_tools_empty"}:
         assert diagnostic_states == [(True, True, None, None)]
     if failure_stage in {"result_answer", "result_status"}:
         assert diagnostic_states == [(True, True, None, None)]
@@ -813,6 +855,8 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         assert diagnostic_states == [(False, False, None, None)]
     assert "PRIVATE_" not in repr(response)
     assert "private-runtime-credential" not in repr(response)
+    assert "private-malformed-inventory" not in repr(response)
+    assert "private_tool" not in repr(response)
 
 
 def test_root_probe_claim_is_current_peer_only_and_single_use(monkeypatch):

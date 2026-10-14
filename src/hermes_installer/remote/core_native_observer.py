@@ -9164,7 +9164,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                     or not isinstance(input_items[0], Mapping)
                     or input_items[0].get("type") != "message"
                     or input_items[0].get("role") != "user"
-                    or _request_tool_names(request) != ()):
+                    or ("tools" in request and _request_tool_names(request) != ())):
                 return refused(stage)
 
             stage = "observer_request"
