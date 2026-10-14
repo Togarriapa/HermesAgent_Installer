@@ -331,3 +331,9 @@ All four encoding-correction checkboxes above are bounded leaves of existing R00
 - [ ] Pi contracts exercise canonical/key/type/enum/digest/order/count/byte bounds, wrong candidate, truncated partial records, private omission, actual pre-operation flush under redirected CLI, timeout partial-buffer retention and silent wrapper success. Sol reviews exact tool/tests; Root qualifies them before one observed attempt. No acceptance follows from a checkpoint alone.
 
 - [ ] In the same phase leaf, qualify honest measured/capped nondecreasing elapsed_ms with strict sequence order, including equal/saturated timestamps and decreasing-time denial; do not synthesize elapsed increments.
+
+### Existing R0201/#35 single inner-update sample
+
+- [ ] Root Pi strict-validates four artifacts against actual171 adapter-update timeout evidence; retain prior-runtime restoration, with no inferred inner cause or increased deadline.
+- [ ] Existing Luna owner adds one fixed250s cancellable main-thread sample around the exact CLI call, max32 examined/max12 exact-code labels, held-sink bounded record and separate strict wrapper summary. No Core/deeper trace/profile/authority/report/recovery changes.
+- [ ] Pi contracts prove one-shot/main-thread-only/exact-code behavior,32/12 caps, no locals/args/private reads, early cancellation/bounded join/no late emission, canonical/digest/duplicate/truncation/parser denials and independent existing checkpoints/silent success. Sol source-reviews exact tools/tests before Root qualification and one observed attempt; unknown sampling never supplies acceptance.

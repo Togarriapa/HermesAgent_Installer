@@ -2747,3 +2747,17 @@ This finite observation remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35)
 #### Scenario: Measured checkpoint timestamps are equal
 - **WHEN** consecutive measured monotonic timestamps round to the same millisecond or reach the300000ms ceiling
 - **THEN** strictly increasing sequence preserves order and nondecreasing measured elapsed values remain valid; fabricated time increments are forbidden and decreasing elapsed values deny observation.
+
+### Requirement: Inner qualification observation is one finite main-thread sample
+The qualifier SHALL sample the fixed CLI main-thread stack once through exact candidate code identities, exposing only closed bounded helper labels without expanding profiling, deadlines, authority or acceptance.
+
+#### Scenario: The exact CLI call remains in progress at250s
+- **WHEN** the fixed watchdog samples that calling main thread
+- **THEN** it examines at most32 frames and retains at most12 known helper labels from exact verified candidate code objects, with bounded counts and explicit unknown/truncated state. No other-thread data, locals, arguments, arbitrary names/paths, exceptions or private values are emitted.
+- **AND** one canonical bounded request-bound stderr record reaches the held sink; the wrapper validates its independent closed schema/count/label/digest/order/size constraints and never treats it as a checkpoint, success or blocked-cause proof.
+
+#### Scenario: The call returns early or sampling is unavailable
+- **WHEN** the fixed CLI returns, or a sample is absent/invalid/unmapped/capped
+- **THEN** the watchdog is cancelled and bounded-joined without delaying early completion or emitting afterward; observation remains unknown as applicable. Core, original300s, main-only tracing, report validation, persistence and real recovery remain unchanged, and meaningful Pi cancellation/privacy/parser contracts precede another attempt.
+
+This one-shot observation refines R0055/R0201 and RT-T266.3/VD-T266.5 (#35) within unchanged219/62/18/eight OPEN groups.

@@ -275,3 +275,7 @@ Numeric diagnostics saturate at stdout65537 bytes, stderr16385 bytes and elapsed
 Actual168's validated wrapper diagnostic establishes a timeout at the original300s boundary, with no retained child buffers; automatic recovery restored all four prior units. The qualifier prints its report only after fixed CLI completion and digests CLI output privately. Nested importer/startup/wait bounds suggest possible outer preemption but do not establish its stage or cause. Add only finite flushed candidate/archive-bound checkpoints around the existing qualifier stages and a strict wrapper last-phase summary on failure. Preserve Core, tracing scope, all deadlines/gates and acceptance separation; no blind retry or private output exposure.
 
 Strict sequence supplies checkpoint order; measured rounded/capped elapsed milliseconds are nondecreasing and may be equal. Never synthesize time increments for ordering.
+
+### R0201/#35 one bounded inner-update observation
+
+Actual171's validated partial checkpoints place the300s timeout inside adapter_update, entered at1230ms, but identify no inner blocked helper; automatic recovery restored the prior runtime. Add one fixed250s main-thread stack sample during that existing CLI call, with exact verified candidate helper labels only. This avoids expanded profiling and repeated broad attempts. Keep Core, all tracing/authority/deadline/report/recovery decisions unchanged; sampling can remain unknown and never supplies acceptance or a timeout extension.
