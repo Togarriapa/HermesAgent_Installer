@@ -40,17 +40,112 @@ _QUALIFICATION_CHECKPOINT_PHASES = (
     "success_checks", "report_emission",
 )
 _QUALIFICATION_CHECKPOINT_STREAM = sys.stderr
-_QUALIFICATION_STACK_SAMPLE_PREFIX = "HERMES_CORE_QUALIFICATION_STACK_SAMPLE_V1="
+_QUALIFICATION_STACK_SAMPLE_PREFIX = "HERMES_CORE_QUALIFICATION_STACK_SAMPLE_V2="
 _QUALIFICATION_STACK_SAMPLE_STREAM = sys.stderr
 _QUALIFICATION_STACK_SAMPLE_SECONDS = 250.0
 _QUALIFICATION_STACK_LABELS = frozenset({
     "updater", "importer", "generation_tree", "listener", "startup_chat",
     "reconstruction", "root_runuser", "adapter_generation",
 })
+_QUALIFICATION_STACK_SOURCE_FILES = {
+    "hermes_installer/core_runtime.py": frozenset({
+        "_update_owned_core_adapter_locked", "_run_same_materialization_import",
+        "_hash_generation_tree", "_wait_for_listener", "_prove_new_cohort_startup_chat",
+        "_make_adapter_update_reconstruction", "_root_runuser_proc_snapshot",
+    }),
+    "hermes_installer/remote/core_gateway_inspector.py": frozenset({
+        "_current_native_adapter_generation",
+    }),
+}
+_QUALIFICATION_STACK_FUNCTIONS = {
+    "_update_owned_core_adapter_locked": "updater",
+    "_run_same_materialization_import": "importer",
+    "_hash_generation_tree": "generation_tree",
+    "_wait_for_listener": "listener",
+    "_prove_new_cohort_startup_chat": "startup_chat",
+    "_make_adapter_update_reconstruction": "reconstruction",
+    "_root_runuser_proc_snapshot": "root_runuser",
+    "_current_native_adapter_generation": "adapter_generation",
+}
+_QUALIFICATION_STACK_FUNCTION_PATHS = {
+    function: path for path, functions in _QUALIFICATION_STACK_SOURCE_FILES.items()
+    for function in functions
+}
 
 
-def _verified_qualification_stack_codes(candidate_src: Path) -> tuple[dict[int, str], bool]:
-    """Return code identities only from already-loaded modules in this candidate."""
+def _stack_source_file_snapshot(source_fd: int, relative_path: str) -> dict[str, Any]:
+    """Read one fixed source file through held no-follow Root-owned directories."""
+    parts = relative_path.split("/")
+    if (relative_path not in _QUALIFICATION_STACK_SOURCE_FILES
+            or len(parts) not in {2, 3} or parts[0] != "hermes_installer"):
+        raise RuntimeError("qualification stack source path is outside the fixed set")
+    source_info = os.fstat(source_fd)
+    if (not stat.S_ISDIR(source_info.st_mode) or source_info.st_uid != 0
+            or source_info.st_gid != 0 or stat.S_IMODE(source_info.st_mode) & 0o022):
+        raise RuntimeError("qualification stack source root custody differs")
+    directory_fds = []
+    parent_fd = source_fd
+    file_fd = None
+    try:
+        for component in parts[:-1]:
+            directory_fd = os.open(
+                component, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=parent_fd)
+            directory_fds.append(directory_fd)
+            directory_info = os.fstat(directory_fd)
+            if (not stat.S_ISDIR(directory_info.st_mode) or directory_info.st_uid != 0
+                    or directory_info.st_gid != 0
+                    or stat.S_IMODE(directory_info.st_mode) & 0o022):
+                raise RuntimeError("qualification stack source directory custody differs")
+            parent_fd = directory_fd
+        file_fd = os.open(parts[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                          | getattr(os, "O_CLOEXEC", 0), dir_fd=parent_fd)
+        before = os.fstat(file_fd)
+        named = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+        identity = (before.st_dev, before.st_ino, before.st_mode, before.st_uid,
+                    before.st_gid, before.st_nlink, before.st_size,
+                    before.st_mtime_ns, before.st_ctime_ns)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
+                or stat.S_IMODE(before.st_mode) & 0o022 or before.st_nlink != 1
+                or not 1 <= before.st_size <= 2 * 1024 * 1024
+                or identity != (named.st_dev, named.st_ino, named.st_mode, named.st_uid,
+                                named.st_gid, named.st_nlink, named.st_size,
+                                named.st_mtime_ns, named.st_ctime_ns)):
+            raise RuntimeError("qualification stack source file custody differs")
+        raw = bytearray()
+        while len(raw) <= before.st_size:
+            block = os.read(file_fd, min(65536, before.st_size + 1 - len(raw)))
+            if not block:
+                break
+            raw.extend(block)
+        after = os.fstat(file_fd)
+        current_named = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+        current_identity = (after.st_dev, after.st_ino, after.st_mode, after.st_uid,
+                            after.st_gid, after.st_nlink, after.st_size,
+                            after.st_mtime_ns, after.st_ctime_ns)
+        if (len(raw) != before.st_size or current_identity != identity
+                or current_identity != (current_named.st_dev, current_named.st_ino,
+                                        current_named.st_mode, current_named.st_uid,
+                                        current_named.st_gid, current_named.st_nlink,
+                                        current_named.st_size, current_named.st_mtime_ns,
+                                        current_named.st_ctime_ns)):
+            raise RuntimeError("qualification stack source changed during read")
+        source_bytes = bytes(raw)
+        return {"sha256": hashlib.sha256(source_bytes).hexdigest(),
+                "line_count": source_bytes.count(b"\n") + (0 if source_bytes.endswith(b"\n") else 1),
+                "identity": identity}
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        for directory_fd in reversed(directory_fds):
+            os.close(directory_fd)
+
+
+def _verified_qualification_stack_codes(
+        candidate_src: Path, source_fd: int | None
+) -> tuple[dict[int, dict[str, Any]], dict[str, dict[str, Any]], bool]:
+    """Map only loaded candidate code after held source bytes and custody are verified."""
     expected_root = candidate_src / "hermes_installer"
     modules = (
         ("hermes_installer.core_runtime", expected_root / "core_runtime.py", {
@@ -67,7 +162,15 @@ def _verified_qualification_stack_codes(candidate_src: Path) -> tuple[dict[int, 
              "_current_native_adapter_generation": "adapter_generation",
          }),
     )
-    codes: dict[int, str] = {}
+    if type(source_fd) is not int or source_fd < 0:
+        return {}, {}, False
+    sources: dict[str, dict[str, Any]] = {}
+    try:
+        sources = {relative: _stack_source_file_snapshot(source_fd, relative)
+                   for relative in _QUALIFICATION_STACK_SOURCE_FILES}
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return {}, {}, False
+    codes: dict[int, dict[str, Any]] = {}
     complete = True
     for module_name, expected_file, functions in modules:
         module = sys.modules.get(module_name)
@@ -81,48 +184,74 @@ def _verified_qualification_stack_codes(candidate_src: Path) -> tuple[dict[int, 
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             complete = False
             continue
+        relative_path = expected_file.relative_to(candidate_src).as_posix()
+        line_count = sources[relative_path]["line_count"]
         for function_name, label in functions.items():
             function = getattr(module, function_name, None)
             code = getattr(function, "__code__", None)
             if (not isinstance(function, FunctionType) or code is None
-                    or Path(code.co_filename).resolve() != expected_file.resolve()):
+                    or Path(code.co_filename).resolve() != expected_file.resolve()
+                    or code.co_name != function_name
+                    or not 1 <= code.co_firstlineno <= line_count):
                 complete = False
                 continue
-            codes[id(code)] = label
-    if set(codes.values()) != _QUALIFICATION_STACK_LABELS:
+            codes[id(code)] = {"label": label, "source_relative_path": relative_path,
+                               "function": function_name, "line_count": line_count}
+    if {value["label"] for value in codes.values()} != _QUALIFICATION_STACK_LABELS:
         complete = False
-    return codes, complete
+    return codes, sources, complete
+
+
+def _qualification_stack_sources_current(source_fd: int | None,
+                                         expected: dict[str, dict[str, Any]]) -> bool:
+    if type(source_fd) is not int or source_fd < 0 or type(expected) is not dict:
+        return False
+    try:
+        current = {relative: _stack_source_file_snapshot(source_fd, relative)
+                   for relative in _QUALIFICATION_STACK_SOURCE_FILES}
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+    return current == expected
 
 
 def _qualification_stack_sample(candidate_sha: str, archive_sha: str,
                                  elapsed_ms: int, main_ident: int,
-                                 code_labels: dict[int, str], mapping_complete: bool,
-                                 frames_by_ident: dict[int, Any] | None = None) -> dict:
+                                 code_labels: dict[int, dict[str, Any]], mapping_complete: bool,
+                                 frames_by_ident: dict[int, Any] | None = None,
+                                 source_current: bool = True) -> dict:
     """Build a bounded stack projection; frame names, locals and arguments never escape."""
     frames_by_ident = sys._current_frames() if frames_by_ident is None else frames_by_ident
     frame = frames_by_ident.get(main_ident)
     labels: list[str] = []
+    source_frames: list[dict[str, Any]] = []
     examined = unmatched = 0
     truncated = False
+    inconsistent = False
     while frame is not None and examined < 32:
         examined += 1
-        label = code_labels.get(id(frame.f_code))
-        if label is None:
+        code_row = code_labels.get(id(frame.f_code))
+        if code_row is None or not source_current:
             unmatched += 1
+        elif len(labels) < 12 and 1 <= frame.f_lineno <= code_row["line_count"]:
+            labels.append(code_row["label"])
+            source_frames.append({"source_relative_path": code_row["source_relative_path"],
+                                  "function": code_row["function"], "line": frame.f_lineno})
         elif len(labels) < 12:
-            labels.append(label)
+            inconsistent = True
+            unmatched += 1
         else:
             truncated = True
         frame = frame.f_back
     if frame is not None:
         truncated = True
-    unknown = (not mapping_complete or not labels or truncated)
+    unknown = (not mapping_complete or not source_current or inconsistent or not labels or truncated)
     return {
-        "schema": 1,
+        "schema": 2,
         "candidate_commit": candidate_sha,
         "candidate_archive_sha256": archive_sha,
         "elapsed_ms": elapsed_ms,
         "labels": labels,
+        "frames": source_frames,
         "examined_frames": examined,
         "unmatched_frames": unmatched,
         "truncated": truncated,
@@ -133,11 +262,34 @@ def _qualification_stack_sample(candidate_sha: str, archive_sha: str,
 def _valid_qualification_stack_sample(record: object) -> bool:
     keys = {
         "schema", "candidate_commit", "candidate_archive_sha256", "elapsed_ms",
-        "labels", "examined_frames", "unmatched_frames", "truncated", "unknown",
+        "labels", "frames", "examined_frames", "unmatched_frames", "truncated", "unknown",
     }
     if type(record) is not dict or set(record) != keys:
         return False
-    return (type(record["schema"]) is int and record["schema"] == 1
+    if type(record["labels"]) is not list or len(record["labels"]) > 12:
+        return False
+    if type(record["frames"]) is not list:
+        return False
+    frames = record["frames"]
+    labels = record["labels"]
+    valid_frames = len(frames) == len(labels)
+    if valid_frames:
+        for label, frame in zip(labels, frames):
+            if type(frame) is not dict or set(frame) != {
+                    "source_relative_path", "function", "line"}:
+                valid_frames = False
+                break
+            relative_path = frame["source_relative_path"]
+            function = frame["function"]
+            line = frame["line"]
+            if (type(relative_path) is not str or relative_path not in _QUALIFICATION_STACK_SOURCE_FILES
+                    or type(function) is not str
+                    or _QUALIFICATION_STACK_FUNCTIONS.get(function) != label
+                    or function not in _QUALIFICATION_STACK_SOURCE_FILES[relative_path]
+                    or type(line) is not int or not 1 <= line <= 2 * 1024 * 1024):
+                valid_frames = False
+                break
+    return (valid_frames and type(record["schema"]) is int and record["schema"] == 2
             and type(record["candidate_commit"]) is str
             and re.fullmatch(r"[0-9a-f]{40}", record["candidate_commit"]) is not None
             and type(record["candidate_archive_sha256"]) is str
@@ -796,7 +948,8 @@ def _root_setup_exception_origin(exc: BaseException, candidate_src: Path,
 
 def _run_fixed_root_adapter_update(root_setup, candidate_src: Path,
                                    candidate_sha: str,
-                                   archive_sha: str) -> tuple[int, dict | None]:
+                                   archive_sha: str,
+                                   source_fd: int | None = None) -> tuple[int, dict | None]:
     if sys.gettrace() is not None:
         raise RuntimeError("qualification runner requires an untraced root CLI context")
     main = root_setup.main
@@ -806,8 +959,13 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path,
     captured: dict[str, dict | None] = {"origin": None}
     sample_done = threading.Event()
     sample_lock = threading.Lock()
-    sample_started = time.monotonic()
     main_ident = threading.get_ident()
+    try:
+        code_rows, source_rows, mapping_complete = _verified_qualification_stack_codes(
+            candidate_src, source_fd)
+    except Exception:
+        code_rows, source_rows, mapping_complete = {}, {}, False
+    sample_started = time.monotonic()
     main_depth = 0
     cancellation_barrier_done = False
 
@@ -832,17 +990,17 @@ def _run_fixed_root_adapter_update(root_setup, candidate_src: Path,
         elapsed_ms = (min(int(elapsed * 1000), 300_000)
                       if isinstance(elapsed, (int, float)) and elapsed >= 0 else 0)
         try:
-            labels, mapping_complete = _verified_qualification_stack_codes(candidate_src)
+            source_current = _qualification_stack_sources_current(source_fd, source_rows)
             record = _qualification_stack_sample(
                 candidate_sha, archive_sha, elapsed_ms, main_ident,
-                labels, mapping_complete)
+                code_rows, mapping_complete, source_current=source_current)
         except Exception:
             # Sampling is observational. A failed or incomplete projection
             # is represented as unknown and never changes the CLI result.
             record = {
-                "schema": 1, "candidate_commit": candidate_sha,
+                "schema": 2, "candidate_commit": candidate_sha,
                 "candidate_archive_sha256": archive_sha,
-                "elapsed_ms": elapsed_ms, "labels": [],
+                "elapsed_ms": elapsed_ms, "labels": [], "frames": [],
                 "examined_frames": 0, "unmatched_frames": 0,
                 "truncated": False, "unknown": True,
             }
@@ -984,7 +1142,8 @@ def main(argv: list[str] | None = None) -> int:
         checkpoint("adapter_update")
         with contextlib.redirect_stdout(cli_stdout), contextlib.redirect_stderr(cli_stderr):
             cli_exit, cli_failure_origin = _run_fixed_root_adapter_update(
-                root_setup, candidate_src, args.candidate_sha, args.archive_sha256)
+                root_setup, candidate_src, args.candidate_sha, args.archive_sha256,
+                source_fd)
         after_public = None
         after_private = None
         after_error = None

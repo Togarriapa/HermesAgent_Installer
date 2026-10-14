@@ -1926,9 +1926,16 @@ def test_qualification_checkpoint_summary_retains_only_validated_prefix_records(
 
 def test_stack_observation_accepts_one_canonical_candidate_bound_sample():
     sample = {
-        "schema": 1, "candidate_commit": "b" * 40,
+        "schema": 2, "candidate_commit": "b" * 40,
         "candidate_archive_sha256": "c" * 64, "elapsed_ms": 250_000,
-        "labels": ["listener", "updater"], "examined_frames": 8,
+        "labels": ["listener", "updater"],
+        "frames": [
+            {"source_relative_path": "hermes_installer/core_runtime.py",
+             "function": "_wait_for_listener", "line": 6995},
+            {"source_relative_path": "hermes_installer/core_runtime.py",
+             "function": "_update_owned_core_adapter_locked", "line": 6260},
+        ],
+        "examined_frames": 8,
         "unmatched_frames": 6, "truncated": False, "unknown": False,
     }
     line = (adopt._QUALIFICATION_STACK_SAMPLE_PREFIX
@@ -1951,15 +1958,18 @@ def test_stack_observation_accepts_one_canonical_candidate_bound_sample():
 def test_stack_observation_missing_or_invalid_records_are_unknown():
     candidate, archive = "b" * 40, "c" * 64
     expected = {
-        "schema": 1, "candidate_commit": candidate,
+        "schema": 2, "candidate_commit": candidate,
         "candidate_archive_sha256": archive, "elapsed_ms": None,
-        "labels": [], "examined_frames": 0, "unmatched_frames": 0,
+        "labels": [], "frames": [], "examined_frames": 0, "unmatched_frames": 0,
         "truncated": False, "unknown": True,
     }
     valid = {
-        "schema": 1, "candidate_commit": candidate,
+        "schema": 2, "candidate_commit": candidate,
         "candidate_archive_sha256": archive, "elapsed_ms": 250_000,
-        "labels": ["importer"], "examined_frames": 3,
+        "labels": ["importer"],
+        "frames": [{"source_relative_path": "hermes_installer/core_runtime.py",
+                    "function": "_run_same_materialization_import", "line": 4971}],
+        "examined_frames": 3,
         "unmatched_frames": 2, "truncated": False, "unknown": False,
     }
 
@@ -1981,6 +1991,16 @@ def test_stack_observation_missing_or_invalid_records_are_unknown():
         {**valid, "private": "PRIVATE sentinel"},
         {**valid, "labels": ["importer"] * 13},
         {**valid, "examined_frames": 33},
+        {**valid, "frames": [{"source_relative_path": "outside.py",
+                               "function": "_run_same_materialization_import", "line": 2}]},
+        {**valid, "frames": [{"source_relative_path": "hermes_installer/core_runtime.py",
+                               "function": "_update_owned_core_adapter_locked", "line": 2}]},
+        {**valid, "frames": [{"source_relative_path": "hermes_installer/core_runtime.py",
+                               "function": "_run_same_materialization_import", "line": True}]},
+        {**valid, "frames": [{"source_relative_path": "hermes_installer/core_runtime.py",
+                               "function": "_run_same_materialization_import",
+                               "line": 2 * 1024 * 1024 + 1}]},
+        {**valid, "frames": []},
     )
     for record in invalid_records:
         summary = adopt._qualification_stack_observation_summary(
@@ -1991,6 +2011,7 @@ def test_stack_observation_missing_or_invalid_records_are_unknown():
 
     capped = {
         **valid, "labels": ["importer"] * 12,
+        "frames": [valid["frames"][0]] * 12,
         "examined_frames": 32, "unmatched_frames": 0,
         "truncated": True, "unknown": True,
     }
@@ -2013,14 +2034,18 @@ def test_stack_observation_missing_or_invalid_records_are_unknown():
         duplicate_key, candidate, archive) == expected
     assert adopt._qualification_stack_observation_summary(
         encoded(valid)[:-1], candidate, archive) == expected
+    historical_v1 = (adopt._QUALIFICATION_STACK_SAMPLE_V1_PREFIX
+                     + json.dumps({"schema": 1}) + "\n").encode()
+    assert adopt._qualification_stack_observation_summary(
+        historical_v1, candidate, archive) == expected
     assert adopt._valid_qualification_stack_observation_summary(expected)
 
 
 def test_stack_observation_emits_only_the_closed_unknown_summary(capsys):
     adopt._emit_qualification_stack_observation({
-        "schema": 1, "candidate_commit": "b" * 40,
+        "schema": 2, "candidate_commit": "b" * 40,
         "candidate_archive_sha256": "c" * 64, "elapsed_ms": None,
-        "labels": [], "examined_frames": 0, "unmatched_frames": 0,
+        "labels": [], "frames": [], "examined_frames": 0, "unmatched_frames": 0,
         "truncated": False, "unknown": True,
     })
     captured = capsys.readouterr()

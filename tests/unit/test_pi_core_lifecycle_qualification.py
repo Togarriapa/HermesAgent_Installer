@@ -31,6 +31,21 @@ def _run_cli(root_setup):
         root_setup, Path(__file__).resolve().parent, "a" * 40, "b" * 64)
 
 
+def _stack_code_row(label, line_count=100000):
+    for function, mapped_label in qualification._QUALIFICATION_STACK_FUNCTIONS.items():
+        if mapped_label == label:
+            return {"label": label,
+                    "source_relative_path": qualification._QUALIFICATION_STACK_FUNCTION_PATHS[function],
+                    "function": function, "line_count": line_count}
+    raise AssertionError("test requested an unmapped stack label")
+
+
+def _stack_frame_row(label, line=1):
+    code = _stack_code_row(label)
+    return {"source_relative_path": code["source_relative_path"],
+            "function": code["function"], "line": line}
+
+
 def _snapshots():
     old_members = {"plugin.yaml": "8" * 64, "__init__.py": "1" * 64}
     new_members = {"plugin.yaml": "8" * 64, "__init__.py": "2" * 64}
@@ -506,14 +521,24 @@ def test_stack_sample_is_innermost_bounded_and_unknown_when_mapping_incomplete()
         return sys._getframe()
 
     frame = descend(36)
+    expected_lines = []
+    cursor = frame
+    while cursor is not None and len(expected_lines) < 12:
+        expected_lines.append(cursor.f_lineno)
+        cursor = cursor.f_back
+    listener_row = _stack_code_row("listener")
     record = qualification._qualification_stack_sample(
         "a" * 40, "b" * 64, 250_000, 123,
-        {id(descend.__code__): "listener"}, True,
+        {id(descend.__code__): _stack_code_row("listener")}, True,
         frames_by_ident={123: frame})
     assert record == {
-        "schema": 1, "candidate_commit": "a" * 40,
+        "schema": 2, "candidate_commit": "a" * 40,
         "candidate_archive_sha256": "b" * 64, "elapsed_ms": 250_000,
-        "labels": ["listener"] * 12, "examined_frames": 32,
+        "labels": ["listener"] * 12,
+        "frames": [{"source_relative_path": listener_row["source_relative_path"],
+                    "function": listener_row["function"], "line": line}
+                   for line in expected_lines],
+        "examined_frames": 32,
         "unmatched_frames": 0, "truncated": True, "unknown": True,
     }
 
@@ -526,15 +551,16 @@ def test_stack_sample_is_innermost_bounded_and_unknown_when_mapping_incomplete()
 
     foreign_thread_only = qualification._qualification_stack_sample(
         "a" * 40, "b" * 64, 250_000, 123,
-        {id(descend.__code__): "listener"}, True,
+        {id(descend.__code__): _stack_code_row("listener")}, True,
         frames_by_ident={456: frame})
     assert foreign_thread_only["labels"] == []
     assert foreign_thread_only["examined_frames"] == 0
     assert foreign_thread_only["unknown"] is True
 
     class FrameWithoutPrivateReads:
-        def __init__(self, code, parent=None):
+        def __init__(self, code, parent=None, line=1):
             object.__setattr__(self, "f_code", code)
+            object.__setattr__(self, "f_lineno", line)
             object.__setattr__(self, "f_back", parent)
 
         def __getattribute__(self, name):
@@ -545,10 +571,23 @@ def test_stack_sample_is_innermost_bounded_and_unknown_when_mapping_incomplete()
     private_read_guard = FrameWithoutPrivateReads(descend.__code__)
     guarded = qualification._qualification_stack_sample(
         "a" * 40, "b" * 64, 250_000, 123,
-        {id(descend.__code__): "listener"}, True,
+        {id(descend.__code__): _stack_code_row("listener")}, True,
         frames_by_ident={123: private_read_guard})
     assert guarded["labels"] == ["listener"]
     assert guarded["unknown"] is False
+    stale = qualification._qualification_stack_sample(
+        "a" * 40, "b" * 64, 250_000, 123,
+        {id(descend.__code__): _stack_code_row("listener")}, True,
+        frames_by_ident={123: private_read_guard}, source_current=False)
+    assert stale["labels"] == [] and stale["frames"] == []
+    assert stale["unmatched_frames"] == 1 and stale["unknown"] is True
+    line_two = FrameWithoutPrivateReads(descend.__code__, line=2)
+    out_of_range = qualification._qualification_stack_sample(
+        "a" * 40, "b" * 64, 250_000, 123,
+        {id(descend.__code__): _stack_code_row("listener", line_count=1)}, True,
+        frames_by_ident={123: line_two})
+    assert out_of_range["labels"] == [] and out_of_range["frames"] == []
+    assert out_of_range["unknown"] is True
 
 
 def test_stack_sample_emitter_rejects_unclosed_record_before_output(capsys):
@@ -560,11 +599,20 @@ def test_stack_sample_emitter_rejects_unclosed_record_before_output(capsys):
     qualification._QUALIFICATION_STACK_SAMPLE_STREAM = NoOutputAllowed()
     try:
         qualification._emit_qualification_stack_sample({
-            "schema": 1, "candidate_commit": "a" * 40,
+            "schema": 2, "candidate_commit": "a" * 40,
             "candidate_archive_sha256": "b" * 64, "elapsed_ms": 1,
-            "labels": [], "examined_frames": 0, "unmatched_frames": 0,
+            "labels": [], "frames": [], "examined_frames": 0, "unmatched_frames": 0,
             "truncated": False, "unknown": True,
             "private": "PRIVATE sample field",
+        }, qualification.threading.Event(), qualification.threading.Lock())
+        qualification._emit_qualification_stack_sample({
+            "schema": 2, "candidate_commit": "a" * 40,
+            "candidate_archive_sha256": "b" * 64, "elapsed_ms": 1,
+            "labels": ["updater"],
+            "frames": [{"source_relative_path": "outside.py",
+                        "function": "_update_owned_core_adapter_locked", "line": 1}],
+            "examined_frames": 1, "unmatched_frames": 0,
+            "truncated": False, "unknown": False,
         }, qualification.threading.Event(), qualification.threading.Lock())
     finally:
         qualification._QUALIFICATION_STACK_SAMPLE_STREAM = previous
@@ -576,9 +624,10 @@ def test_stack_sample_emitter_drops_when_original_channel_is_not_a_pipe(monkeypa
     held = io.StringIO()
     monkeypatch.setattr(qualification, "_QUALIFICATION_STACK_SAMPLE_STREAM", held)
     record = {
-        "schema": 1, "candidate_commit": "a" * 40,
+        "schema": 2, "candidate_commit": "a" * 40,
         "candidate_archive_sha256": "b" * 64, "elapsed_ms": 1,
-        "labels": ["updater"], "examined_frames": 1,
+        "labels": ["updater"], "frames": [_stack_frame_row("updater")],
+        "examined_frames": 1,
         "unmatched_frames": 0, "truncated": False, "unknown": False,
     }
     qualification._emit_qualification_stack_sample(
@@ -597,9 +646,10 @@ def test_stack_sample_emitter_drops_when_pipe_is_full_or_publication_gate_busy(m
 
     monkeypatch.setattr(qualification, "_QUALIFICATION_STACK_SAMPLE_STREAM", HeldPipe())
     record = {
-        "schema": 1, "candidate_commit": "a" * 40,
+        "schema": 2, "candidate_commit": "a" * 40,
         "candidate_archive_sha256": "b" * 64, "elapsed_ms": 1,
-        "labels": ["updater"], "examined_frames": 1,
+        "labels": ["updater"], "frames": [_stack_frame_row("updater")],
+        "examined_frames": 1,
         "unmatched_frames": 0, "truncated": False, "unknown": False,
     }
     done = qualification.threading.Event()
@@ -631,8 +681,6 @@ def test_stack_code_map_uses_only_already_loaded_candidate_modules(tmp_path, mon
     remote.mkdir(parents=True)
     core_path = package / "core_runtime.py"
     inspector_path = remote / "core_gateway_inspector.py"
-    core_path.write_text("", encoding="utf-8")
-    inspector_path.write_text("", encoding="utf-8")
     core_names = {
         "_update_owned_core_adapter_locked": "updater",
         "_run_same_materialization_import": "importer",
@@ -642,13 +690,18 @@ def test_stack_code_map_uses_only_already_loaded_candidate_modules(tmp_path, mon
         "_make_adapter_update_reconstruction": "reconstruction",
         "_root_runuser_proc_snapshot": "root_runuser",
     }
+    inspector_names = {"_current_native_adapter_generation": "adapter_generation"}
+    core_text = "\n".join(f"def {name}():\n    return None" for name in core_names) + "\n"
+    inspector_text = "def _current_native_adapter_generation():\n    return None\n"
+    core_path.write_text(core_text, encoding="utf-8")
+    inspector_path.write_text(inspector_text, encoding="utf-8")
 
     def module_with_functions(module_name, path, names):
         module = ModuleType(module_name)
         module.__file__ = str(path)
         namespace = {}
-        source_text = "\n".join(f"def {name}():\n    return None" for name in names)
-        exec(compile(source_text, str(path), "exec"), namespace)
+        exec(compile("\n".join(f"def {name}():\n    return None" for name in names),
+                      str(path), "exec"), namespace)
         for name in names:
             setattr(module, name, namespace[name])
         return module
@@ -659,26 +712,49 @@ def test_stack_code_map_uses_only_already_loaded_candidate_modules(tmp_path, mon
     monkeypatch.setitem(
         sys.modules, "hermes_installer.remote.core_gateway_inspector",
         module_with_functions("hermes_installer.remote.core_gateway_inspector",
-                              inspector_path, {"_current_native_adapter_generation":
-                                                "adapter_generation"}))
-    code_labels, complete = qualification._verified_qualification_stack_codes(source)
+                              inspector_path, inspector_names))
+    source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    code_labels, source_rows, complete = qualification._verified_qualification_stack_codes(
+        source, source_fd)
     assert complete is True
-    assert set(code_labels.values()) == qualification._QUALIFICATION_STACK_LABELS
+    assert {row["label"] for row in code_labels.values()} == qualification._QUALIFICATION_STACK_LABELS
+    assert all(row["source_relative_path"] in qualification._QUALIFICATION_STACK_SOURCE_FILES
+               and qualification._QUALIFICATION_STACK_FUNCTIONS[row["function"]] == row["label"]
+               and 1 <= row["line_count"]
+               for row in code_labels.values())
+    assert set(source_rows) == set(qualification._QUALIFICATION_STACK_SOURCE_FILES)
+    assert qualification._qualification_stack_sources_current(source_fd, source_rows)
+    core_path.write_text(core_path.read_text(encoding="utf-8") + "# changed\n",
+                         encoding="utf-8")
+    assert not qualification._qualification_stack_sources_current(source_fd, source_rows)
+    core_path.write_text(core_text, encoding="utf-8")
+    source_rows = {relative: qualification._stack_source_file_snapshot(source_fd, relative)
+                   for relative in qualification._QUALIFICATION_STACK_SOURCE_FILES}
+    assert qualification._qualification_stack_sources_current(source_fd, source_rows)
+    saved_core_path = package / "core_runtime.saved"
+    core_path.rename(saved_core_path)
+    core_path.symlink_to(saved_core_path.name)
+    assert not qualification._qualification_stack_sources_current(source_fd, source_rows)
+    core_path.unlink()
+    saved_core_path.rename(core_path)
 
     monkeypatch.delitem(sys.modules, "hermes_installer.remote.core_gateway_inspector")
-    core_only, complete = qualification._verified_qualification_stack_codes(source)
+    core_only, _sources, complete = qualification._verified_qualification_stack_codes(
+        source, source_fd)
     assert complete is False
-    assert set(core_only.values()) == set(core_names.values())
+    assert {row["label"] for row in core_only.values()} == set(core_names.values())
 
     inspector = module_with_functions(
         "hermes_installer.remote.core_gateway_inspector", inspector_path,
-        {"_current_native_adapter_generation": "adapter_generation"})
+        inspector_names)
     monkeypatch.setitem(sys.modules, "hermes_installer.remote.core_gateway_inspector", inspector)
     foreign = module_with_functions("hermes_installer.core_runtime", core_path, core_names)
     foreign.__file__ = str(tmp_path / "foreign" / "core_runtime.py")
     monkeypatch.setitem(sys.modules, "hermes_installer.core_runtime", foreign)
-    _labels, complete = qualification._verified_qualification_stack_codes(source)
+    _labels, _sources, complete = qualification._verified_qualification_stack_codes(
+        source, source_fd)
     assert complete is False
+    os.close(source_fd)
 
 
 def test_stack_sample_is_one_shot_and_cancels_without_late_emission(monkeypatch):
@@ -738,6 +814,7 @@ def test_stack_sample_is_one_shot_and_cancels_without_late_emission(monkeypatch)
 
     class MainOnlyFrame:
         f_code = RootSetup.main.__code__
+        f_lineno = 6260
         f_back = None
 
     main_ident = qualification.threading.get_ident()
@@ -746,7 +823,10 @@ def test_stack_sample_is_one_shot_and_cancels_without_late_emission(monkeypatch)
         lambda: {main_ident: MainOnlyFrame()})
     monkeypatch.setattr(
         qualification, "_verified_qualification_stack_codes",
-        lambda _src: ({id(RootSetup.main.__code__): "updater"}, True))
+        lambda _src, _fd: ({id(RootSetup.main.__code__): _stack_code_row("updater")},
+                           {}, True))
+    monkeypatch.setattr(qualification, "_qualification_stack_sources_current",
+                        lambda _fd, _sources: True)
     exit_code, origin = _run_cli(RootSetup)
     assert exit_code == 0 and origin is None
     assert len(threads) == 1 and threads[0].join_timeouts == [0.05]
@@ -759,9 +839,15 @@ def test_stack_sample_is_one_shot_and_cancels_without_late_emission(monkeypatch)
     assert encoded == json.dumps(sample, sort_keys=True, separators=(",", ":"))
     assert set(sample) == {
         "schema", "candidate_commit", "candidate_archive_sha256", "elapsed_ms",
-        "labels", "examined_frames", "unmatched_frames", "truncated", "unknown",
+        "labels", "frames", "examined_frames", "unmatched_frames", "truncated", "unknown",
     }
+    assert sample["schema"] == 2
     assert sample["labels"] == ["updater"]
+    assert sample["frames"] == [{
+        "source_relative_path": "hermes_installer/core_runtime.py",
+        "function": "_update_owned_core_adapter_locked",
+        "line": 6260,
+    }]
     assert sample["unknown"] is False
     assert "RootSetup" not in encoded
     assert fcntl.fcntl(write_fd, fcntl.F_GETFL) == original_flags

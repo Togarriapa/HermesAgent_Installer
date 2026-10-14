@@ -60,12 +60,33 @@ _QUALIFICATION_CHECKS = frozenset({
 })
 _QUALIFICATION_DIAGNOSTIC_PREFIX = "HERMES_CORE_QUALIFICATION_FAILURE_V1="
 _QUALIFICATION_LAST_PHASE_PREFIX = "HERMES_CORE_QUALIFICATION_LAST_PHASE_V1="
-_QUALIFICATION_STACK_SAMPLE_PREFIX = "HERMES_CORE_QUALIFICATION_STACK_SAMPLE_V1="
-_QUALIFICATION_STACK_OBSERVATION_PREFIX = "HERMES_CORE_QUALIFICATION_STACK_OBSERVATION_V1="
+_QUALIFICATION_STACK_SAMPLE_PREFIX = "HERMES_CORE_QUALIFICATION_STACK_SAMPLE_V2="
+_QUALIFICATION_STACK_SAMPLE_V1_PREFIX = "HERMES_CORE_QUALIFICATION_STACK_SAMPLE_V1="
+_QUALIFICATION_STACK_OBSERVATION_PREFIX = "HERMES_CORE_QUALIFICATION_STACK_OBSERVATION_V2="
 _QUALIFICATION_STACK_LABELS = frozenset({
     "updater", "importer", "generation_tree", "listener", "startup_chat",
     "reconstruction", "root_runuser", "adapter_generation",
 })
+_QUALIFICATION_STACK_FRAME_PATHS = {
+    "_update_owned_core_adapter_locked": "hermes_installer/core_runtime.py",
+    "_run_same_materialization_import": "hermes_installer/core_runtime.py",
+    "_hash_generation_tree": "hermes_installer/core_runtime.py",
+    "_wait_for_listener": "hermes_installer/core_runtime.py",
+    "_prove_new_cohort_startup_chat": "hermes_installer/core_runtime.py",
+    "_make_adapter_update_reconstruction": "hermes_installer/core_runtime.py",
+    "_root_runuser_proc_snapshot": "hermes_installer/core_runtime.py",
+    "_current_native_adapter_generation": "hermes_installer/remote/core_gateway_inspector.py",
+}
+_QUALIFICATION_STACK_FRAME_LABELS = {
+    "_update_owned_core_adapter_locked": "updater",
+    "_run_same_materialization_import": "importer",
+    "_hash_generation_tree": "generation_tree",
+    "_wait_for_listener": "listener",
+    "_prove_new_cohort_startup_chat": "startup_chat",
+    "_make_adapter_update_reconstruction": "reconstruction",
+    "_root_runuser_proc_snapshot": "root_runuser",
+    "_current_native_adapter_generation": "adapter_generation",
+}
 _QUALIFICATION_DIAGNOSTIC_REASONS = frozenset({
     "execution_os_error", "timeout", "tool_identity_read_failure",
     "tool_identity_change", "malformed_result_types", "output_bound",
@@ -211,7 +232,8 @@ def _qualification_last_phase_summary(stderr: object, candidate_sha: str,
     if not complete_lines and trailing_partial:
         return summary
     for line in complete_lines:
-        if line.startswith(_QUALIFICATION_STACK_SAMPLE_PREFIX.encode("ascii")):
+        if (line.startswith(_QUALIFICATION_STACK_SAMPLE_PREFIX.encode("ascii"))
+                or line.startswith(_QUALIFICATION_STACK_SAMPLE_V1_PREFIX.encode("ascii"))):
             # Stack samples have an independent strict parser/summary below.
             continue
         if (len(line) > 4096 or not line.endswith(b"\n") or not line.startswith(
@@ -264,16 +286,16 @@ def _qualification_stack_observation_summary(stderr: object, candidate_sha: str,
                                              archive_sha: str) -> dict:
     """Accept one canonical fixed stack sample, otherwise return explicit unknown."""
     summary = {
-        "schema": 1, "candidate_commit": candidate_sha,
+        "schema": 2, "candidate_commit": candidate_sha,
         "candidate_archive_sha256": archive_sha, "elapsed_ms": None,
-        "labels": [], "examined_frames": 0, "unmatched_frames": 0,
+        "labels": [], "frames": [], "examined_frames": 0, "unmatched_frames": 0,
         "truncated": False, "unknown": True,
     }
     if type(stderr) is not bytes or len(stderr) > 16 * 1024:
         return summary
     exact_keys = {
         "schema", "candidate_commit", "candidate_archive_sha256", "elapsed_ms",
-        "labels", "examined_frames", "unmatched_frames", "truncated", "unknown",
+        "labels", "frames", "examined_frames", "unmatched_frames", "truncated", "unknown",
     }
 
     def unique_object(pairs):
@@ -295,7 +317,7 @@ def _qualification_stack_observation_summary(stderr: object, candidate_sha: str,
             encoded = line[:-1][len(prefix):].decode("ascii", "strict")
             record = json.loads(encoded, object_pairs_hook=unique_object)
             if (type(record) is not dict or set(record) != exact_keys
-                    or type(record["schema"]) is not int or record["schema"] != 1
+                    or type(record["schema"]) is not int or record["schema"] != 2
                     or type(record["candidate_commit"]) is not str
                     or record["candidate_commit"] != candidate_sha
                     or type(record["candidate_archive_sha256"]) is not str
@@ -306,6 +328,8 @@ def _qualification_stack_observation_summary(stderr: object, candidate_sha: str,
                     or len(record["labels"]) > 12
                     or any(type(label) is not str or label not in _QUALIFICATION_STACK_LABELS
                            for label in record["labels"])
+                    or type(record["frames"]) is not list
+                    or len(record["frames"]) != len(record["labels"])
                     or type(record["examined_frames"]) is not int
                     or not 0 <= record["examined_frames"] <= 32
                     or type(record["unmatched_frames"]) is not int
@@ -319,6 +343,17 @@ def _qualification_stack_observation_summary(stderr: object, candidate_sha: str,
                     or encoded != json.dumps(record, sort_keys=True,
                                              separators=(",", ":"), ensure_ascii=True)):
                 return summary
+            for label, frame in zip(record["labels"], record["frames"]):
+                if (type(frame) is not dict or set(frame) != {
+                        "source_relative_path", "function", "line"}
+                        or type(frame["source_relative_path"]) is not str
+                        or type(frame["function"]) is not str
+                        or type(frame["line"]) is not int or frame["line"] < 1
+                        or frame["line"] > 2 * 1024 * 1024
+                        or _QUALIFICATION_STACK_FRAME_PATHS.get(frame["function"])
+                        != frame["source_relative_path"]
+                        or _QUALIFICATION_STACK_FRAME_LABELS.get(frame["function"]) != label):
+                    return summary
         except (ValueError, TypeError, UnicodeError, RecursionError):
             return summary
         found = record
@@ -329,12 +364,12 @@ def _qualification_stack_observation_summary(stderr: object, candidate_sha: str,
 
 def _valid_qualification_stack_observation_summary(summary: object) -> bool:
     keys = {
-        "schema", "candidate_commit", "candidate_archive_sha256", "elapsed_ms",
+        "schema", "candidate_commit", "candidate_archive_sha256", "elapsed_ms", "frames",
         "labels", "examined_frames", "unmatched_frames", "truncated", "unknown",
     }
     if type(summary) is not dict or set(summary) != keys:
         return False
-    if (type(summary["schema"]) is not int or summary["schema"] != 1
+    if (type(summary["schema"]) is not int or summary["schema"] != 2
             or type(summary["candidate_commit"]) is not str
             or re.fullmatch(r"[0-9a-f]{40}", summary["candidate_commit"]) is None
             or type(summary["candidate_archive_sha256"]) is not str
@@ -342,6 +377,8 @@ def _valid_qualification_stack_observation_summary(summary: object) -> bool:
             or type(summary["labels"]) is not list or len(summary["labels"]) > 12
             or any(type(label) is not str or label not in _QUALIFICATION_STACK_LABELS
                    for label in summary["labels"])
+            or type(summary["frames"]) is not list
+            or len(summary["frames"]) != len(summary["labels"])
             or type(summary["examined_frames"]) is not int
             or not 0 <= summary["examined_frames"] <= 32
             or type(summary["unmatched_frames"]) is not int
@@ -353,9 +390,21 @@ def _valid_qualification_stack_observation_summary(summary: object) -> bool:
             or ((not summary["labels"] or summary["truncated"])
                 and not summary["unknown"])):
         return False
+    for label, frame in zip(summary["labels"], summary["frames"]):
+        if (type(frame) is not dict or set(frame) != {
+                "source_relative_path", "function", "line"}
+                or type(frame["source_relative_path"]) is not str
+                or type(frame["function"]) is not str
+                or type(frame["line"]) is not int or frame["line"] < 1
+                or frame["line"] > 2 * 1024 * 1024
+                or _QUALIFICATION_STACK_FRAME_PATHS.get(frame["function"])
+                != frame["source_relative_path"]
+                or _QUALIFICATION_STACK_FRAME_LABELS.get(frame["function"]) != label):
+            return False
     elapsed = summary["elapsed_ms"]
     if elapsed is None:
-        return (summary["labels"] == [] and summary["examined_frames"] == 0
+        return (summary["labels"] == [] and summary["frames"] == []
+                and summary["examined_frames"] == 0
                 and summary["unmatched_frames"] == 0 and not summary["truncated"]
                 and summary["unknown"])
     return type(elapsed) is int and 0 <= elapsed <= 300_000
