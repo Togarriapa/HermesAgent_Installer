@@ -50,6 +50,9 @@ _STARTUP_RPC_ERROR_MESSAGE = "lifecycle startup probe refused"
 _STARTUP_RPC_DIAGNOSTIC_STAGES = frozenset({
     "parameters", "root_claim", "primary_identity", "route", "account",
     "agent_setup", "prompt", "conversation", "terminal", "response",
+    "observer_route", "observer_request", "observer_instructions", "observer_input",
+    "observer_account", "observer_attempt", "observer_provider", "observer_output",
+    "observer_receipt", "result_shape", "result_status", "result_answer", "observer_missing",
 })
 _STARTUP_RPC_DIAGNOSTIC_TYPES = frozenset({
     "CoreNativeObservationUnavailable", "ImportError", "ModuleNotFoundError", "NameError",
@@ -205,6 +208,58 @@ def _startup_refused_response(exception_type: str) -> None:
     _startup_refused_native_type(exception_type)
 
 
+def _startup_refused_observer_route(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_observer_request(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_observer_instructions(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_observer_input(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_observer_account(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_observer_attempt(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_observer_provider(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_observer_output(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_observer_receipt(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_result_shape(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_result_status(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_result_answer(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
+def _startup_refused_observer_missing(exception_type: str) -> None:
+    _startup_refused_native_type(exception_type)
+
+
 _STARTUP_REFUSAL_STAGE_HELPERS = {
     "parameters": _startup_refused_parameters,
     "root_claim": _startup_refused_root_claim,
@@ -216,6 +271,19 @@ _STARTUP_REFUSAL_STAGE_HELPERS = {
     "conversation": _startup_refused_conversation,
     "terminal": _startup_refused_terminal,
     "response": _startup_refused_response,
+    "observer_route": _startup_refused_observer_route,
+    "observer_request": _startup_refused_observer_request,
+    "observer_instructions": _startup_refused_observer_instructions,
+    "observer_input": _startup_refused_observer_input,
+    "observer_account": _startup_refused_observer_account,
+    "observer_attempt": _startup_refused_observer_attempt,
+    "observer_provider": _startup_refused_observer_provider,
+    "observer_output": _startup_refused_observer_output,
+    "observer_receipt": _startup_refused_observer_receipt,
+    "result_shape": _startup_refused_result_shape,
+    "result_status": _startup_refused_result_status,
+    "result_answer": _startup_refused_result_answer,
+    "observer_missing": _startup_refused_observer_missing,
 }
 
 

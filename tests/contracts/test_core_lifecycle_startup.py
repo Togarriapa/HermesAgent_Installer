@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -295,6 +296,8 @@ def test_startup_diagnostic_exception_vocabulary_uses_exact_type_identity():
 
     assert lifecycle_startup._startup_exception_type(RuntimeError("private")) == "other"
     assert lifecycle_startup._startup_exception_type(ValueError("private")) == "ValueError"
+    assert observer._lifecycle_startup_exception_type(RuntimeError) == "other"
+    assert observer._lifecycle_startup_exception_type(ValueError) == "ValueError"
     assert (lifecycle_startup._startup_exception_type(
         observer.CoreNativeObservationUnavailable("private"))
         == "CoreNativeObservationUnavailable")
@@ -307,6 +310,10 @@ def test_startup_diagnostic_exception_vocabulary_uses_exact_type_identity():
     "prompt_oversized", "prompt_closure_changed", "prompt_digest_changed",
     "conversation", "terminal", "response_echo", "response_leading_space",
     "response_trailing_space", "response_trailing_newline", "response_wrong_nonce",
+    "observer_route", "observer_request", "observer_instructions", "observer_input",
+    "observer_account", "observer_attempt", "observer_provider", "observer_output",
+    "observer_receipt", "result_shape", "result_status", "result_answer", "observer_missing",
+    "observer_context_mismatch",
     "success", "close",
 ])
 def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
@@ -339,8 +346,16 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         return context
     client.claim_lifecycle_startup_probe = claim
     monkeypatch.setattr(lifecycle_startup.os, "geteuid", lambda: 1000)
-    monkeypatch.setattr(observer, "_codex_account_fingerprint",
-                        lambda _resolver: cohort.account_fingerprint)
+    account_calls = []
+
+    def account_fingerprint(_resolver):
+        account_calls.append(True)
+        if (failure_stage == "observer_account" and len(account_calls) == 2
+                or failure_stage == "observer_provider" and len(account_calls) == 3):
+            return "0" * 64
+        return cohort.account_fingerprint
+
+    monkeypatch.setattr(observer, "_codex_account_fingerprint", account_fingerprint)
     monkeypatch.setattr(lifecycle_startup, "apply_native_child_tool_closure",
                         lambda *_args: None)
     helper_calls = []
@@ -348,6 +363,7 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
     composed_instructions = []
     attempt_calls = []
     terminal_calls = []
+    diagnostic_states = []
     native_base = "Fixed native Hermes system prompt\n"
 
     conversation_loop = ModuleType("agent.conversation_loop")
@@ -438,20 +454,38 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                 raise RuntimeError("PRIVATE_CONVERSATION_FAILURE")
             if failure_stage == "terminal":
                 return {"completed": False}
+            if failure_stage == "result_shape":
+                return []
+            if failure_stage == "observer_missing":
+                diagnostic_states.append(
+                    observer._lifecycle_startup_diagnostic_snapshot(context))
+                return {"completed": True,
+                        "final_response": lifecycle_startup._RESPONSE_PREFIX + context.nonce}
             if failure_stage in {"success", "close", "prompt_digest_changed", "response_echo",
                                  "response_leading_space", "response_trailing_space",
-                                 "response_trailing_newline", "response_wrong_nonce"}:
+                                 "response_trailing_newline", "response_wrong_nonce",
+                                 "observer_route", "observer_request", "observer_instructions",
+                                 "observer_input", "observer_account", "observer_attempt",
+                                 "observer_provider", "observer_output", "observer_receipt",
+                                 "result_status", "result_answer", "observer_context_mismatch"}:
                 final_response = lifecycle_startup._RESPONSE_PREFIX + context.nonce
+                provider_text = final_response
                 if failure_stage == "response_echo":
-                    final_response = lifecycle_startup._PROMPT_PREFIX + context.nonce
+                    provider_text = lifecycle_startup._PROMPT_PREFIX + context.nonce
                 elif failure_stage == "response_leading_space":
-                    final_response = " " + final_response
+                    provider_text = " " + provider_text
                 elif failure_stage == "response_trailing_space":
-                    final_response += " "
+                    provider_text += " "
                 elif failure_stage == "response_trailing_newline":
-                    final_response += "\n"
+                    provider_text += "\n"
                 elif failure_stage == "response_wrong_nonce":
-                    final_response = lifecycle_startup._RESPONSE_PREFIX + ("f" * 32)
+                    provider_text = lifecycle_startup._RESPONSE_PREFIX + ("f" * 32)
+                elif failure_stage == "observer_output":
+                    provider_text = "unexpected provider output"
+                elif failure_stage == "result_answer":
+                    final_response += " extra"
+                if failure_stage.startswith("response_") or failure_stage == "observer_output":
+                    final_response = provider_text
                 instructions = composed_instructions[-1]
                 assert _kwargs["user_message"] == (
                     lifecycle_startup._PROMPT_PREFIX + context.nonce
@@ -465,30 +499,71 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                 }
                 if failure_stage == "prompt_digest_changed":
                     request["instructions"] += "\n"
+                elif failure_stage == "observer_instructions":
+                    request["instructions"] += "\n"
+                elif failure_stage == "observer_request":
+                    request["input"][0]["content"][0]["text"] = "wrong private prompt"
+                elif failure_stage == "observer_input":
+                    request["input"].append(dict(request["input"][0]))
                 native_response = SimpleNamespace(
                     status="completed", error=None, incomplete_details=None,
-                    output_text=final_response, output=[],
+                    output_text=provider_text,
+                    output=([{"type": "function_call"}] if failure_stage == "observer_output"
+                            and provider_text == final_response else []),
                     model_dump=lambda **_kwargs: {
-                        "status": "completed", "output_text": final_response})
+                        "status": "completed", "output_text": provider_text})
                 observed_requests = []
-                observed = startup_callback(
-                    provider=self.provider, api_mode=self.api_mode, base_url=context.base_url,
-                    model=self.model, request=request, session_id=context.session_id,
-                    turn_id="turn-1", api_request_id="api-1",
-                    next_call=lambda value: observed_requests.append(value) or native_response)
-                if failure_stage == "prompt_digest_changed":
-                    assert observed.status == "completed"
-                    assert observed_requests == []
-                    return {"completed": True, "final_response": final_response}
-                if failure_stage.startswith("response_"):
-                    assert observed is not native_response
-                    assert observed.output_text != final_response
+                def next_provider(value):
+                    observed_requests.append(value)
+                    return native_response
+
+                observed_provider = ("wrong-provider" if failure_stage == "observer_route"
+                                     else self.provider)
+                callback_kwargs = {
+                    "provider": observed_provider, "api_mode": self.api_mode,
+                    "base_url": context.base_url, "model": self.model, "request": request,
+                    "session_id": context.session_id, "turn_id": "turn-1",
+                    "api_request_id": "api-1", "next_call": next_provider,
+                }
+                if failure_stage == "observer_context_mismatch":
+                    foreign_context = replace(context, nonce="f" * 32)
+                    with observer.lifecycle_startup_probe_scope(
+                            foreign_context, identity=identity,
+                            expected_instructions=instructions):
+                        observed = startup_callback(**callback_kwargs)
+                        diagnostic_states.append(("foreign",
+                            observer._lifecycle_startup_diagnostic_snapshot(foreign_context)))
+                else:
+                    observed = startup_callback(**callback_kwargs)
+                if failure_stage == "observer_route":
+                    observer._record_lifecycle_startup_refusal(
+                        context, "observer_attempt", ValueError)
+                    observer._record_lifecycle_startup_refusal(
+                        object(), "observer_input", RuntimeError)
+                diagnostic_states.append(observer._lifecycle_startup_diagnostic_snapshot(context))
+                if failure_stage == "observer_attempt":
+                    assert observed is not native_response and observed_requests == []
+                elif failure_stage in {"prompt_digest_changed", "observer_instructions",
+                                       "observer_request", "observer_input", "observer_route",
+                                       "observer_account"}:
+                    assert observed is not native_response and observed_requests == []
+                elif failure_stage.startswith("response_") or failure_stage in {
+                        "observer_provider", "observer_output", "observer_receipt"}:
+                    assert observed is not native_response and len(observed_requests) == 1
+                elif failure_stage == "observer_context_mismatch":
+                    assert observed is not native_response and observed_requests == []
+                else:
+                    assert observed is native_response
                     assert len(observed_requests) == 1
+                    assert observed_requests[0]["instructions"] == instructions
+                    assert "private-runtime-credential" not in repr(observed_requests)
+                if failure_stage.startswith("response_") or failure_stage.startswith("observer_"):
+                    return {"completed": True, "final_response": final_response}
+                if failure_stage == "result_status":
+                    return {"completed": False, "final_response": final_response}
+                if failure_stage == "result_answer":
                     return {"completed": True, "final_response": final_response}
                 assert observed is native_response
-                assert len(observed_requests) == 1
-                assert observed_requests[0]["instructions"] == instructions
-                assert "private-runtime-credential" not in repr(observed_requests)
                 return {"completed": True, "final_response": final_response}
             raise AssertionError("unexpected stage reached conversation")
 
@@ -527,11 +602,15 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
     register_lifecycle_startup_probe(server, client=client)
 
     def register_attempt(*_args, **kwargs):
+        if failure_stage == "observer_attempt":
+            raise ValueError("PRIVATE_ATTEMPT_FAILURE")
         attempt_calls.append(kwargs)
         return "A" * 43
 
     def register_terminal(*_args, **kwargs):
         terminal_calls.append(kwargs)
+        if failure_stage == "observer_receipt":
+            raise RuntimeError("PRIVATE_RECEIPT_FAILURE")
         return "Q" * 43
 
     client.register_lifecycle_startup_attempt = register_attempt
@@ -554,7 +633,7 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         "route": ("route", "RuntimeError"),
         "agent_setup": ("agent_setup", "ValueError"),
         "conversation": ("conversation", "RuntimeError"),
-        "terminal": ("terminal", "CoreNativeObservationUnavailable"),
+        "terminal": ("result_status", "CoreNativeObservationUnavailable"),
         "prompt_cached": ("prompt", "CoreNativeObservationUnavailable"),
         "prompt_empty_cache": ("prompt", "CoreNativeObservationUnavailable"),
         "prompt_cache_wrong_type": ("prompt", "CoreNativeObservationUnavailable"),
@@ -564,12 +643,26 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         "prompt_identity_missing": ("prompt", "CoreNativeObservationUnavailable"),
         "prompt_oversized": ("prompt", "CoreNativeObservationUnavailable"),
         "prompt_closure_changed": ("prompt", "CoreNativeObservationUnavailable"),
-        "prompt_digest_changed": ("terminal", "CoreNativeObservationUnavailable"),
-        "response_echo": ("terminal", "CoreNativeObservationUnavailable"),
-        "response_leading_space": ("terminal", "CoreNativeObservationUnavailable"),
-        "response_trailing_space": ("terminal", "CoreNativeObservationUnavailable"),
-        "response_trailing_newline": ("terminal", "CoreNativeObservationUnavailable"),
-        "response_wrong_nonce": ("terminal", "CoreNativeObservationUnavailable"),
+        "prompt_digest_changed": ("observer_instructions", "CoreNativeObservationUnavailable"),
+        "response_echo": ("observer_output", "CoreNativeObservationUnavailable"),
+        "response_leading_space": ("observer_output", "CoreNativeObservationUnavailable"),
+        "response_trailing_space": ("observer_output", "CoreNativeObservationUnavailable"),
+        "response_trailing_newline": ("observer_output", "CoreNativeObservationUnavailable"),
+        "response_wrong_nonce": ("observer_output", "CoreNativeObservationUnavailable"),
+        "observer_route": ("observer_route", "CoreNativeObservationUnavailable"),
+        "observer_request": ("observer_request", "CoreNativeObservationUnavailable"),
+        "observer_instructions": ("observer_instructions", "CoreNativeObservationUnavailable"),
+        "observer_input": ("observer_input", "CoreNativeObservationUnavailable"),
+        "observer_account": ("observer_account", "CoreNativeObservationUnavailable"),
+        "observer_attempt": ("observer_attempt", "ValueError"),
+        "observer_provider": ("observer_provider", "CoreNativeObservationUnavailable"),
+        "observer_output": ("observer_output", "CoreNativeObservationUnavailable"),
+        "observer_receipt": ("observer_receipt", "RuntimeError"),
+        "result_shape": ("result_shape", "CoreNativeObservationUnavailable"),
+        "result_status": ("result_status", "CoreNativeObservationUnavailable"),
+        "result_answer": ("result_answer", "CoreNativeObservationUnavailable"),
+        "observer_missing": ("observer_missing", "CoreNativeObservationUnavailable"),
+        "observer_context_mismatch": ("observer_missing", "CoreNativeObservationUnavailable"),
         "close": ("response", "OSError"),
     }
     if failure_stage == "success":
@@ -585,7 +678,9 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
             "data": lifecycle_startup._startup_refusal_data(stage, exception_type),
         }
     if (failure_stage in {"conversation", "terminal", "success", "close"}
-            or failure_stage.startswith("response_")):
+            or failure_stage.startswith("response_")
+            or failure_stage.startswith("observer_")
+            or failure_stage.startswith("result_")):
         assert len(agents) == 1 and agents[0].closed is True
     elif failure_stage == "agent_setup":
         assert len(agents) == 1 and agents[0].closed is False
@@ -604,7 +699,8 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
         assert identity in composed_instructions[0]
     elif failure_stage == "prompt_cached":
         assert helper_calls == [] and composer_calls == []
-    elif failure_stage in {"conversation", "terminal"} or failure_stage.startswith("response_"):
+    elif (failure_stage in {"conversation", "terminal"} or failure_stage.startswith("response_")
+          or failure_stage.startswith("observer_") or failure_stage.startswith("result_")):
         assert len(helper_calls) == len(composer_calls) == 1
     elif failure_stage.startswith("prompt_"):
         assert len(helper_calls) == 1
@@ -613,12 +709,36 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
             "prompt_closure_changed"} else 1)
     else:
         assert helper_calls == [] and composer_calls == []
-    if failure_stage in {"success", "close"}:
+    if failure_stage in {"success", "close", "result_answer", "result_status"}:
         assert len(attempt_calls) == len(terminal_calls) == 1
     elif failure_stage.startswith("response_"):
         assert len(attempt_calls) == 1 and terminal_calls == []
+    elif failure_stage in {"observer_provider", "observer_output"}:
+        assert len(attempt_calls) == 1 and terminal_calls == []
+    elif failure_stage == "observer_receipt":
+        assert len(attempt_calls) == len(terminal_calls) == 1
+    elif failure_stage in {"observer_route", "observer_request", "observer_instructions",
+                           "observer_input", "observer_account", "observer_attempt",
+                           "observer_missing", "result_shape", "result_status"}:
+        assert attempt_calls == [] and terminal_calls == []
     else:
         assert attempt_calls == [] and terminal_calls == []
+    assert observer._lifecycle_startup_diagnostic_snapshot(context) is None
+    if diagnostic_states and failure_stage.startswith("observer_") and failure_stage not in {
+            "observer_missing", "observer_context_mismatch"}:
+        recorded = diagnostic_states[-1]
+        assert recorded == (True, False, *expected[failure_stage])
+    if failure_stage == "observer_context_mismatch":
+        assert diagnostic_states == [
+            ("foreign", (True, False, "observer_request", "CoreNativeObservationUnavailable")),
+            (False, False, None, None),
+        ]
+    if failure_stage == "success":
+        assert diagnostic_states == [(True, True, None, None)]
+    if failure_stage in {"result_answer", "result_status"}:
+        assert diagnostic_states == [(True, True, None, None)]
+    if failure_stage == "observer_missing":
+        assert diagnostic_states == [(False, False, None, None)]
     assert "PRIVATE_" not in repr(response)
     assert "private-runtime-credential" not in repr(response)
 

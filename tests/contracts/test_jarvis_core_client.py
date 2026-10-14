@@ -197,13 +197,21 @@ def test_lifecycle_startup_probe_rejects_caller_control_and_malformed_handles():
         asyncio.run(client.lifecycle_startup_probe("short"))
 
 
-def test_matched_startup_refusal_uses_fixed_stage_and_native_type_helpers():
+@pytest.mark.parametrize("stage", [
+    "route",
+    "observer_route", "observer_request", "observer_instructions", "observer_input",
+    "observer_account", "observer_attempt", "observer_provider", "observer_output",
+    "observer_receipt", "result_shape", "result_status", "result_answer", "observer_missing",
+])
+def test_matched_startup_refusal_uses_fixed_stage_and_native_type_helpers(stage):
     class Socket:
         async def receive(self):
             return SimpleNamespace(type=1, data=json.dumps({
                 "jsonrpc": "2.0", "id": "request-1", "error": {
                     "code": -32000, "message": "lifecycle startup probe refused",
-                    "data": '{"exception_type":"RuntimeError","schema":1,"stage":"route"}',
+                    "data": json.dumps({
+                        "exception_type": "RuntimeError", "schema": 1, "stage": stage,
+                    }, sort_keys=True, separators=(",", ":")),
                 },
             }))
 
@@ -213,6 +221,12 @@ def test_matched_startup_refusal_uses_fixed_stage_and_native_type_helpers():
         asyncio.run(client._receive(Socket(), ws_types, expected_id="request-1",
                                     startup_response=True))
     assert str(caught.value) == "official core startup probe was refused"
+    origin_names = []
+    traceback = caught.value.__traceback__
+    while traceback is not None:
+        origin_names.append(traceback.tb_frame.f_code.co_name)
+        traceback = traceback.tb_next
+    assert f"_startup_refused_{stage}" in origin_names
 
 
 def test_matched_startup_missing_method_has_fixed_refusal_origin():

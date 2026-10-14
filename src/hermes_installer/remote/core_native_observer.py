@@ -2123,6 +2123,68 @@ _CURRENT_LIFECYCLE_STARTUP_IDENTITY: contextvars.ContextVar[str | None] = \
     contextvars.ContextVar("hermes_lifecycle_startup_identity", default=None)
 _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256: contextvars.ContextVar[str | None] = \
     contextvars.ContextVar("hermes_lifecycle_startup_instructions_sha256", default=None)
+_LIFECYCLE_STARTUP_DIAGNOSTIC_STAGES = frozenset({
+    "observer_route", "observer_request", "observer_instructions", "observer_input",
+    "observer_account", "observer_attempt", "observer_provider", "observer_output",
+    "observer_receipt",
+})
+_LIFECYCLE_STARTUP_DIAGNOSTIC_TYPES = frozenset({
+    "CoreNativeObservationUnavailable", "ImportError", "ModuleNotFoundError", "NameError",
+    "AttributeError", "TypeError", "ValueError", "OSError", "TimeoutError", "RuntimeError",
+    "other",
+})
+
+
+@dataclass(slots=True)
+class _LifecycleStartupDiagnostic:
+    entered: bool = False
+    completed: bool = False
+    first_stage: str | None = None
+    exception_type: str | None = None
+
+
+_CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC: contextvars.ContextVar[_LifecycleStartupDiagnostic | None] = \
+    contextvars.ContextVar("hermes_lifecycle_startup_diagnostic", default=None)
+
+
+def _lifecycle_startup_exception_type(exception_type: type[BaseException]) -> str:
+    if exception_type is CoreNativeObservationUnavailable:
+        return "CoreNativeObservationUnavailable"
+    for allowed_type in (ImportError, ModuleNotFoundError, NameError, AttributeError,
+                         TypeError, ValueError, OSError, TimeoutError, RuntimeError):
+        if exception_type is allowed_type:
+            return allowed_type.__name__
+    return "other"
+
+
+def _record_lifecycle_startup_refusal(
+        context: LifecycleStartupProbeContext, stage: str,
+        exception_type: type[BaseException]) -> None:
+    record = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
+    if (_CURRENT_LIFECYCLE_STARTUP_PROBE.get() is not context
+            or type(record) is not _LifecycleStartupDiagnostic
+            or stage not in _LIFECYCLE_STARTUP_DIAGNOSTIC_STAGES
+            or record.first_stage is not None):
+        return
+    name = _lifecycle_startup_exception_type(exception_type)
+    if name not in _LIFECYCLE_STARTUP_DIAGNOSTIC_TYPES:
+        return
+    record.first_stage = stage
+    record.exception_type = name
+
+
+def _lifecycle_startup_diagnostic_snapshot(
+        context: LifecycleStartupProbeContext) -> tuple[bool, bool, str | None, str | None] | None:
+    record = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
+    if (_CURRENT_LIFECYCLE_STARTUP_PROBE.get() is not context
+            or type(record) is not _LifecycleStartupDiagnostic
+            or (record.first_stage is not None
+                and record.first_stage not in _LIFECYCLE_STARTUP_DIAGNOSTIC_STAGES)
+            or (record.exception_type is not None
+                and record.exception_type not in _LIFECYCLE_STARTUP_DIAGNOSTIC_TYPES)
+            or ((record.first_stage is None) != (record.exception_type is None))):
+        return None
+    return record.entered, record.completed, record.first_stage, record.exception_type
 
 
 @contextmanager
@@ -2138,9 +2200,11 @@ def lifecycle_startup_probe_scope(context: LifecycleStartupProbeContext, *, iden
     token = _CURRENT_LIFECYCLE_STARTUP_PROBE.set(context)
     identity_token = _CURRENT_LIFECYCLE_STARTUP_IDENTITY.set(identity)
     instructions_token = _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.set(expected_sha256)
+    diagnostic_token = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.set(_LifecycleStartupDiagnostic())
     try:
         yield context
     finally:
+        _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.reset(diagnostic_token)
         _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.reset(instructions_token)
         _CURRENT_LIFECYCLE_STARTUP_IDENTITY.reset(identity_token)
         _CURRENT_LIFECYCLE_STARTUP_PROBE.reset(token)
@@ -9016,55 +9080,82 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
         )
 
     def observe_lifecycle_startup(event: Mapping[str, Any], context: LifecycleStartupProbeContext) -> Any:
-        next_call, request = event.get("next_call"), event.get("request")
-        if (not callable(next_call) or not isinstance(request, dict)
-                or type(context) is not LifecycleStartupProbeContext
-                or not context.is_root_issued()):
+        stage = "observer_request"
+        if (type(context) is LifecycleStartupProbeContext and context.is_root_issued()
+                and _CURRENT_LIFECYCLE_STARTUP_PROBE.get() is context):
+            diagnostic = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
+            if type(diagnostic) is _LifecycleStartupDiagnostic:
+                diagnostic.entered = True
+
+        def refused(at_stage: str) -> Any:
+            _record_lifecycle_startup_refusal(
+                context, at_stage, CoreNativeObservationUnavailable)
             return denied_response()
+
         try:
+            next_call, request = event.get("next_call"), event.get("request")
+            if (not callable(next_call) or not isinstance(request, dict)
+                    or type(context) is not LifecycleStartupProbeContext
+                    or not context.is_root_issued()):
+                return refused("observer_request")
+
+            stage = "observer_route"
             route = (event.get("provider"), event.get("api_mode"),
                      str(event.get("base_url", "")).rstrip("/"))
             if route != (context.provider, context.api_mode, context.base_url):
-                return denied_response()
+                return refused(stage)
             if event.get("model") != context.model or event.get("middleware_trace"):
-                return denied_response()
+                return refused(stage)
             session_id = event.get("session_id")
             turn_id = _require_id(event.get("turn_id"), "lifecycle turn ID")
             api_request_id = _require_id(event.get("api_request_id"), "lifecycle request ID")
             if session_id != context.session_id:
-                return denied_response()
+                return refused(stage)
+
+            stage = "observer_request"
             prompt_digest = _native_prompt_sha256(request)
             expected_prompt = hashlib.sha256(
                 (_LIFECYCLE_STARTUP_PROMPT_PREFIX + context.nonce
                  + _LIFECYCLE_STARTUP_PROMPT_SUFFIX).encode("ascii")).hexdigest()
+            if prompt_digest != expected_prompt:
+                return refused(stage)
+
+            stage = "observer_instructions"
             identity = _CURRENT_LIFECYCLE_STARTUP_IDENTITY.get()
             expected_instructions_sha256 = _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.get()
             instructions = request.get("instructions")
-            if (prompt_digest != expected_prompt or not isinstance(identity, str)
-                    or not isinstance(instructions, str)
+            if (not isinstance(identity, str) or not isinstance(instructions, str)
                     or not isinstance(expected_instructions_sha256, str)
                     or hashlib.sha256(instructions.encode("utf-8", "strict")).hexdigest()
                        != expected_instructions_sha256
                     or identity not in instructions):
-                return denied_response()
+                return refused(stage)
+
+            stage = "observer_input"
             input_items = request.get("input")
             if (not isinstance(input_items, list) or len(input_items) != 1
                     or not isinstance(input_items[0], Mapping)
                     or input_items[0].get("type") != "message"
                     or input_items[0].get("role") != "user"
                     or _request_tool_names(request) != ()):
-                return denied_response()
+                return refused(stage)
+
+            stage = "observer_request"
             request_key = (context.session_id, api_request_id)
             with lineage_lock:
                 if request_key in request_attempts:
-                    return denied_response()
+                    return refused(stage)
                 request_attempts[request_key] = None
                 request_attempts.move_to_end(request_key)
                 while len(request_attempts) > 64:
                     request_attempts.popitem(last=False)
+
+            stage = "observer_account"
             account = _codex_account_fingerprint(resolve_credentials)
             if account != context.account_fingerprint:
-                return denied_response()
+                return refused(stage)
+
+            stage = "observer_attempt"
             provider_request = no_tool_request(request)
             attempt_handle = client.register_lifecycle_startup_attempt(
                 context, turn_id=turn_id, api_request_id=api_request_id,
@@ -9073,20 +9164,26 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 prompt_sha256=prompt_digest, tool_names=(), retry_count=0)
             with lineage_lock:
                 request_attempts[request_key] = None
+
+            stage = "observer_provider"
             response = next_call(provider_request)
             if (_codex_account_fingerprint(resolve_credentials) != account
                     or getattr(response, "status", None) != "completed"
                     or getattr(response, "error", None) is not None
                     or getattr(response, "incomplete_details", None) is not None):
-                return denied_response()
+                return refused(stage)
+
+            stage = "observer_output"
             calls = _response_tool_calls(response)
             output_text = getattr(response, "output_text", None)
             if (calls or not isinstance(output_text, str) or not 1 <= len(output_text) <= 1024
                     or output_text != _LIFECYCLE_STARTUP_RESPONSE_PREFIX + context.nonce):
-                return denied_response()
+                return refused(stage)
+
+            stage = "observer_receipt"
             response_bytes = _canonical(response.model_dump(mode="json"))
             if not 1 <= len(response_bytes) <= MAX_FRAME:
-                return denied_response()
+                return refused(stage)
             response_sha256 = hashlib.sha256(response_bytes).hexdigest()
             completion_handle = client.register_lifecycle_startup_response(
                 context, attempt_handle=attempt_handle, turn_id=turn_id,
@@ -9098,8 +9195,13 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 "response_text_sha256": hashlib.sha256(
                     output_text.encode("utf-8", "strict")).hexdigest(),
             })
+            diagnostic = _CURRENT_LIFECYCLE_STARTUP_DIAGNOSTIC.get()
+            if (type(diagnostic) is _LifecycleStartupDiagnostic
+                    and _CURRENT_LIFECYCLE_STARTUP_PROBE.get() is context):
+                diagnostic.completed = True
             return response
-        except Exception:
+        except Exception as exc:
+            _record_lifecycle_startup_refusal(context, stage, type(exc))
             return denied_response()
 
     def observe(**event: Any) -> Any:

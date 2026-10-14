@@ -12,6 +12,7 @@ from .core_native_observer import (
     CoreNativeObservationClient,
     CoreNativeObservationUnavailable,
     LifecycleStartupProbeContext,
+    _lifecycle_startup_diagnostic_snapshot,
     lifecycle_startup_probe_scope,
     take_lifecycle_startup_terminal,
 )
@@ -24,6 +25,9 @@ _RPC_DIAGNOSTIC_SCHEMA = 1
 _RPC_DIAGNOSTIC_STAGES = frozenset({
     "parameters", "root_claim", "primary_identity", "route", "account",
     "agent_setup", "prompt", "conversation", "terminal", "response",
+    "observer_route", "observer_request", "observer_instructions", "observer_input",
+    "observer_account", "observer_attempt", "observer_provider", "observer_output",
+    "observer_receipt", "result_shape", "result_status", "result_answer", "observer_missing",
 })
 _RPC_DIAGNOSTIC_EXCEPTION_TYPES = frozenset({
     "CoreNativeObservationUnavailable", "ImportError", "ModuleNotFoundError", "NameError",
@@ -202,16 +206,40 @@ def _run_probe(params: Any, *, client: CoreNativeObservationClient) -> dict[str,
         stage = "conversation"
         with lifecycle_startup_probe_scope(
                 context, identity=identity, expected_instructions=expected_instructions):
-            result = agent.run_conversation(
-                user_message=prompt, conversation_history=[])
+            try:
+                result = agent.run_conversation(
+                    user_message=prompt, conversation_history=[])
+            except Exception:
+                diagnostic = _lifecycle_startup_diagnostic_snapshot(context)
+                if diagnostic is not None and diagnostic[2] is not None:
+                    raise _StartupProbeRefusal(diagnostic[2], diagnostic[3]) from None
+                raise
+
+            diagnostic = _lifecycle_startup_diagnostic_snapshot(context)
+            if diagnostic is not None and diagnostic[2] is not None:
+                raise _StartupProbeRefusal(diagnostic[2], diagnostic[3])
+
+            stage = "result_shape"
+            if type(result) is not dict:
+                raise CoreNativeObservationUnavailable("native startup result shape is unavailable")
+
+            stage = "result_status"
+            if (result.get("completed") is not True
+                    or result.get("failed") is True or result.get("partial") is True
+                    or result.get("interrupted") is True or result.get("error") not in (None, "")):
+                raise CoreNativeObservationUnavailable("native startup result status is incomplete")
+
+            stage = "result_answer"
+            if (not isinstance(result.get("final_response"), str)
+                    or result["final_response"] != _RESPONSE_PREFIX + context.nonce):
+                raise CoreNativeObservationUnavailable("native startup answer differs from its fixed challenge")
+
+            if diagnostic is None:
+                raise _StartupProbeRefusal("terminal", "CoreNativeObservationUnavailable")
+            if not diagnostic[0]:
+                raise _StartupProbeRefusal("observer_missing", "CoreNativeObservationUnavailable")
 
         stage = "terminal"
-        if (type(result) is not dict or result.get("completed") is not True
-                or result.get("failed") is True or result.get("partial") is True
-                or result.get("interrupted") is True or result.get("error") not in (None, "")
-                or not isinstance(result.get("final_response"), str)
-                or result["final_response"] != _RESPONSE_PREFIX + context.nonce):
-            raise CoreNativeObservationUnavailable("native startup conversation did not complete exactly")
         terminal = take_lifecycle_startup_terminal(context)
 
         stage = "response"
