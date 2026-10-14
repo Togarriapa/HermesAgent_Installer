@@ -2718,7 +2718,9 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
         if attempts["wait"] == 1:
             assert Path(adapter_source) == core.ADAPTER_SOURCE
             attempts["starting_cohort"], _cohort_raw = core._read_adapter_update_cohort()
-            raise core.CoreRuntimeError("injected adapter update restart failure")
+            if not registered_obsidian:
+                raise core.CoreRuntimeError("injected adapter update restart failure")
+            return real_wait_for_listener(adapter_source=Path(adapter_source))
         assert Path(adapter_source) == old_source
         real_wait_for_listener(adapter_source=Path(adapter_source))
     monkeypatch.setattr(core, "_wait_for_listener", fail_first_restart)
@@ -2752,8 +2754,51 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
 
         monkeypatch.setattr(core, "_restore_adapter_update_owner_generation",
                             interrupt_after_primary_unlink)
+        original_verified_resources = core._verified_resources_payload
+        injected_after_adoption = {"done": False}
+
+        def fail_after_verified_primary_adoption(*args, **kwargs):
+            result = original_verified_resources(*args, **kwargs)
+            if not injected_after_adoption["done"]:
+                adopted_cohort, _adopted_raw = core._read_adapter_update_cohort()
+                transition = adopted_cohort.get("initial_primary_transition")
+                if (type(transition) is dict and transition.get("state") == "adopted"
+                        and transition.get("adopted_record_sha256") is not None
+                        and transition.get("after_resources_record_sha256") is not None):
+                    primary_raw = core._projection_file(
+                        core.PRIMARY_PROMPT_JOURNAL, owner=core.ROOT_UID,
+                        group=core.ROOT_UID, mode=0o600, maximum=64 * 1024)
+                    current_resources = core._projection_file(
+                        core.RESOURCES_RECORD, owner=core.ROOT_UID,
+                        group=core.ROOT_UID, mode=0o600, maximum=16 * 1024)
+                    primary_row = json.loads(primary_raw)
+                    soul, _signature = primary_manager._read_soul(core)
+                    assert primary_row.get("state") == "adopted"
+                    assert hashlib.sha256(primary_raw).hexdigest() == (
+                        transition["adopted_record_sha256"])
+                    assert adopted_cohort.get("primary_record_sha256") == (
+                        transition["adopted_record_sha256"])
+                    assert hashlib.sha256(current_resources).hexdigest() == (
+                        transition["after_resources_record_sha256"])
+                    assert adopted_cohort.get("starting_resources_record_sha256") == (
+                        transition["after_resources_record_sha256"])
+                    assert hashlib.sha256(soul).hexdigest() == (
+                        transition["desired_soul_sha256"])
+                    assert isinstance(result, tuple) and len(result) == 2
+                    assert hashlib.sha256(result[0]).hexdigest() == (
+                        adopted_cohort["new_artifact_sha256"])
+                    assert result[1].get("artifact_sha256") == (
+                        adopted_cohort["new_artifact_sha256"])
+                    injected_after_adoption["done"] = True
+                    raise core.CoreRuntimeError(
+                        "injected after verified initial primary adoption")
+            return result
+
+        monkeypatch.setattr(core, "_verified_resources_payload",
+                             fail_after_verified_primary_adoption)
         with pytest.raises(KeyboardInterrupt, match="injected after offline primary rollback"):
             core.update_owned_core_adapter()
+        assert injected_after_adoption["done"]
         assert interrupted_restore["done"]
         interrupted_cohort = interrupted_restore["cohort"]
         interrupted_transition = interrupted_cohort["initial_primary_transition"]
