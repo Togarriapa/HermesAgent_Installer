@@ -239,7 +239,7 @@ def _parse_startup_error(error: Any) -> tuple[str, str]:
     if type(code) is not int:
         raise ValueError("startup error code is invalid")
     if code == -32601:
-        if (set(error) != {"code", "message", "data"}
+        if (set(error) not in ({"code", "message"}, {"code", "message", "data"})
                 or type(error.get("message")) is not str):
             raise ValueError("startup missing-method response is invalid")
         return "method_missing", "other"
@@ -415,11 +415,7 @@ class CoreRpcClient:
             except (ValueError, TypeError):
                 raise JarvisChatDenied("official core gateway frame was invalid") from None
             if not isinstance(frame, dict):
-                if startup_response:
-                    raise JarvisChatDenied("official core startup probe was refused")
                 continue
-            if startup_response and (expected_id is None or frame.get("id") != expected_id):
-                raise JarvisChatDenied("official core startup probe was refused")
             if expected_id is not None and frame.get("id") == expected_id:
                 if (startup_response and (frame.get("jsonrpc") != "2.0"
                         or set(frame) not in ({"jsonrpc", "id", "error"},

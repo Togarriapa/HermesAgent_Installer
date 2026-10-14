@@ -231,25 +231,29 @@ def test_matched_startup_missing_method_has_fixed_refusal_origin():
         asyncio.run(client._receive(Socket(), ws_types, expected_id="request-1",
                                     startup_response=True))
     assert str(caught.value) == "official core startup method is unavailable"
+    assert core_client._parse_startup_error({
+        "code": -32601, "message": "unknown method: hidden-selector",
+    }) == ("method_missing", "other")
 
 
 def test_foreign_startup_error_is_a_generic_refusal():
     class Socket:
-        async def receive(self):
-            return SimpleNamespace(type=1, data=json.dumps({
-                "jsonrpc": "2.0", "id": "foreign-request", "error": {
+        def __init__(self):
+            self.frames = iter((
+                {"jsonrpc": "2.0", "id": "foreign-request", "error": {
                     "code": -32000, "message": "lifecycle startup probe refused",
                     "data": '{"exception_type":"RuntimeError","schema":1,"stage":"route"}',
-                },
-            }))
+                }},
+                {"jsonrpc": "2.0", "id": "request-1", "result": {"status": "completed"}},
+            ))
+
+        async def receive(self):
+            return SimpleNamespace(type=1, data=json.dumps(next(self.frames)))
 
     client = CoreRpcClient(token_file=Path("/private/fake/token"))
     ws_types = SimpleNamespace(TEXT=1, CLOSED=2, CLOSE=3, ERROR=4)
-    with pytest.raises(JarvisChatDenied) as caught:
-        asyncio.run(client._receive(Socket(), ws_types, expected_id="request-1",
-                                    startup_response=True))
-    assert type(caught.value) is JarvisChatDenied
-    assert str(caught.value) == "official core startup probe was refused"
+    assert asyncio.run(client._receive(Socket(), ws_types, expected_id="request-1",
+                                       startup_response=True)) == {"status": "completed"}
 
 
 def test_nonstartup_rpc_error_keeps_generic_refusal_behavior():

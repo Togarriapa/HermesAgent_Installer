@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import hashlib
+import contextlib
 import os
+import sys
 import threading
 import time
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -239,6 +241,129 @@ def test_lifecycle_handler_refuses_registration_without_pinned_error_seam():
     with pytest.raises(observer.CoreNativeObservationUnavailable):
         register_lifecycle_startup_probe(server, client=client)
     assert server.registered is False
+
+
+def test_startup_diagnostic_exception_vocabulary_uses_exact_type_identity():
+    class RuntimeError(Exception):
+        pass
+
+    assert lifecycle_startup._startup_exception_type(RuntimeError("private")) == "other"
+    assert lifecycle_startup._startup_exception_type(ValueError("private")) == "ValueError"
+    assert (lifecycle_startup._startup_exception_type(
+        observer.CoreNativeObservationUnavailable("private"))
+        == "CoreNativeObservationUnavailable")
+
+
+def test_real_conversation_refusal_keeps_phase_and_closes_agent(monkeypatch, tmp_path):
+    cohort = _cohort()
+    home = tmp_path / "hermes-home"
+    home.mkdir()
+    identity = "private startup identity sentinel"
+    raw_identity = identity.encode("utf-8")
+    (home / "SOUL.md").write_bytes(raw_identity)
+    context = observer.LifecycleStartupProbeContext(
+        probe_handle="P" * 43, probe_id="probe-1", session_id="session-1",
+        nonce="0123456789abcdef0123456789abcdef",
+        deadline_monotonic=cohort.deadline_monotonic,
+        cohort_sha256=cohort.cohort_sha256, core_generation=cohort.core_generation,
+        core_source_generation=cohort.core_source_generation,
+        generation_a1_sha256=cohort.generation_a1_sha256, js_sha256=cohort.js_sha256,
+        rs_sha256=cohort.rs_sha256, u1_sha256=cohort.u1_sha256,
+        l1_sha256=cohort.l1_sha256, primary_source_sha256=hashlib.sha256(raw_identity).hexdigest(),
+        active_soul_sha256=hashlib.sha256(raw_identity).hexdigest(),
+        native_inventory_sha256=cohort.native_inventory_sha256,
+        provider=cohort.provider, api_mode=cohort.api_mode, base_url=cohort.base_url,
+        model=cohort.model, account_fingerprint=cohort.account_fingerprint,
+        _seal=observer._LIFECYCLE_STARTUP_CONTEXT_SEAL,
+    )
+    client = observer.CoreNativeObservationClient(socket_path=tmp_path / "unused.sock")
+    client.claim_lifecycle_startup_probe = lambda _handle: context
+    monkeypatch.setattr(lifecycle_startup.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(observer, "_codex_account_fingerprint",
+                        lambda _resolver: cohort.account_fingerprint)
+    monkeypatch.setattr(lifecycle_startup, "apply_native_child_tool_closure",
+                        lambda *_args: None)
+    monkeypatch.setattr(lifecycle_startup, "lifecycle_startup_probe_scope",
+                        lambda *_args, **_kwargs: contextlib.nullcontext())
+
+    hermes_constants = ModuleType("hermes_constants")
+    hermes_constants.get_hermes_home = lambda: home
+    agent_package = ModuleType("agent")
+    agent_package.__path__ = []
+    prompt_builder = ModuleType("agent.prompt_builder")
+    prompt_builder.load_soul_md = lambda *, home_override: identity
+    hermes_cli = ModuleType("hermes_cli")
+    hermes_cli.__path__ = []
+    runtime_provider = ModuleType("hermes_cli.runtime_provider")
+    runtime_provider.resolve_runtime_provider = lambda *, requested, target_model: {
+        "provider": requested, "api_mode": context.api_mode,
+        "base_url": context.base_url, "api_key": "private-runtime-credential",
+    }
+    auth_codex = ModuleType("hermes_cli.auth_codex")
+    auth_codex.resolve_codex_runtime_credentials = lambda *, read_only: object()
+    run_agent = ModuleType("run_agent")
+    agents = []
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            agents.append(self)
+            self.provider = kwargs["provider"]
+            self.model = kwargs["model"]
+            self.api_mode = kwargs["api_mode"]
+            self.enabled_toolsets = []
+            self.tools = []
+            self.valid_tool_names = ()
+            self.skip_context_files = True
+            self.load_soul_identity = False
+            self.skip_background_review = True
+            self._memory_store = None
+            self._memory_manager = None
+            self._session_db = None
+            self._checkpoint_mgr = SimpleNamespace(enabled=False)
+            self.prefill_messages = []
+            self.closed = False
+
+        def _build_system_prompt(self):
+            return identity
+
+        def run_conversation(self, **_kwargs):
+            raise RuntimeError("private provider failure sentinel")
+
+        def close(self):
+            self.closed = True
+
+    run_agent.AIAgent = FakeAgent
+    for name, module in (
+        ("hermes_constants", hermes_constants), ("agent", agent_package),
+        ("agent.prompt_builder", prompt_builder), ("hermes_cli", hermes_cli),
+        ("hermes_cli.runtime_provider", runtime_provider),
+        ("hermes_cli.auth_codex", auth_codex), ("run_agent", run_agent),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+
+    class Server:
+        def register_method(self, _name, handler):
+            self.handler = handler
+
+        @staticmethod
+        def _ok(rid, result):
+            return {"jsonrpc": "2.0", "id": rid, "result": result}
+
+        @staticmethod
+        def _err(rid, code, message, data=None):
+            return {"jsonrpc": "2.0", "id": rid,
+                    "error": {"code": code, "message": message, "data": data}}
+
+    server = Server()
+    register_lifecycle_startup_probe(server, client=client)
+    response = server.handler("request-3", {"probe_handle": "P" * 43})
+    assert response["error"] == {
+        "code": -32000, "message": "lifecycle startup probe refused",
+        "data": '{"exception_type":"RuntimeError","schema":1,"stage":"conversation"}',
+    }
+    assert len(agents) == 1 and agents[0].closed is True
+    assert "private provider failure sentinel" not in repr(response)
+    assert "private runtime credential" not in repr(response)
 
 
 def test_root_probe_claim_is_current_peer_only_and_single_use(monkeypatch):

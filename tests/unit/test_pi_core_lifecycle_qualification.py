@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import builtins
+import asyncio
 import fcntl
 import hashlib
 import io
@@ -14,7 +15,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,8 @@ SPEC = importlib.util.spec_from_file_location("pi_core_lifecycle_qualification",
 assert SPEC is not None and SPEC.loader is not None
 qualification = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(qualification)
+
+from hermes_installer.remote.core_client import CoreRpcClient
 
 
 class _FakeMonitoring:
@@ -724,6 +727,37 @@ def test_exception_origin_caps_aggregated_traceback_frames():
     assert origin["exception_type"] == "RuntimeError"
     assert len(origin["frames"]) == 12
     assert "PRIVATE_DEEP_TRACEBACK_TEXT" not in repr(origin)
+
+
+def test_startup_denial_stage_and_type_fit_existing_origin_report():
+    class Socket:
+        async def receive(self):
+            return SimpleNamespace(type=1, data=json.dumps({
+                "jsonrpc": "2.0", "id": "request-1", "error": {
+                    "code": -32000, "message": "lifecycle startup probe refused",
+                    "data": '{"exception_type":"RuntimeError","schema":1,"stage":"route"}',
+                },
+            }))
+
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    ws_types = SimpleNamespace(TEXT=1, CLOSED=2, CLOSE=3, ERROR=4)
+    try:
+        asyncio.run(client._receive(Socket(), ws_types, expected_id="request-1",
+                                    startup_response=True))
+    except Exception as exc:
+        origin = qualification._root_setup_exception_origin(
+            exc, Path(__file__).resolve().parents[2] / "src")
+    else:
+        pytest.fail("matched native startup refusal unexpectedly succeeded")
+
+    assert origin is not None
+    assert set(origin) == {"exception_type", "frames"}
+    assert origin["exception_type"] == "_StartupNativeRuntimeErrorDenied"
+    assert len(origin["frames"]) <= 12
+    functions = {row["function"] for row in origin["frames"]}
+    assert "_startup_refused_route" in functions
+    assert "_startup_native_runtime_error" in functions
+    assert "private" not in repr(origin)
 
 
 def test_fixed_cli_trace_refuses_a_preexisting_trace():

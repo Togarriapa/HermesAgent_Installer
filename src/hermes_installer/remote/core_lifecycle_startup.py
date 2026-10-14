@@ -56,10 +56,14 @@ def _startup_refusal_data(stage: str, exception_type: str) -> str:
 
 
 def _startup_exception_type(exc: Exception) -> str:
-    if type(exc) is CoreNativeObservationUnavailable:
+    exception_type = type(exc)
+    if exception_type is CoreNativeObservationUnavailable:
         return "CoreNativeObservationUnavailable"
-    name = type(exc).__name__
-    return name if name in _RPC_DIAGNOSTIC_EXCEPTION_TYPES else "other"
+    for allowed_type in (ImportError, ModuleNotFoundError, NameError, AttributeError,
+                         TypeError, ValueError, OSError, TimeoutError, RuntimeError):
+        if exception_type is allowed_type:
+            return allowed_type.__name__
+    return "other"
 
 
 def _read_primary_identity(home: Path) -> tuple[bytes, tuple[int, ...]]:
