@@ -2784,3 +2784,21 @@ The qualifier SHALL add bounded public source-frame rows only for its existing e
 - **THEN** it is an observed callsite, not completion or native acceptance; unchanged300s, Core, report/persistence/recovery gates and meaningful Pi identity/privacy/parser tests precede any further conclusion or fix.
 
 This callsite refinement stays within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups.
+
+### Requirement: Qualification exception observation avoids global call tracing
+The qualifier SHALL observe bounded exception origins with exception-only monitoring and exact verified main-code filtering, preserving execution decisions, deadlines, privacy and recovery.
+
+#### Scenario: The fixed CLI handles a nested failure or returns normally
+- **WHEN** the isolated runtime provides CPython monitoring and fixed toolID3 is unused
+- **THEN** only global EXCEPTION_HANDLED is enabled, callbacks admit only verified candidate main-code identity, and local PY_RETURN cancels the existing watchdog. Escaping failures use the existing outer catch directly. The unchanged bounded origin projector emits no exception messages, locals, arguments or private paths; successful reports omit origin.
+- **AND** no call/line/instruction tracing or profiling is installed; all owned events/callbacks are disabled/unregistered before the owned ID is freed on every path. CLI results, report schema/eligibility, currentness, persistence/recovery and original300s/110s bounds remain unchanged.
+
+#### Scenario: Monitoring is unavailable, occupied or refuses setup
+- **WHEN** the fixed best-effort origin observer cannot be established
+- **THEN** origin stays unknown and the same fixed CLI runs without broad tracing fallback or foreign-tool mutation; partial owned state is cleaned up. Existing isolated/source checks and preexisting-trace refusal remain. Observer errors never authorize effects or invent cause/completion.
+
+#### Scenario: The replacement is qualified against measured diagnostic overhead
+- **WHEN** meaningful Pi origin/cleanup/privacy/cancellation contracts and pinned fresh-process artifact comparisons are run
+- **THEN** monitored and untraced builds retain identical bytes/digest, monitoring is faster than the traced reference, and trace/profile are unused with ID released. Record measured elapsed values; no complete timeout-resolution or live-acceptance claim follows until a current qualified attempt and strict readback.
+
+This observer refinement remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and all existing artifact obligations.
