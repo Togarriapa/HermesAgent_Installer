@@ -2176,3 +2176,13 @@ skips, contracts exit0. Evidence: `candidate206-stage.log`,
 protected observation was started in `candidate206-actual-adoption.log`.
 Controlled contracts and canonical compatibility do not alone establish actual
 provider/native/Root completion or M1 acceptance.
+
+While reading the candidate206 observation, the browser control call timed out
+and reset its kernel. Reconnection returned no available browser connections.
+The exact protected Pi job had been started once; its completion/recovery
+result has not been read. This is an evidence-access interruption, not a
+validated candidate failure or successful adoption. Preserve the running job
+and read `candidate206-actual-adoption.log` and exact-candidate qualification
+report before any further apply. The last confirmed recovered availability
+belongs to candidate204; current services/public functional state require a
+fresh Pi/browser read after reconnection.
