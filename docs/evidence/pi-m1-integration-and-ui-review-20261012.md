@@ -1997,3 +1997,27 @@ native builder deliberately excludes ephemeral identity from its cached base;
 the actual API composition appends it later. A correction must preserve that
 native composition and exact middleware instructions check. No second apply
 is authorized by this failed result alone, and M1 acceptance remains open.
+
+### Candidates 199–200 native instruction composition
+
+Planning candidate199 `a18237f77232de6afea9cd4b716e022a736280bf`, archive
+SHA-256 `88996ba9d7ac05781455accf3f8bce58389f1b45ebf02de3a7631f84073c7b38`,
+strictly validated all four artifacts on the identified Pi: specs0/plan0,
+apply ready, one complete and81 remaining of82. It defines fixed native
+once-only initialization and actual Codex instruction composition. This is
+a refinement, not runtime acceptance.
+
+Reviewed implementation candidate200 `14837841c7d60aa4dc80d1103d2be7796ee49911`,
+archive SHA-256
+`750eb6733c35983e044f168a7ec4f3928c1e674b3adf1a8c8aaf72857c55d395`, changes
+only the startup producer, its contracts and the separately reviewed Inspector
+startup source pin. The producer invokes the fixed native preparation once
+from a fresh agent cache and captures the full native Codex composition;
+original no-tools and identity/digest gates remain. Pi staging and strict
+spec/plan gates passed;139 focused contracts passed in1.47s, including native
+composition and actual observer digest-mismatch refusal without downstream
+dispatch. Evidence: `candidate199-{stage,gates,status,apply}` and
+`candidate200-stage.log`, `candidate200-specs.json`, `candidate200-gates.log`
+under the same Pi directory. A separately qualified protected observation is
+pending in `candidate200-actual-adoption.log`; these tests do not attest an
+actual model response or successful installation.
