@@ -2758,7 +2758,7 @@ The qualifier SHALL sample the fixed CLI main-thread stack once through exact ca
 
 #### Scenario: The call returns early or sampling is unavailable
 - **WHEN** the fixed CLI returns, or a sample is absent/invalid/unmapped/capped
-- **THEN** the watchdog is cancelled and bounded-joined without delaying early completion or emitting afterward; observation remains unknown as applicable. Core, original300s, main-only tracing, report validation, persistence and real recovery remain unchanged, and meaningful Pi cancellation/privacy/parser contracts precede another attempt.
+- **THEN** cancellation prevents new sample/publication attempts, with at most50ms publication-barrier and50ms join waits. An already-entered atomic nonblocking write may finish after return; the observation was captured while the CLI was active and implies neither completion nor strict no-late arrival. Observation remains unknown as applicable. Core, original300s, main-only tracing, report validation, persistence and real recovery remain unchanged; meaningful Pi cancellation/privacy/parser contracts precede another attempt.
 
 This one-shot observation refines R0055/R0201 and RT-T266.3/VD-T266.5 (#35) within unchanged219/62/18/eight OPEN groups.
 
@@ -2766,3 +2766,7 @@ This one-shot observation refines R0055/R0201 and RT-T266.3/VD-T266.5 (#35) with
 - **WHEN** a child sample or wrapper observation is encoded
 - **THEN** it contains only schema/request digests, elapsed_ms, ordered fixed labels, examined_frames/unmatched_frames and strict truncated/unknown booleans. The eight exact code mappings and32/12 bounds above apply; invalid/absent samples yield null elapsed and an explicitly unknown empty observation, while a valid capped sample stays marked truncated and unknown.
 - **AND** the child and wrapper use distinct fixed versioned prefixes; checkpoint records retain their existing independent schema. No additional source names, roles, paths or arbitrary data are accepted.
+
+#### Scenario: The diagnostic pipe cannot accept the one atomic write
+- **WHEN** the held original stderr pipe is busy/full/unavailable or cancellation has prevented a new publication attempt
+- **THEN** the best-effort sample is dropped with no blocking fallback, duplicate emission, shared flag mutation, authority or deadline change; an already-entered bounded atomic write may finish under the stated timing limitation.
