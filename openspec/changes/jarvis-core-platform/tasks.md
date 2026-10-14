@@ -321,3 +321,5 @@ All four encoding-correction checkboxes above are bounded leaves of existing R00
 - [ ] Pi contracts cover each fixed wrapper branch, canonical bounded metadata/private omission, timeout partial-byte counts, silent success, stale-report nonattribution and unchanged persistence/recovery decisions. Sol reviews exact tool/tests; Root qualifies them before one observed attempt and safe current classification. All original acceptance remains open.
 
 - [ ] In the same diagnostic leaf, test an eligible persistence attempt that raises: preserve its original criteria/attempt and recovery, emit only `failure_report_persistence` plus existing safe metadata, and distinguish it from normally persisted validated failure. No new task group or runtime authority is added.
+
+- [ ] Qualify saturated stdout65537/stderr16385/elapsed300000 ceiling representation and null unavailable values, closed emitter validation/private omission, exact original300s/argv/environment and silent success; do not interpret capped values as exact measurements or extend deadlines.

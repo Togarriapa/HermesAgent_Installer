@@ -2725,3 +2725,7 @@ This diagnostic leaf remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35);21
 #### Scenario: Eligible failure report cannot be persisted
 - **WHEN** the unchanged persistence attempt for a validated nonzero failure report raises
 - **THEN** the wrapper emits the distinct closed `failure_report_persistence` reason with the same bounded metadata, no exception value/path and no claim of a newly persisted report; original eligibility and recovery remain unchanged.
+
+#### Scenario: Bounded numeric representation reaches a ceiling
+- **WHEN** observed stdout bytes, stderr bytes or elapsed milliseconds exceed65537,16385 or300000 respectively
+- **THEN** the record saturates that field at its ceiling, meaning at least that value; unavailable fields are null, execution deadlines and acceptance limits do not change, and unexpected fields/types are rejected before emission.

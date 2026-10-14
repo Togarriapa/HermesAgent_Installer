@@ -267,3 +267,5 @@ The new explicit mode applies coherently to the closed manager-projected set: jo
 Actual165 failed at the fixed qualification subprocess, automatically restored the prior runtime and left only a stale last-failure report. No timeout, guard or inner Core cause is established. Source review found that the adopter maps distinct wrapper refusal branches to one generic RuntimeError. Refine only safe failure classification at that existing boundary: a closed reason and bounded numeric metadata emitted through the existing failed-adoption output. Preserve all validation, original300s deadline, report custody and recovery; no new apply before current evidence is classified.
 
 Distinguish an attempted valid failure-report persistence refusal with the closed `failure_report_persistence` reason; do not disguise it as a normally persisted validated child failure. This changes diagnostic attribution only.
+
+Numeric diagnostics saturate at stdout65537 bytes, stderr16385 bytes and elapsed300000ms; a ceiling means at least that value, not exact measurement or a changed execution deadline.
