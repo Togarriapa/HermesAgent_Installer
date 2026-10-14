@@ -13,7 +13,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -138,7 +137,15 @@ def test_main_flushes_phase_checkpoint_before_each_fixed_operation(monkeypatch, 
     monkeypatch.setattr(qualification.os, "geteuid", lambda: 0)
     monkeypatch.setattr(qualification.sys, "platform", "linux")
     monkeypatch.setattr(qualification.sys, "executable", "/usr/bin/python3")
-    monkeypatch.setattr(qualification.sys, "flags", SimpleNamespace(isolated=True))
+    real_flags = qualification.sys.flags
+
+    class IsolatedFlags:
+        def __getattr__(self, name):
+            if name == "isolated":
+                return True
+            return getattr(real_flags, name)
+
+    monkeypatch.setattr(qualification.sys, "flags", IsolatedFlags())
     source = Path("/opt/hermes-installer-core-" + "b" * 9 + "/src")
 
     class Stage:
