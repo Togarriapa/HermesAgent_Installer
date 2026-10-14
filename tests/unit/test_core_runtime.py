@@ -591,8 +591,9 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=Non
             elif mutation[0] == "acl-wrong":
                 acl = struct.pack("<I", 2) + b"".join(
                     struct.pack("<HHI", *entry) for entry in (
-                        (1, 4, 0xffffffff), (2, 0, 1000), (4, 0, 0xffffffff),
-                        (16, 4, 0xffffffff), (32, 0, 0xffffffff)))
+                        (1, 4, 0xffffffff), (2, 4, 1000), (2, 4, 1001),
+                        (4, 0, 0xffffffff), (16, 4, 0xffffffff),
+                        (32, 0, 0xffffffff)))
                 os.setxattr(target, "system.posix_acl_access", acl,
                             follow_symlinks=False)
         os.chown(cred_dir, core.ROOT_UID if credential_projection else admin.pw_uid,
