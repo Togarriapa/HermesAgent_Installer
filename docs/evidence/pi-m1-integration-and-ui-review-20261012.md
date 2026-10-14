@@ -1966,3 +1966,22 @@ The prior production source `0cbf9b819a6be41b3ff34d623374335cb64c3834` was
 restored after each failed protected apply; the four owned services were
 confirmed active after recovery. Native/provider, Resources and primary
 functionality remain pending. No M1 or full-release acceptance is established.
+
+### Candidate 198 closed startup diagnostics qualification
+
+Candidate `7254c95f68f1b029770f68d392a7eadb36835d13`, archive SHA-256
+`69fa2dd57894d7177abb913a2757e3060d9aaebe5c88405b4b85264ecc3ae1ce`, includes
+Sol-reviewed producer/client refusal diagnostics and separate Inspector pins.
+Only the startup producer and client adapter source rows changed; Core,
+manual skill importer, native observer and native installer hashes remain
+unchanged from candidate196. Exact source staging passed on the identified Pi.
+
+Pi strict specifications and plan checks both exited0. The focused lifecycle,
+RPC client and existing qualification-origin suites passed129 tests in1.42s,
+including genuine producer boundary failures and cleanup, matched request
+classification, malformed/private omission and stage/type retention at the
+existing12-frame report cap. Evidence: `candidate198-stage.log`,
+`candidate198-specs.json` and `candidate198-gates.log` under the same Pi evidence
+directory. These contracts do not establish native/provider completion or
+M1 acceptance. One protected startup observation was started separately;
+its outcome is pending in `candidate198-actual-adoption.log`.
