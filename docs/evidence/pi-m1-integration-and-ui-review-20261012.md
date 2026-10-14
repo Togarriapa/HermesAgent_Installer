@@ -1764,3 +1764,37 @@ back, primary-absent true, prior SOUL hash and restored signature matching,
 desired false; retained stage and backup digests were present. Recovery work
 was ongoing. No private errors or credential data are included. No full M1
 acceptance is claimed; service availability remains the immediate status.
+
+## Candidate 182–186 recovery-transport qualification status
+
+The M1 rollback refinement is tracked by OpenSpec #21 and recovery transport by
+#35 (RT-T266.3/VD-T266.5). Candidate 182 was Pi strict-spec/plan validated
+with 0 errors; candidate 183's transport plan likewise passed with 0 errors.
+Candidate 184 sealed the reviewed Core rollback fix at source commit
+`577333cbe30d3ce7f1dde465528560586756b7e3`, archive SHA-256
+`82eee1a1dcdaeafb39ca2f783298d1fa76ebde9d2f4cb94a4ec476c316a3b0b3`, Core
+SHA-256 `e9e0a47911a7b9df24194d20b07cadf33e94d9b1cf5135d7e7de3dc28826eaf5`.
+Sol reviewed the fix and the retained inspector pin `793067`. The fast
+qualification suite passed 158 tests with 3 native-target skips; spec and plan
+validation passed. A first restart run omitted the required private `/opt`
+source harness and is not evidence about the product. With that harness, an
+unregistered transport fixture passed once, while the registered restart
+fixture failed before its intended interruption point. Source ordering showed
+the fixture injected failure before the normal listener wait and primary
+adoption, so that run did not qualify the Core recovery behavior.
+
+The registered test was corrected and reviewed so failure injection occurs
+after the actual adopted manager, Resources and SOUL joins. Candidate 186
+(`880e05272fa38be84bd8865bcada4cb7e3f269a9`, test artifact `e69ff3` as recorded
+in its source evidence) carries that correction. Candidate 185's fixed
+transport pins the unchanged failed c91 Core separately from candidate 184's
+reviewed fix, and its 11 unit contract tests passed in 0.05s against a fake
+module API. Those tests establish the binding/AST contract only; the genuine
+registered Core recovery call has not yet been qualified.
+
+At this evidence point, no actual transport/recovery attempt had run. The four
+Pi services were inactive following the earlier candidate-181 failure, and
+there was no M1 acceptance, journal recreation, history change, or deadline
+change. Root still needs the combined registered interruption/restart test on
+the Pi, followed by actual recovery and service/readback qualification. These
+source and fixture results do not establish live acceptance.
