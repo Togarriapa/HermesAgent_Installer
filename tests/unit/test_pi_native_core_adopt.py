@@ -1496,7 +1496,29 @@ def _qualification_diagnostic_line(captured):
         assert value is None or type(value) is int and 0 <= value <= maximum
     value = record["returncode"]
     assert value is None or type(value) is int and -255 <= value <= 255
+    summary = _qualification_last_phase_record(captured)
+    assert adopt._valid_qualification_last_phase_summary(summary)
     return record
+
+
+def _qualification_last_phase_record(captured):
+    summaries = [line for line in captured.err.splitlines()
+                 if line.startswith(adopt._QUALIFICATION_LAST_PHASE_PREFIX)]
+    assert len(summaries) == 1
+    summary_encoded = summaries[0][len(adopt._QUALIFICATION_LAST_PHASE_PREFIX):]
+    summary = json.loads(summary_encoded)
+    assert summary_encoded == json.dumps(summary, sort_keys=True, separators=(",", ":"))
+    assert set(summary) == {
+        "schema", "candidate_commit", "candidate_archive_sha256", "last_phase",
+        "last_sequence", "last_elapsed_ms", "record_count", "rejected_record_count",
+    }
+    assert summary["schema"] == 1
+    assert summary["candidate_commit"] == "b" * 40
+    assert summary["candidate_archive_sha256"] == "c" * 64
+    assert 0 <= summary["record_count"] <= 16
+    assert 0 <= summary["rejected_record_count"] <= 16
+    assert len(summaries[0].encode("ascii") + b"\n") <= 4096
+    return summary
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="protected failure report fixture requires root")
@@ -1694,9 +1716,17 @@ def test_qualification_refusal_emits_closed_reason_without_private_values(
             raise OSError(sentinel.decode())
         monkeypatch.setattr(adopt.subprocess, "run", run)
     elif case == "timeout":
+        checkpoint = {
+            "schema": 1, "candidate_commit": "b" * 40,
+            "candidate_archive_sha256": "c" * 64, "sequence": 1,
+            "phase": "stage_verifier", "elapsed_ms": 10,
+        }
+        partial_stderr = (adopt._QUALIFICATION_CHECKPOINT_PREFIX
+                          + json.dumps(checkpoint, sort_keys=True,
+                                       separators=(",", ":")) + "\npartial").encode()
         def run(*_args, **_kwargs):
             raise adopt.subprocess.TimeoutExpired("private command", 300,
-                                                  output=sentinel, stderr=sentinel)
+                                                  output=sentinel, stderr=partial_stderr)
         monkeypatch.setattr(adopt.subprocess, "run", run)
     else:
         report = _qualification_report_fixture()
@@ -1729,13 +1759,19 @@ def test_qualification_refusal_emits_closed_reason_without_private_values(
 
     with pytest.raises(adopt._QualificationDiagnosticError) as caught:
         adopt._run_core_refresh_qualification("b" * 40, "c" * 64, tool, identity)
-    diagnostic = _qualification_diagnostic_line(capsys.readouterr())
+    captured = capsys.readouterr()
+    diagnostic = _qualification_diagnostic_line(captured)
     assert diagnostic["reason"] == reason
     assert sentinel.decode() not in json.dumps(diagnostic)
     assert caught.value.record == diagnostic
     if case == "timeout":
         assert diagnostic["stdout_bytes"] == len(sentinel)
-        assert diagnostic["stderr_bytes"] == len(sentinel)
+        assert diagnostic["stderr_bytes"] is not None
+        summary = _qualification_last_phase_record(captured)
+        assert summary["last_phase"] == "stage_verifier"
+        assert summary["last_sequence"] == 1
+        assert summary["record_count"] == 1 and summary["rejected_record_count"] == 1
+        assert sentinel.decode() not in captured.err
     if case == "execution":
         assert diagnostic["returncode"] is None
         assert diagnostic["stdout_bytes"] is None
@@ -1758,6 +1794,131 @@ def test_qualification_diagnostic_rejects_unclosed_records_before_serialization(
         {**base, "stderr_bytes": True},
     ):
         adopt._emit_qualification_diagnostic(invalid)
+    assert capsys.readouterr().err == ""
+
+
+def test_qualification_checkpoint_summary_retains_only_validated_prefix_records():
+    def line(sequence, phase, elapsed, *, candidate="b" * 40):
+        record = {
+            "schema": 1, "candidate_commit": candidate,
+            "candidate_archive_sha256": "c" * 64, "sequence": sequence,
+            "phase": phase, "elapsed_ms": elapsed,
+        }
+        return (adopt._QUALIFICATION_CHECKPOINT_PREFIX
+                + json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+    prefix = line(1, "stage_verifier", 1) + line(2, "runtime_load", 2)
+    valid = adopt._qualification_last_phase_summary(prefix, "b" * 40, "c" * 64)
+    assert valid["last_phase"] == "runtime_load"
+    assert valid["last_sequence"] == 2 and valid["last_elapsed_ms"] == 2
+    assert valid["record_count"] == 2 and valid["rejected_record_count"] == 0
+
+    rounded_equal = adopt._qualification_last_phase_summary(
+        prefix + line(3, "before_snapshot", 2), "b" * 40, "c" * 64)
+    assert rounded_equal["last_phase"] == "before_snapshot"
+    assert rounded_equal["last_sequence"] == 3 and rounded_equal["last_elapsed_ms"] == 2
+    assert rounded_equal["record_count"] == 3
+    saturated_equal = adopt._qualification_last_phase_summary(
+        line(1, "stage_verifier", 300_000)
+        + line(2, "runtime_load", 300_000), "b" * 40, "c" * 64)
+    assert saturated_equal["last_phase"] == "runtime_load"
+    assert saturated_equal["last_elapsed_ms"] == 300_000
+
+    truncated = adopt._qualification_last_phase_summary(
+        prefix + b"HERMES_CORE_QUALIFICATION_CHECKPOINT_V1={truncated",
+        "b" * 40, "c" * 64)
+    assert truncated["last_phase"] == "runtime_load"
+    assert truncated["record_count"] == 2 and truncated["rejected_record_count"] == 1
+
+    wrong_request = adopt._qualification_last_phase_summary(
+        line(1, "stage_verifier", 1, candidate="d" * 40), "b" * 40, "c" * 64)
+    assert wrong_request["last_phase"] is None
+    assert wrong_request["record_count"] == 0 and wrong_request["rejected_record_count"] == 1
+
+    wrong_order = adopt._qualification_last_phase_summary(
+        prefix + line(4, "after_snapshot", 3), "b" * 40, "c" * 64)
+    assert wrong_order["last_phase"] is None
+    assert wrong_order["record_count"] == 2 and wrong_order["rejected_record_count"] == 1
+
+    backwards_phase = adopt._qualification_last_phase_summary(
+        line(1, "runtime_load", 1) + line(2, "stage_verifier", 2),
+        "b" * 40, "c" * 64)
+    assert backwards_phase["last_phase"] is None
+    assert backwards_phase["record_count"] == 1
+    assert backwards_phase["rejected_record_count"] == 1
+
+    decreasing_elapsed = adopt._qualification_last_phase_summary(
+        line(1, "stage_verifier", 2) + line(2, "runtime_load", 1),
+        "b" * 40, "c" * 64)
+    assert decreasing_elapsed["last_phase"] is None
+    assert decreasing_elapsed["record_count"] == 1
+    assert decreasing_elapsed["rejected_record_count"] == 1
+
+    oversized = adopt._qualification_last_phase_summary(
+        b"x" * (16 * 1024 + 1), "b" * 40, "c" * 64)
+    assert oversized["last_phase"] is None
+    assert oversized["record_count"] == 0 and oversized["rejected_record_count"] == 1
+
+    base_record = {
+        "schema": 1, "candidate_commit": "b" * 40,
+        "candidate_archive_sha256": "c" * 64, "sequence": 1,
+        "phase": "stage_verifier", "elapsed_ms": 1,
+    }
+    invalid_lines = [
+        (adopt._QUALIFICATION_CHECKPOINT_PREFIX
+         + json.dumps({**base_record, "extra": "x"}, sort_keys=True,
+                      separators=(",", ":")) + "\n").encode(),
+        (adopt._QUALIFICATION_CHECKPOINT_PREFIX
+         + json.dumps({**base_record, "phase": "private_phase"}, sort_keys=True,
+                      separators=(",", ":")) + "\n").encode(),
+        (adopt._QUALIFICATION_CHECKPOINT_PREFIX
+         + '{"schema":1,"schema":1,"candidate_commit":"' + "b" * 40
+         + '","candidate_archive_sha256":"' + "c" * 64
+         + '","sequence":1,"phase":"stage_verifier","elapsed_ms":1}\n').encode(),
+        (adopt._QUALIFICATION_CHECKPOINT_PREFIX
+         + json.dumps(base_record, sort_keys=True) + "\n").encode(),
+    ]
+    for invalid_line in invalid_lines:
+        invalid_summary = adopt._qualification_last_phase_summary(
+            invalid_line, "b" * 40, "c" * 64)
+        assert invalid_summary["last_phase"] is None
+        assert invalid_summary["record_count"] == 0
+        assert invalid_summary["rejected_record_count"] == 1
+
+    too_many = b"".join(line(index, "stage_verifier", index)
+                        for index in range(1, 18))
+    too_many_summary = adopt._qualification_last_phase_summary(
+        too_many, "b" * 40, "c" * 64)
+    assert too_many_summary["last_phase"] is None
+    assert too_many_summary["record_count"] == 1
+    assert too_many_summary["rejected_record_count"] == 1
+
+    skipped_optional_phases = adopt._qualification_last_phase_summary(
+        line(1, "stage_verifier", 1) + line(2, "runtime_load", 2)
+        + line(3, "before_snapshot", 3) + line(4, "adapter_update", 4)
+        + line(5, "after_snapshot", 5) + line(6, "success_checks", 6)
+        + line(7, "report_emission", 7), "b" * 40, "c" * 64)
+    assert skipped_optional_phases["last_phase"] == "report_emission"
+    assert skipped_optional_phases["record_count"] == 7
+    assert skipped_optional_phases["rejected_record_count"] == 0
+
+    overlong_line = line(1, "x" * 5000, 1)
+    overlong_summary = adopt._qualification_last_phase_summary(
+        overlong_line, "b" * 40, "c" * 64)
+    assert overlong_summary["last_phase"] is None
+    assert overlong_summary["record_count"] == 0
+    assert overlong_summary["rejected_record_count"] == 1
+
+
+def test_qualification_last_phase_emitter_rejects_unclosed_summary(capsys):
+    summary = {
+        "schema": 1, "candidate_commit": "b" * 40,
+        "candidate_archive_sha256": "c" * 64, "last_phase": None,
+        "last_sequence": None, "last_elapsed_ms": None,
+        "record_count": 0, "rejected_record_count": 0,
+        "private": "PRIVATE_SUMMARY_SENTINEL",
+    }
+    adopt._emit_qualification_last_phase_summary(summary)
     assert capsys.readouterr().err == ""
 
 

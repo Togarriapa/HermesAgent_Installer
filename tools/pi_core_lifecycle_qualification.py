@@ -17,6 +17,7 @@ import os
 import re
 import stat
 import sys
+import time
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -30,6 +31,51 @@ _ADAPTER_BACKUP_BASE_MEMBERS = frozenset({
     "journal.json", "unit", "launcher", "plugin-selection.json", "resources-record.json",
     "overlay-record.json", "primary-record.json", "obsidian-registration.json", "cohort.json",
 })
+_QUALIFICATION_CHECKPOINT_PREFIX = "HERMES_CORE_QUALIFICATION_CHECKPOINT_V1="
+_QUALIFICATION_CHECKPOINT_PHASES = (
+    "stage_verifier", "runtime_load", "before_snapshot", "adapter_update",
+    "after_snapshot", "history_validation", "listener_verification",
+    "success_checks", "report_emission",
+)
+_QUALIFICATION_CHECKPOINT_STREAM = sys.stderr
+
+
+def _emit_qualification_checkpoint(candidate_sha: str, archive_sha: str,
+                                   sequence: int, phase: str, started: float,
+                                   state: dict) -> None:
+    if (type(candidate_sha) is not str or re.fullmatch(r"[0-9a-f]{40}", candidate_sha) is None
+            or type(archive_sha) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", archive_sha) is None
+            or type(sequence) is not int or sequence < 1 or sequence > 16
+            or phase not in _QUALIFICATION_CHECKPOINT_PHASES
+            or type(state) is not dict):
+        return
+    try:
+        elapsed = time.monotonic() - started
+        if not isinstance(elapsed, (int, float)) or elapsed < 0:
+            return
+        elapsed_ms = min(int(elapsed * 1000), 300_000)
+        previous = state.get("last_elapsed_ms", -1)
+        if type(previous) is not int or previous < -1 or previous > 300_000:
+            return
+        # Keep this an honest monotonic-clock measurement; sequence carries order.
+        if elapsed_ms < previous:
+            return
+        state["last_elapsed_ms"] = elapsed_ms
+        record = {
+            "schema": 1, "candidate_commit": candidate_sha,
+            "candidate_archive_sha256": archive_sha, "sequence": sequence,
+            "phase": phase, "elapsed_ms": elapsed_ms,
+        }
+        line = _QUALIFICATION_CHECKPOINT_PREFIX + json.dumps(
+            record, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        if len((line + "\n").encode("ascii")) > 4096:
+            return
+        _QUALIFICATION_CHECKPOINT_STREAM.write(line + "\n")
+        _QUALIFICATION_CHECKPOINT_STREAM.flush()
+    except (OSError, ValueError, TypeError):
+        # A diagnostic sink failure is not an alternate update gate.
+        return
 
 
 def _candidate_source(commit: str) -> Path:
@@ -644,6 +690,17 @@ def main(argv: list[str] | None = None) -> int:
     if sys.executable != "/usr/bin/python3" or not sys.flags.isolated:
         parser.error("run with /usr/bin/python3 -I")
 
+    progress_started = time.monotonic()
+    progress_state = {"last_elapsed_ms": -1}
+    progress_sequence = 0
+
+    def checkpoint(phase: str) -> None:
+        nonlocal progress_sequence
+        progress_sequence += 1
+        _emit_qualification_checkpoint(args.candidate_sha, args.archive_sha256,
+                                       progress_sequence, phase, progress_started,
+                                       progress_state)
+
     candidate_src = _candidate_source(args.candidate_sha)
     helper_bytes, custody_fds, source_fd = _load_stage_verifier(args.candidate_sha)
     try:
@@ -652,11 +709,14 @@ def main(argv: list[str] | None = None) -> int:
                 or provenance.get("archive_sha256") != args.archive_sha256):
             raise RuntimeError("staged source/archive receipt differs from the reviewed request")
         _verify_held_source_path(custody_fds[2], source_fd)
+        checkpoint("stage_verifier")
         stage = _execute_stage_verifier(args.candidate_sha, helper_bytes)
         stage._verify_source_provenance(args.candidate_sha, candidate_src)
 
+        checkpoint("runtime_load")
         runtime, root_setup = _load_candidate_runtime(candidate_src)
         _verify_held_source_path(custody_fds[2], source_fd)
+        checkpoint("before_snapshot")
         before_public, before_private = _snapshot(runtime)
         if before_public["adapter_source"] == str(candidate_src):
             raise RuntimeError("candidate adapter is already active; no update was attempted")
@@ -664,6 +724,7 @@ def main(argv: list[str] | None = None) -> int:
         # Invoke only the existing finite root CLI verb, with no target, path,
         # command, credential, or failure-injection selector from the caller.
         cli_stdout, cli_stderr = _DigestSink(), _DigestSink()
+        checkpoint("adapter_update")
         with contextlib.redirect_stdout(cli_stdout), contextlib.redirect_stderr(cli_stderr):
             cli_exit, cli_failure_origin = _run_fixed_root_adapter_update(
                 root_setup, candidate_src)
@@ -673,14 +734,18 @@ def main(argv: list[str] | None = None) -> int:
         cohort_phase = None
         listener_current = False
         try:
+            checkpoint("after_snapshot")
             after_public, after_private = _snapshot(runtime)
             cohort, _cohort_raw = runtime._read_adapter_update_cohort()
             cohort_phase = cohort.get("phase")
+            checkpoint("history_validation")
             runtime._validate_adapter_update_history(runtime._journal())
+            checkpoint("listener_verification")
             listener_current = runtime._owned_listener_pidfd(adapter_source=candidate_src)
         except Exception as exc:
             after_error = type(exc).__name__
 
+        checkpoint("success_checks")
         checks = (_success_checks(before_public, after_public, str(candidate_src),
                                   cohort_phase=cohort_phase,
                                   listener_current=listener_current)
@@ -716,6 +781,7 @@ def main(argv: list[str] | None = None) -> int:
             "interruption_recovery_qualification": "not_run",
             "acceptance": "not_claimed",
         }
+        checkpoint("report_emission")
         print(json.dumps(report, sort_keys=True, separators=(",", ":")))
         return 0 if success else 4
     finally:

@@ -59,12 +59,24 @@ _QUALIFICATION_CHECKS = frozenset({
     "primary_prompt_owner_bytes_and_adopted_record_preserved",
 })
 _QUALIFICATION_DIAGNOSTIC_PREFIX = "HERMES_CORE_QUALIFICATION_FAILURE_V1="
+_QUALIFICATION_LAST_PHASE_PREFIX = "HERMES_CORE_QUALIFICATION_LAST_PHASE_V1="
 _QUALIFICATION_DIAGNOSTIC_REASONS = frozenset({
     "execution_os_error", "timeout", "tool_identity_read_failure",
     "tool_identity_change", "malformed_result_types", "output_bound",
     "report_rejected", "validated_failure", "exit_report_verification_mismatch",
     "failure_report_persistence",
 })
+_QUALIFICATION_CHECKPOINT_PREFIX = "HERMES_CORE_QUALIFICATION_CHECKPOINT_V1="
+_QUALIFICATION_CHECKPOINT_PHASES = frozenset({
+    "stage_verifier", "runtime_load", "before_snapshot", "adapter_update",
+    "after_snapshot", "history_validation", "listener_verification",
+    "success_checks", "report_emission",
+})
+_QUALIFICATION_CHECKPOINT_PHASE_ORDER = (
+    "stage_verifier", "runtime_load", "before_snapshot", "adapter_update",
+    "after_snapshot", "history_validation", "listener_verification",
+    "success_checks", "report_emission",
+)
 
 
 class _QualificationDiagnosticError(RuntimeError):
@@ -152,14 +164,147 @@ def _emit_qualification_diagnostic(record: dict) -> None:
         pass
 
 
+def _qualification_last_phase_summary(stderr: object, candidate_sha: str,
+                                      archive_sha: str) -> dict:
+    summary = {
+        "schema": 1, "candidate_commit": candidate_sha,
+        "candidate_archive_sha256": archive_sha, "last_phase": None,
+        "last_sequence": None, "last_elapsed_ms": None,
+        "record_count": 0, "rejected_record_count": 0,
+    }
+    if type(stderr) is not bytes:
+        return summary
+    if len(stderr) > 16 * 1024:
+        summary["rejected_record_count"] = 1
+        return summary
+    if not stderr:
+        return summary
+
+    complete_lines = stderr.splitlines(keepends=True)
+    trailing_partial = not stderr.endswith(b"\n")
+    if trailing_partial and complete_lines:
+        complete_lines = complete_lines[:-1]
+        summary["rejected_record_count"] = 1
+    valid_records = 0
+    previous_elapsed = -1
+    previous_phase_index = -1
+    exact_keys = {
+        "schema", "candidate_commit", "candidate_archive_sha256",
+        "sequence", "phase", "elapsed_ms",
+    }
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate record key")
+            result[key] = value
+        return result
+
+    invalid = False
+    if not complete_lines and trailing_partial:
+        return summary
+    for line in complete_lines:
+        if (len(line) > 4096 or not line.endswith(b"\n") or not line.startswith(
+                _QUALIFICATION_CHECKPOINT_PREFIX.encode("ascii"))):
+            invalid = True
+            break
+        try:
+            text = line[:-1].decode("ascii", "strict")
+            encoded = text[len(_QUALIFICATION_CHECKPOINT_PREFIX):]
+            record = json.loads(encoded, object_pairs_hook=unique_object)
+            if (type(record) is not dict or set(record) != exact_keys
+                    or record.get("schema") != 1 or type(record.get("schema")) is not int
+                    or record.get("candidate_commit") != candidate_sha
+                    or type(record.get("candidate_commit")) is not str
+                    or record.get("candidate_archive_sha256") != archive_sha
+                    or type(record.get("candidate_archive_sha256")) is not str
+                    or type(record.get("sequence")) is not int
+                    or record["sequence"] != valid_records + 1
+                    or record["sequence"] > 16
+                    or type(record.get("phase")) is not str
+                    or record["phase"] not in _QUALIFICATION_CHECKPOINT_PHASES
+                    or _QUALIFICATION_CHECKPOINT_PHASE_ORDER.index(record["phase"])
+                    <= previous_phase_index
+                    or type(record.get("elapsed_ms")) is not int
+                    or not 0 <= record["elapsed_ms"] <= 300_000
+                    or record["elapsed_ms"] < previous_elapsed
+                    or encoded != json.dumps(record, sort_keys=True,
+                                             separators=(",", ":"), ensure_ascii=True)):
+                invalid = True
+                break
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            invalid = True
+            break
+        valid_records += 1
+        previous_elapsed = record["elapsed_ms"]
+        previous_phase_index = _QUALIFICATION_CHECKPOINT_PHASE_ORDER.index(record["phase"])
+        summary.update({"last_phase": record["phase"],
+                        "last_sequence": record["sequence"],
+                        "last_elapsed_ms": record["elapsed_ms"]})
+    summary["record_count"] = min(valid_records, 16)
+    summary["rejected_record_count"] = min(
+        summary["rejected_record_count"] + (1 if invalid else 0), 16)
+    if invalid:
+        summary.update({"last_phase": None, "last_sequence": None,
+                        "last_elapsed_ms": None})
+    return summary
+
+
+def _valid_qualification_last_phase_summary(summary: object) -> bool:
+    keys = {
+        "schema", "candidate_commit", "candidate_archive_sha256", "last_phase",
+        "last_sequence", "last_elapsed_ms", "record_count", "rejected_record_count",
+    }
+    if type(summary) is not dict or set(summary) != keys:
+        return False
+    if (type(summary["schema"]) is not int or summary["schema"] != 1
+            or type(summary["candidate_commit"]) is not str
+            or re.fullmatch(r"[0-9a-f]{40}", summary["candidate_commit"]) is None
+            or type(summary["candidate_archive_sha256"]) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", summary["candidate_archive_sha256"]) is None
+            or type(summary["record_count"]) is not int
+            or not 0 <= summary["record_count"] <= 16
+            or type(summary["rejected_record_count"]) is not int
+            or not 0 <= summary["rejected_record_count"] <= 16):
+        return False
+    phase, sequence, elapsed = (summary["last_phase"], summary["last_sequence"],
+                                summary["last_elapsed_ms"])
+    if phase is None or sequence is None or elapsed is None:
+        return phase is sequence is elapsed is None
+    return (type(phase) is str and phase in _QUALIFICATION_CHECKPOINT_PHASES
+            and type(sequence) is int and 1 <= sequence <= 16
+            and type(elapsed) is int and 0 <= elapsed <= 300_000
+            and sequence == summary["record_count"])
+
+
+def _emit_qualification_last_phase_summary(summary: dict) -> None:
+    if not _valid_qualification_last_phase_summary(summary):
+        return
+    try:
+        raw = json.dumps(summary, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    except (TypeError, ValueError, RecursionError):
+        return
+    line = _QUALIFICATION_LAST_PHASE_PREFIX + raw
+    if len((line + "\n").encode("ascii")) > 4096:
+        return
+    try:
+        print(line, file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
 def _raise_qualification_diagnostic(candidate_sha: str, archive_sha: str, reason: str,
                                      returncode: object = None,
                                      stdout_bytes: object = None,
                                      stderr_bytes: object = None,
-                                     elapsed_ms: object = None) -> None:
+                                     elapsed_ms: object = None,
+                                     progress_stderr: object = None) -> None:
     record = _qualification_diagnostic(candidate_sha, archive_sha, reason, returncode,
                                        stdout_bytes, stderr_bytes, elapsed_ms)
     _emit_qualification_diagnostic(record)
+    _emit_qualification_last_phase_summary(_qualification_last_phase_summary(
+        progress_stderr, candidate_sha, archive_sha))
     raise _QualificationDiagnosticError(record) from None
 
 
@@ -839,7 +984,7 @@ def _run_core_refresh_qualification(candidate_sha: str, archive_sha: str,
         _raise_qualification_diagnostic(
             candidate_sha, archive_sha, "timeout", None,
             len(out) if out is not None else None, len(err) if err is not None else None,
-            elapsed_ms())
+            elapsed_ms(), err)
     except OSError:
         _raise_qualification_diagnostic(candidate_sha, archive_sha,
                                          "execution_os_error", elapsed_ms=elapsed_ms())
@@ -853,28 +998,28 @@ def _run_core_refresh_qualification(candidate_sha: str, archive_sha: str,
     except OSError:
         _raise_qualification_diagnostic(candidate_sha, archive_sha,
                                          "tool_identity_read_failure", result_returncode,
-                                         stdout_bytes, stderr_bytes, elapsed_ms())
+                                         stdout_bytes, stderr_bytes, elapsed_ms(), result_stderr)
     if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns,
             current.st_ctime_ns) != tool_identity:
         _raise_qualification_diagnostic(candidate_sha, archive_sha, "tool_identity_change",
                                          result_returncode, stdout_bytes, stderr_bytes,
-                                         elapsed_ms())
+                                         elapsed_ms(), result_stderr)
     if (type(result_returncode) is not int or type(result_stdout) is not bytes
             or type(result_stderr) is not bytes):
         _raise_qualification_diagnostic(
             candidate_sha, archive_sha, "malformed_result_types", result_returncode,
-            stdout_bytes, stderr_bytes, elapsed_ms())
+            stdout_bytes, stderr_bytes, elapsed_ms(), result_stderr)
     if stdout_bytes > 64 * 1024 or stderr_bytes > 16 * 1024:
         _raise_qualification_diagnostic(
             candidate_sha, archive_sha, "output_bound", result_returncode,
-            stdout_bytes, stderr_bytes, elapsed_ms())
+            stdout_bytes, stderr_bytes, elapsed_ms(), result_stderr)
     try:
         report, verified = _validated_qualification_report(
             result_stdout, candidate_sha, archive_sha)
     except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         _raise_qualification_diagnostic(
             candidate_sha, archive_sha, "report_rejected", result_returncode,
-            stdout_bytes, stderr_bytes, elapsed_ms())
+            stdout_bytes, stderr_bytes, elapsed_ms(), result_stderr)
     if result_returncode == 0 and verified:
         return report
     if result_returncode != 0 and not verified:
@@ -883,13 +1028,13 @@ def _run_core_refresh_qualification(candidate_sha: str, archive_sha: str,
         except Exception:
             _raise_qualification_diagnostic(
                 candidate_sha, archive_sha, "failure_report_persistence", result_returncode,
-                stdout_bytes, stderr_bytes, elapsed_ms())
+                stdout_bytes, stderr_bytes, elapsed_ms(), result_stderr)
         _raise_qualification_diagnostic(
             candidate_sha, archive_sha, "validated_failure", result_returncode,
-            stdout_bytes, stderr_bytes, elapsed_ms())
+            stdout_bytes, stderr_bytes, elapsed_ms(), result_stderr)
     _raise_qualification_diagnostic(
         candidate_sha, archive_sha, "exit_report_verification_mismatch", result_returncode,
-        stdout_bytes, stderr_bytes, elapsed_ms())
+        stdout_bytes, stderr_bytes, elapsed_ms(), result_stderr)
 
 
 def _verify_adapter_refresh_plugin_backup(core_runtime, old_record: dict,

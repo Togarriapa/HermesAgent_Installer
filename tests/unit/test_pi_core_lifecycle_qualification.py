@@ -6,11 +6,14 @@ live source update, protected backup, native process, or Pi acceptance result.
 from __future__ import annotations
 
 import importlib.util
+import builtins
 import hashlib
+import io
 import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -63,6 +66,174 @@ def test_candidate_identity_requires_full_lowercase_commit_sha():
     for invalid in ("a" * 39, "A" * 40, "../" + "a" * 37, "a" * 40 + "b"):
         with pytest.raises(ValueError, match="full lowercase SHA"):
             qualification._candidate_source(invalid)
+
+
+def test_fixed_phase_checkpoints_flush_to_held_stderr_with_closed_order(monkeypatch):
+    class HeldSink:
+        def __init__(self):
+            self.lines = []
+            self.flushes = 0
+
+        def write(self, value):
+            self.lines.append(value)
+            return len(value)
+
+        def flush(self):
+            self.flushes += 1
+
+    held = HeldSink()
+    redirected = io.StringIO()
+    monkeypatch.setattr(qualification, "_QUALIFICATION_CHECKPOINT_STREAM", held)
+    state = {"last_elapsed_ms": -1}
+    started = qualification.time.monotonic()
+    with qualification.contextlib.redirect_stderr(redirected):
+        for sequence, phase in enumerate(qualification._QUALIFICATION_CHECKPOINT_PHASES, 1):
+            qualification._emit_qualification_checkpoint(
+                "b" * 40, "c" * 64, sequence, phase, started, state)
+
+    assert redirected.getvalue() == ""
+    assert held.flushes == len(qualification._QUALIFICATION_CHECKPOINT_PHASES)
+    assert len(held.lines) == len(qualification._QUALIFICATION_CHECKPOINT_PHASES)
+    records = []
+    for line in held.lines:
+        assert line.startswith(qualification._QUALIFICATION_CHECKPOINT_PREFIX)
+        encoded = line[len(qualification._QUALIFICATION_CHECKPOINT_PREFIX):].rstrip("\n")
+        record = json.loads(encoded)
+        assert encoded == json.dumps(record, sort_keys=True, separators=(",", ":"))
+        assert set(record) == {
+            "schema", "candidate_commit", "candidate_archive_sha256",
+            "sequence", "phase", "elapsed_ms",
+        }
+        records.append(record)
+    assert [record["phase"] for record in records] == list(
+        qualification._QUALIFICATION_CHECKPOINT_PHASES)
+    assert [record["sequence"] for record in records] == list(
+        range(1, len(records) + 1))
+    assert all(type(record["elapsed_ms"]) is int
+               and 0 <= record["elapsed_ms"] <= 300_000 for record in records)
+    assert all(a["elapsed_ms"] <= b["elapsed_ms"]
+               for a, b in zip(records, records[1:]))
+
+
+def test_main_flushes_phase_checkpoint_before_each_fixed_operation(monkeypatch, capsys):
+    class HeldSink:
+        def __init__(self):
+            self.lines = []
+            self.flushed_lines = []
+
+        def write(self, value):
+            self.lines.append(value)
+            return len(value)
+
+        def flush(self):
+            self.flushed_lines.append(self.lines[-1])
+
+        def latest_phase(self):
+            line = self.flushed_lines[-1]
+            record = json.loads(line[len(qualification._QUALIFICATION_CHECKPOINT_PREFIX):])
+            return record["phase"]
+
+    held = HeldSink()
+    monkeypatch.setattr(qualification, "_QUALIFICATION_CHECKPOINT_STREAM", held)
+    monkeypatch.setattr(qualification.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(qualification.sys, "platform", "linux")
+    monkeypatch.setattr(qualification.sys, "executable", "/usr/bin/python3")
+    monkeypatch.setattr(qualification.sys, "flags", SimpleNamespace(isolated=True))
+    source = Path("/opt/hermes-installer-core-" + "b" * 9 + "/src")
+
+    class Stage:
+        @staticmethod
+        def _verify_source_provenance(_candidate, _source):
+            assert held.latest_phase() == "stage_verifier"
+
+    class Runtime:
+        @staticmethod
+        def _read_adapter_update_cohort():
+            return {"phase": "committed"}, b""
+
+        @staticmethod
+        def _validate_adapter_update_history(_journal):
+            assert held.latest_phase() == "history_validation"
+
+        @staticmethod
+        def _journal():
+            return object()
+
+        @staticmethod
+        def _owned_listener_pidfd(*, adapter_source):
+            assert adapter_source == source
+            assert held.latest_phase() == "listener_verification"
+            return True
+
+    before = {"adapter_source": "/old/source", "token_sha256": "a" * 64}
+    after = {"adapter_source": str(source), "token_sha256": "a" * 64}
+    snapshots = iter(((before, {}), (after, {})))
+    monkeypatch.setattr(qualification, "_candidate_source", lambda _sha: source)
+    monkeypatch.setattr(qualification, "_load_stage_verifier", lambda _sha: (
+        b"helper", [os.dup(0), os.dup(1), os.dup(2)], -1))
+    monkeypatch.setattr(qualification, "_read_source_receipt", lambda _fd: {
+        "source_commit": "b" * 40, "archive_sha256": "c" * 64})
+    monkeypatch.setattr(qualification, "_verify_held_source_path", lambda *_args: None)
+
+    def execute_stage(*_args):
+        assert_phase(held, "stage_verifier")
+        return Stage()
+
+    def load_runtime(_src):
+        assert_phase(held, "runtime_load")
+        return Runtime(), object()
+
+    def success_checks(*_args, **_kwargs):
+        assert_phase(held, "success_checks")
+        return {"candidate_adapter_is_active": True}
+
+    monkeypatch.setattr(qualification, "_execute_stage_verifier", execute_stage)
+    monkeypatch.setattr(qualification, "_load_candidate_runtime", load_runtime)
+    monkeypatch.setattr(qualification, "_run_fixed_root_adapter_update",
+                        lambda *_args: fixed_update_result(held))
+    monkeypatch.setattr(qualification, "_success_checks", success_checks)
+    monkeypatch.setattr(qualification, "_backup_matches_before", lambda *_args: True)
+    monkeypatch.setattr(qualification, "_primary_prompt_matches_before", lambda *_args: True)
+    original_print = builtins.print
+
+    def checked_print(*args, **kwargs):
+        if len(args) == 1 and type(args[0]) is str and args[0].startswith("{"):
+            assert_phase(held, "report_emission")
+        return original_print(*args, **kwargs)
+
+    monkeypatch.setattr(builtins, "print", checked_print)
+
+    snapshot_calls = {"count": 0}
+
+    def snapshot(_runtime):
+        snapshot_calls["count"] += 1
+        expected = "before_snapshot" if snapshot_calls["count"] == 1 else "after_snapshot"
+        assert held.latest_phase() == expected
+        return next(snapshots)
+
+    monkeypatch.setattr(qualification, "_snapshot", snapshot)
+    assert qualification.main([
+        "--candidate-sha", "b" * 40, "--archive-sha256", "c" * 64,
+    ]) == 0
+    assert held.latest_phase() == "report_emission"
+    records = [json.loads(line[len(qualification._QUALIFICATION_CHECKPOINT_PREFIX):])
+               for line in held.lines]
+    assert len(held.flushed_lines) == 9
+    assert [record["phase"] for record in records] == list(
+        qualification._QUALIFICATION_CHECKPOINT_PHASES)
+    assert [record["sequence"] for record in records] == list(range(1, 10))
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out)["outcome"] == "verified_adapter_update"
+
+
+def assert_phase(sink, expected):
+    assert sink.latest_phase() == expected
+
+
+def fixed_update_result(sink):
+    assert_phase(sink, "adapter_update")
+    return 0, None
 
 
 def test_only_current_candidate_commit_and_preserved_bindings_qualify():
