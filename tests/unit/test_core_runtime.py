@@ -2067,6 +2067,48 @@ def test_root_update_artifact_cache_requires_existing_held_lock(monkeypatch):
     assert native._ROOT_UPDATE_ARTIFACT_CACHE.get() is None
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="qualified Root runtime identity is a Pi-only contract")
+@pytest.mark.parametrize("mutation", [None, "python-version", "yaml-version", "yaml-origin"])
+def test_root_update_artifact_cache_accepts_only_qualified_system_runtime(mutation):
+    source_root = core.ADAPTER_SOURCE
+    child = r'''
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from hermes_installer.registry import manual_jarvis_skills as native
+mode = sys.argv[1]
+if mode == "python-version":
+    row = list(native._BASE_ARTIFACT_RUNTIME_ENTRYPOINTS["/usr/bin/python3"])
+    row[1] = (3, 13, 4)
+    native._BASE_ARTIFACT_RUNTIME_ENTRYPOINTS["/usr/bin/python3"] = tuple(row)
+elif mode == "yaml-version":
+    row = list(native._BASE_ARTIFACT_YAML_ORIGINS["/usr/bin/python3"])
+    row[5] = "6.0.3"
+    native._BASE_ARTIFACT_YAML_ORIGINS["/usr/bin/python3"] = tuple(row)
+elif mode == "yaml-origin":
+    row = list(native._BASE_ARTIFACT_YAML_ORIGINS["/usr/bin/python3"])
+    row[0] = "/usr/lib/python3/dist-packages/yaml/unexpected.py"
+    native._BASE_ARTIFACT_YAML_ORIGINS["/usr/bin/python3"] = tuple(row)
+try:
+    native._loaded_compiler_identity(Path(sys.argv[2]))
+except native.ManualJarvisSkillsError:
+    print("refused")
+else:
+    print("accepted " + __import__("yaml").__version__)
+'''
+    result = subprocess.run(
+        ["/usr/bin/python3", "-I", "-B", "-c", child, mutation or "", str(source_root)],
+        cwd="/", env={"PATH": "/usr/bin:/bin", "PYTHONNOUSERSITE": "1",
+                       "PYTHONDONTWRITEBYTECODE": "1"},
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=False)
+    assert result.returncode == 0
+    if mutation is None:
+        assert result.stdout == b"accepted 6.0.2\n"
+    else:
+        assert result.stdout == b"refused\n"
+    assert result.stderr == b""
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="Root source custody is a Pi-only contract")
 def test_root_update_reuses_only_one_verified_base_artifact_and_clears_scope(
         monkeypatch):

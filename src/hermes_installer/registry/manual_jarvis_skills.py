@@ -97,6 +97,10 @@ _BASE_ARTIFACT_SOURCE_LIMIT = 8 * 1024 * 1024
 _BASE_ARTIFACT_CODE_LIMIT = 2 * 1024 * 1024
 _BASE_ARTIFACT_CLOSURE_LIMIT = 32 * 1024 * 1024
 _BASE_ARTIFACT_RUNTIME_ENTRYPOINTS = {
+    "/usr/bin/python3": (
+        "/usr/bin/python3.13", (3, 13, 5), 0, 0, 0o755, 6_673_736,
+        "bd241b38381974ae27d7d5098a6d0e6dda0a744b5e9fdd6fe3a1ae632588961e",
+        "/usr", "/usr"),
     "/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python": (
         "/usr/bin/python3.13", (3, 13, 5), 0, 0, 0o755, 6_673_736,
         "bd241b38381974ae27d7d5098a6d0e6dda0a744b5e9fdd6fe3a1ae632588961e",
@@ -109,12 +113,18 @@ _BASE_ARTIFACT_RUNTIME_ENTRYPOINTS = {
         "/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64"),
 }
 _BASE_ARTIFACT_YAML_ORIGINS = {
+    "/usr/bin/python3": (
+        "/usr/lib/python3/dist-packages/yaml/__init__.py",
+        0, 0, 0o644, "377e52d351cc7ac1537b469144c5a43e3d0f6bc2046c7a44f452bb72be4176dc",
+        "6.0.2"),
     "/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python": (
         "/opt/hermes-jarvis-mvp-20261011/gateway-venv/lib/python3.13/site-packages/yaml/__init__.py",
-        0, 0, 0o644, "b19dfcc333d6a75dfd73073901164507252f271b41d3b5f7d85510033a0547a7"),
+        0, 0, 0o644, "b19dfcc333d6a75dfd73073901164507252f271b41d3b5f7d85510033a0547a7",
+        "6.0.3"),
     "/var/tmp/hermes-jarvis-core-checks-20261011/gateway-test-venv/bin/python": (
         "/var/tmp/hermes-jarvis-core-checks-20261011/gateway-test-venv/lib/python3.14/site-packages/yaml/__init__.py",
-        1000, 1000, 0o644, "b19dfcc333d6a75dfd73073901164507252f271b41d3b5f7d85510033a0547a7"),
+        1000, 1000, 0o644, "b19dfcc333d6a75dfd73073901164507252f271b41d3b5f7d85510033a0547a7",
+        "6.0.3"),
 }
 _PLUGIN_CONTRACT_FIELDS = (
     "adapter_id", "resource_id", "component_adapter_id", "handler_available", "status", "blocker",
@@ -488,14 +498,14 @@ def _loaded_compiler_identity(source_root):
         raise ManualJarvisSkillsError("pinned Python invocation path differs")
     (expected_target, expected_version, expected_uid, expected_gid, expected_mode,
      expected_size, expected_sha, expected_prefix, expected_base_prefix) = expected_python
+    expected_yaml_path, yaml_uid, yaml_gid, yaml_mode, yaml_sha, expected_yaml_version = \
+        _BASE_ARTIFACT_YAML_ORIGINS[sys.executable]
     if (tuple(sys.version_info[:3]) != expected_version
             or sys.implementation.name != "cpython"
-            or yaml.__version__ != "6.0.3"
+            or yaml.__version__ != expected_yaml_version
             or not callable(yaml.safe_load) or not callable(yaml.safe_dump)
             or not callable(yaml.load) or not callable(yaml.dump)):
         raise ManualJarvisSkillsError("pinned Resources compiler runtime identity differs")
-    expected_yaml_path, yaml_uid, yaml_gid, yaml_mode, yaml_sha = \
-        _BASE_ARTIFACT_YAML_ORIGINS[sys.executable]
     yaml_file = Path(yaml.__file__).resolve(strict=True)
     yaml_spec = getattr(yaml, "__spec__", None)
     if getattr(yaml_spec, "origin", None) != expected_yaml_path:

@@ -118,7 +118,7 @@ _ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256=(
  ("hermes_installer/registry/source.py","990ceae1457abf1445ffec0bca0a415181c3b8a4728a1f2d00c76ff40d4aed86"),
  ("hermes_installer/registry/native.py","ebd3ea99da913d7d5f35a6e6e034aae47c0502d764c0ee7acf6cd69846ce3df7"),
  ("hermes_installer/registry/resources_runtime.py","796fd768188848d9c157befc2388d40c5379e968415d7896a75b0942ad242273"),
- ("hermes_installer/registry/manual_jarvis_skills.py","93d02dbe3f220b92deaaa46ce207b0da48f25a0cebe2bf295862a6a0e8135d8a"),
+ ("hermes_installer/registry/manual_jarvis_skills.py","c94db61cde64a786c471550333875ff004924eee4d6200988d73623afbc7d448"),
  ("hermes_installer/registry/jarvis_master_semantics.py","634c29e62295c6b7a66f016b966c1cfc59c3fb667a682227f5bda90b5b11d9a5"),
  ("hermes_installer/registry/bundle_data/hermes-agent-resources.pin.json","f20474dbf05673bc2595c4b756d6183b5d6789d2aead2261dd7918a3853ea721"),
  ("hermes_installer/registry/bundle_data/hermes-agent-resources-2.3.1.tar.gz","b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1"),
