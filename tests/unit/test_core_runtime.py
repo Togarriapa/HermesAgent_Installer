@@ -2791,6 +2791,20 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
         stage_path.chmod(0o400)
         assert _calls == calls_before_refusals
 
+        stage_directory = stage_path.parent
+        held_directory = stage_directory.with_name(stage_directory.name + ".held")
+        assert not held_directory.exists() and not held_directory.is_symlink()
+        stage_directory.rename(held_directory)
+        try:
+            stage_directory.symlink_to(held_directory, target_is_directory=True)
+            with pytest.raises(core.CoreRuntimeError):
+                core._recover_interrupted_adapter_update()
+        finally:
+            if stage_directory.is_symlink():
+                stage_directory.unlink()
+            held_directory.rename(stage_directory)
+        assert _calls == calls_before_refusals
+
         backup_path = core.PRIMARY_PROMPT_BACKUPS / (
             interrupted_transition["owner_backup_sha256"] + ".bin")
         backup_raw = backup_path.read_bytes()

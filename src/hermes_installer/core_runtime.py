@@ -5357,8 +5357,31 @@ def _verify_absent_initial_primary_rollback(cohort,initial):
  transaction=cohort.get("cohort_transaction_id")
  if not isinstance(transaction,str) or re.fullmatch(r"[0-9a-f]{32}",transaction) is None:
   raise CoreRuntimeError("retained primary stage transaction is invalid")
- path=ADAPTER_UPDATE_BACKUPS/("initial-primary-"+transaction)/(digest+".json")
- raw=_projection_file(path,owner=ROOT_UID,group=ROOT_UID,mode=0o400,maximum=64*1024)
+ stage_directory=ADAPTER_UPDATE_BACKUPS/("initial-primary-"+transaction)
+ directory_flags=(os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0)
+                  |getattr(os,"O_CLOEXEC",0))
+ try:
+  directory_fd=os.open(stage_directory,directory_flags)
+ except OSError:
+  raise CoreRuntimeError("retained primary stage directory is unavailable") from None
+ try:
+  before=os.fstat(directory_fd)
+  named_before=os.stat(stage_directory,follow_symlinks=False)
+  directory_identity=lambda info:(info.st_dev,info.st_ino,info.st_mode,info.st_uid,
+                                  info.st_gid,info.st_nlink,info.st_mtime_ns,info.st_ctime_ns)
+  if (not stat.S_ISDIR(before.st_mode) or before.st_uid!=ROOT_UID or before.st_gid!=ROOT_UID
+      or stat.S_IMODE(before.st_mode)!=0o700 or before.st_nlink<2
+      or directory_identity(before)!=directory_identity(named_before)):
+   raise CoreRuntimeError("retained primary stage directory custody differs")
+  raw=_projection_at(directory_fd,digest+".json",owner=ROOT_UID,group=ROOT_UID,
+                     mode=0o400,maximum=64*1024)
+  after=os.fstat(directory_fd)
+  named_after=os.stat(stage_directory,follow_symlinks=False)
+  if (directory_identity(before)!=directory_identity(after)
+      or directory_identity(before)!=directory_identity(named_after)):
+   raise CoreRuntimeError("retained primary stage directory changed while reading")
+ finally:
+  os.close(directory_fd)
  if hashlib.sha256(raw).hexdigest()!=digest:
   raise CoreRuntimeError("retained primary manager stage digest changed")
  try:
