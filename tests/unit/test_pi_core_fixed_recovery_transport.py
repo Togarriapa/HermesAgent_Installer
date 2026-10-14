@@ -31,6 +31,7 @@ def test_only_exact_fixed_definitions_compile_without_module_execution():
     assert tuple(item.co_name for item in code) == tuple(
         name for name, _params in transport._FIX_FUNCTIONS)
     assert all(item.co_freevars == () for item in code)
+    assert all(item.co_filename == transport._FIX_CORE_FILENAME for item in code)
     with pytest.raises(transport.RecoveryTransportDenied):
         transport._definition_code_objects(raw, expected_sha256="0" * 64)
 

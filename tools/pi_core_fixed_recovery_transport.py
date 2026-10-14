@@ -24,6 +24,7 @@ _FAILED_CORE_SHA256 = "6992eb4eed8eb4397fc9e330a60edeec7b0025a55a6fa0b5766054973
 _FIX_COMMIT = "577333cbe30d3ce7f1dde465528560586756b7e3"
 _FIX_ARCHIVE_SHA256 = "82eee1a1dcdaeafb39ca2f783298d1fa76ebde9d2f4cb94a4ec476c316a3b0b3"
 _FIX_CORE_SHA256 = "e9e0a47911a7b9df24194d20b07cadf33e94d9b1cf5135d7e7de3dc28826eaf5"
+_FIX_CORE_FILENAME = "/opt/hermes-installer-core-577333cbe/src/hermes_installer/core_runtime.py"
 _FIX_FUNCTIONS = (
     ("_check_adapter_cohort_rollback_currentness", ("cohort", "prior", "contents")),
     ("_verify_absent_initial_primary_rollback", ("cohort", "initial")),
@@ -188,7 +189,7 @@ def _definition_code_objects(source: bytes, *, expected_sha256: str) -> tuple[ob
         ast.fix_missing_locations(isolated)
         try:
             namespace = {"__builtins__": __builtins__}
-            exec(compile(isolated, "hermes_installer/core_runtime.py", "exec"), namespace)
+            exec(compile(isolated, _FIX_CORE_FILENAME, "exec"), namespace)
             function = namespace.get(name)
             code = getattr(function, "__code__", None)
         except (SyntaxError, TypeError, ValueError, MemoryError):
@@ -196,7 +197,7 @@ def _definition_code_objects(source: bytes, *, expected_sha256: str) -> tuple[ob
         if (type(function) is not FunctionType or code is None or code.co_name != name
                 or code.co_freevars or code.co_argcount != len(parameters)
                 or code.co_kwonlyargcount != 0 or function.__defaults__ is not None
-                or code.co_filename != "hermes_installer/core_runtime.py"):
+                or code.co_filename != _FIX_CORE_FILENAME):
             raise RecoveryTransportDenied("reviewed recovery code object differs")
         code_objects.append(code)
     return tuple(code_objects)
