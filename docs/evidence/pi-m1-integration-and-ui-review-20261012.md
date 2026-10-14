@@ -1984,4 +1984,16 @@ existing12-frame report cap. Evidence: `candidate198-stage.log`,
 `candidate198-specs.json` and `candidate198-gates.log` under the same Pi evidence
 directory. These contracts do not establish native/provider completion or
 M1 acceptance. One protected startup observation was started separately;
-its outcome is pending in `candidate198-actual-adoption.log`.
+its outcome is recorded in `candidate198-actual-adoption.log`.
+
+That exact protected observation failed after144.430s with validated returncode4
+and CLI exit4; the last checkpoint was report emission at144.247s. The existing
+12-frame origin retained `_startup_refused_prompt` and
+`_startup_native_core_observation_unavailable`, identifying a native
+system-prompt validation refusal. This is a peer failure classification,
+not provider completion. Automatic recovery verified the prior Core/ingress
+cohort, and all four services were active afterward. The pinned official
+native builder deliberately excludes ephemeral identity from its cached base;
+the actual API composition appends it later. A correction must preserve that
+native composition and exact middleware instructions check. No second apply
+is authorized by this failed result alone, and M1 acceptance remains open.
