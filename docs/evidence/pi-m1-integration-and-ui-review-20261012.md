@@ -2155,3 +2155,24 @@ remaining of91 tasks. Evidence: `candidate205-stage.log`,
 `candidate205-apply.json`. Source implementation, Sol review and focused Pi
 contracts remain required before one exact protected observation. Actual
 provider/native/Root and M1 acceptance remain open.
+
+### Candidate 206 native omitted-tools compatibility
+
+Implementation candidate `f1d4ee17841a5e3fa6dff4d022bf74383d23a945`, archive
+SHA-256 `e96fe4686f8287afd358cabb1670cb6901cd768a13f913531bef19c5273e7f48`,
+contains the Sol-reviewed startup-only absent-tools predicate correction and
+focused contracts, with a separate observer-only Inspector pin. The ordinary
+tool inventory helper and producer/client/Core/manual/native installer sources
+remain unchanged. The native omitted-key and explicit-empty request forms
+complete the controlled registered callback/producer/receipt path; explicit
+null, dict, string, malformed and nonempty inventories deny before attempts or
+provider dispatch. Original typed-message, prompt/instructions, downstream
+no-tools, completion, privacy and cleanup gates remain.
+
+Identified Pi staging and strict specification/plan checks passed (exit0 each).
+205 focused lifecycle/client/qualification-origin tests passed in1.57s without
+skips, contracts exit0. Evidence: `candidate206-stage.log`,
+`candidate206-specs.json`, `candidate206-gates.log`. One separately qualified
+protected observation was started in `candidate206-actual-adoption.log`.
+Controlled contracts and canonical compatibility do not alone establish actual
+provider/native/Root completion or M1 acceptance.
