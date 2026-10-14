@@ -1607,3 +1607,17 @@ Automatic recovery verified prior Core and ingress; all four services were
 active. The log is `p/candidate177-actual-adoption.log`. No M1 acceptance is
 claimed. Sol was auditing the source/readback path before any fix or deadline
 change.
+
+### Candidate 177 read-only artifact trace probe
+
+A read-only probe script (`native-artifact-trace-probe-177.py`, SHA-256
+`56504a6fc528fc9c44fd45d6f537c9b4f72228e85ab47be6d84274965f7dd420`) ran each
+case with fresh `/usr/bin/python3 -I -B` and a 120s timeout. The untraced case
+took 9918ms; traced took 28606ms. Both exited 0 and processed the same
+6,900,775-byte archive, SHA-256
+`850b70f2e9e4e4d5a2d61f7eda41de18ab144aa408722cc6f2956428efdcca74`. Log:
+`p/candidate177-artifact-trace-probe.log`. This shows global-call diagnostic
+tracing increased this build's measured cost by about 2.88x; it does not prove
+that tracing alone caused the full adopter timeout. Sol was refining local,
+low-overhead exception monitoring. Core gates and the 300s bound remain
+unchanged; no retry or acceptance is recorded.
