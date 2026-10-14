@@ -2887,3 +2887,16 @@ The installer SHALL bind startup to the independently protected configured Codex
 - **THEN** startup refuses and uses existing protected recovery; unknown hint or authentication alone supplies no authority. No owner configuration, credential location, source history, provider route or execution budget is rewritten.
 
 This bounded startup correction preserves R0055/R0201, RT-T266.3/VD-T266.5 (#35),219/62/18/eight OPEN groups. Actual provider completion and live acceptance remain open until the exact candidate proves them.
+
+### Requirement: Startup refusal evidence is bounded and supplies no authority
+The installer SHALL classify only a matched fixed startup RPC failure using closed native stage/type metadata or a fixed missing-method code, preserving failure and every existing acceptance gate.
+
+#### Scenario: The native startup handler refuses or raises
+- **WHEN** an existing startup operation raises Exception
+- **THEN** failure-only data identifies its fixed attempted stage and allowlisted exception class with canonical schema1 metadata≤512 bytes; original cleanup remains and no exception text/private value or new action is exposed.
+
+#### Scenario: Error metadata is malformed, foreign or unavailable
+- **WHEN** code, request identity, fixed message, canonical data schema/keys/types/bounds or closed stage/type vocabulary cannot be verified
+- **THEN** the client retains unclassified refusal, without copying arbitrary error message/data or interpreting a failure as success. Other RPC callers retain generic denial; recognized startup helpers may identify only public source origin metadata.
+
+This diagnostic leaf preserves R0055/R0201, RT-T266.3/VD-T266.5 (#35),219/62/18/eight OPEN groups and300s/110s. Actual native/provider startup proof remains open.
