@@ -1905,7 +1905,7 @@ acceptance.
 
 ### Candidates 192–197 current Pi evidence
 
-These records continue OpenSpec #35 R0201/BD-T266.5 on the identified Pi.
+These records continue OpenSpec #35 R0201/VD-T266.5 on the identified Pi.
 They preserve each failed protected apply and automatic restoration; none is
 M1 or full-release acceptance. Logs and status artifacts are under
 `/var/tmp/hermes-jarvis-core-checks-20261011/` on that Pi.
@@ -1919,15 +1919,15 @@ exact 6,936,970-byte output matched SHA-256
 `76d01dd6547025945e04f9b3fdd521e3419bc1ba523def4a9304335099a09741`, with
 context cleared. The protected adoption then failed after 140.282s at the
 provider-hint precondition; four prior units were automatically recovered.
-Evidence: `192-system-cache.log`, `192-actual-adoption.log`.
+Evidence: `candidate192-system-cache.log`, `candidate192-actual-adoption.log`.
 
 Candidate 193 (`6a74f9f42130f106ccb4aa4009fa693bfa700e17`), archive SHA-256
-`9867ab88c5f87744daf4bf0addc051b3c339c4d4`, was planning-only and closed the
+`dcf46c768c0c0fc9de6fed08e6664b40f09249ce4cbbc4362b514a65b7d49315`, was a planning-only refinement of the
 protected selected-Codex-startup requirement. Strict validation reported
-0/0 errors; four artifacts complete, one ready, 76 remaining. It did not
+0/0 errors; four artifacts complete, apply ready, one task complete and 76 remaining. It did not
 provide runtime acceptance.
 
-Candidate 194 (`27f0c39106c02be4a546b2623aa1894305b4b3dec`) implemented
+Candidate 194 (`9867ab88c5f87744daf4bf0addc051b3c339c4d3`) implemented
 protected selection collection. Its
 lifecycle subset passed 8 checks in 0.71s. Selection collection did not
 qualify: the test errored because its two argument names did not match the
@@ -1939,10 +1939,10 @@ that test only; strict validation passed 0/0 and selection checks passed
 10/10 in 1.10s. The protected apply failed after 141.551s when native observer
 startup from starting custody reached `select.poll` with `select` unimported.
 All four prior units were automatically restored. Evidence:
-`195-actual-adoption.log`.
+`candidate195-actual-adoption.log`.
 
 Candidate 196 (`408254dea31f3b8611e4843f5ca96d1f8ee8603d`), archive SHA-256
-`8d75accc6cb2fe0d6b9cd78e4b96820a86536b867c86b58e97f88de8e9d9e4c`, added
+`8d75accc6cb2fe0d6b9cd78e4b96820a86536b867c86b58e97f88de8e9d9e4c4`, added
 only the missing `select` import. Its live Linux PIDFD contract subset passed
 9 checks in 0.89s; strict validation passed 0/0. Protected apply failed after
 143.405s (`validated_failure`, return code 4, CLI exit 4) during report
@@ -1950,19 +1950,19 @@ emission: `core_client._receive` matched a generic RPC rejection. A bounded
 17-record journal scan found no known closed refusal category; the private
 error path omitted the cause, so the cause remains unknown. Startup enrollment
 had passed, and all four prior units were automatically recovered. Evidence:
-`196-actual-adoption.log`.
+`candidate196-actual-adoption.log`.
 
 Candidate 197 (`b73d34aa609e5effaaa2c480bb945d0fecf7cd87`), archive SHA-256
 `714da02517e6246714a3e707957ad994809f5df651b0cbb29117414551679253`, was a
-planning-only closure of the startup-refusal diagnostic. An initial staging
+planning-only refinement of the startup-refusal diagnostic. An initial staging
 attempt hit a transient stager URL error and invalid-CD gates; those did not
 qualify the candidate. Separate Pi staging and gates retries passed strict
-validation with 0/0 errors; four artifacts complete, one ready, 78 remaining
-of 79. Evidence: `197-stage-retry.log`, `197-gates-retry.log`,
-`197-status-retry.json`, `197-apply-retry.json`. No runtime adoption or
+validation with 0/0 errors; four artifacts complete, apply ready, one task complete and 78 remaining
+of 79. Evidence: `candidate197-stage-retry.log`, `candidate197-gates-retry.log`,
+`candidate197-status-retry.json`, `candidate197-apply-retry.json`. No runtime adoption or
 acceptance follows from those planning and staging checks.
 
-The prior production source `0cbf9b819a6be41b3ff34d623374355cb64c3834` was
+The prior production source `0cbf9b819a6be41b3ff34d623374335cb64c3834` was
 restored after each failed protected apply; the four owned services were
 confirmed active after recovery. Native/provider, Resources and primary
 functionality remain pending. No M1 or full-release acceptance is established.
