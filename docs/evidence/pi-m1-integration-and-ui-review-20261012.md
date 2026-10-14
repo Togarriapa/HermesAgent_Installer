@@ -1744,3 +1744,22 @@ The protected candidate-181 apply with union stdin had just launched at
 `p/candidate181-actual-adoption.log`; result was pending. Core `6992` remained
 unchanged, the original 300s deadline was unchanged, and no M1 acceptance is
 claimed pending actual readback.
+
+### Candidate 181 apply outcome and recovery state
+
+Candidate 181 (`c91b4f4ba1a7f2652cf21fb598f3ad2338849a18`), archive SHA-256
+`e855f96f349527e97993d5d303ede313ff72e932298b02333358190e723bdc42`, used
+Core `6992`. Its 158 contracts (3 native-target skips) and strict spec/plan
+checks passed. Actual apply timed out at 300000ms. The last-phase record was
+`adapter_update` (1245ms, sequence 4, count 4, rejected 0); the 250005ms sample
+identified `updater` at Core line 6780, schema 2, with 22 frames examined, 21
+unmatched and `unknown=False`.
+
+Automatic recovery did not restore service; all four units were inactive at
+observation. Explicit exact candidate-181 rollback exited 4. Read-only ingress
+preflight passed. The existing Core restore API's safe origin at 5445 rejected
+missing primary. Bounded Pi cohort facts showed rolling-back/initial-rolling-
+back, primary-absent true, prior SOUL hash and restored signature matching,
+desired false; retained stage and backup digests were present. Recovery work
+was ongoing. No private errors or credential data are included. No full M1
+acceptance is claimed; service availability remains the immediate status.
