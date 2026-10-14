@@ -1362,3 +1362,18 @@ Listener tests passed 2 in 0.63s (log SHA-256
 were under `/var/tmp/hermes-native-guard-163-84932d522-20261014T001655Z-3228048/`.
 Update and restart groups were still running; no actual candidate-163 adoption
 had occurred. Live source remained `0cb` with four active services.
+
+### Candidate 163 update-group result
+
+The update-positive group failed on its first test after 308.23s. At
+`test_core_runtime` line 2600, expected generated unit bytes omitted the new
+`credential_projection=True` flag: actual byte `4`, expected `0` at offset
+11603. Log SHA-256 was
+`0eb214226b07193b6101c86eb0d16ebe1c9fc037532eec33f13c6d79704f9027` in
+`/var/tmp/hermes-native-guard-163-84932d522-20261014T001655Z-3228048/update-positive-both.log`.
+The driver stopped at this first failure; the `True` variant and restart group
+did not run. This is a test-fixture alignment failure, not evidence of a
+production failure or candidate-163 adoption. Candidate 163/Core `6992` and
+archive `99c9…` remain as recorded; readiness, spec/plan, import, fast and
+listener checks above remain passing. Runtime remained on old source `0cb` and
+stable. Native/Sol test-only fixture alignment was in progress.
