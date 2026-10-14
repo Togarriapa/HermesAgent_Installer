@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import builtins
 import asyncio
+import contextlib
 import fcntl
 import hashlib
 import io
@@ -27,6 +28,7 @@ qualification = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(qualification)
 
 from hermes_installer.remote.core_client import CoreRpcClient
+import hermes_installer.core_runtime as core_runtime
 
 
 class _FakeMonitoring:
@@ -102,7 +104,7 @@ _LAST_MONITORING = None
 _NO_MONITORING_OVERRIDE = object()
 
 
-def _run_cli(root_setup, monitoring=_NO_MONITORING_OVERRIDE):
+def _run_cli(root_setup, monitoring=_NO_MONITORING_OVERRIDE, *, candidate_src=None):
     global _LAST_MONITORING
     previous = getattr(qualification.sys, "monitoring", _NO_MONITORING_OVERRIDE)
     if monitoring is _NO_MONITORING_OVERRIDE:
@@ -114,7 +116,8 @@ def _run_cli(root_setup, monitoring=_NO_MONITORING_OVERRIDE):
     _LAST_MONITORING = monitoring
     try:
         result = qualification._run_fixed_root_adapter_update(
-            root_setup, Path(__file__).resolve().parent, "a" * 40, "b" * 64)
+            root_setup, (candidate_src or Path(__file__).resolve().parent),
+            "a" * 40, "b" * 64)
         return result
     finally:
         if previous is _NO_MONITORING_OVERRIDE:
@@ -729,34 +732,94 @@ def test_exception_origin_caps_aggregated_traceback_frames():
     assert "PRIVATE_DEEP_TRACEBACK_TEXT" not in repr(origin)
 
 
-def test_startup_denial_stage_and_type_fit_existing_origin_report():
+def test_startup_denial_stage_and_type_fit_existing_origin_report(monkeypatch):
     class Socket:
+        async def send_json(self, request):
+            self.request_id = request["id"]
+
         async def receive(self):
             return SimpleNamespace(type=1, data=json.dumps({
-                "jsonrpc": "2.0", "id": "request-1", "error": {
+                "jsonrpc": "2.0", "id": self.request_id, "error": {
                     "code": -32000, "message": "lifecycle startup probe refused",
                     "data": '{"exception_type":"RuntimeError","schema":1,"stage":"route"}',
                 },
             }))
 
-    client = CoreRpcClient(token_file=Path("/private/fake/token"))
-    ws_types = SimpleNamespace(TEXT=1, CLOSED=2, CLOSE=3, ERROR=4)
-    try:
-        asyncio.run(client._receive(Socket(), ws_types, expected_id="request-1",
-                                    startup_response=True))
-    except Exception as exc:
-        origin = qualification._root_setup_exception_origin(
-            exc, Path(__file__).resolve().parents[2] / "src")
-    else:
-        pytest.fail("matched native startup refusal unexpectedly succeeded")
+        async def close(self):
+            pass
 
+    class Session:
+        async def close(self):
+            pass
+
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    ws = Socket()
+    ws_types = SimpleNamespace(TEXT=1, CLOSED=2, CLOSE=3, ERROR=4)
+
+    async def connect(*, total_timeout=None):
+        assert total_timeout == 120.0
+        return Session(), ws, ws_types
+
+    client._connect = connect
+    handle = "P" * 43
+    cohort = SimpleNamespace(phase="source-starting")
+    pidfd, pidfd_writer = os.pipe()
+    root_context = {"cohort": {"phase": "source-starting"}, "pid": 42,
+                    "pidfd": pidfd, "new_read": object(), "identity": "identity",
+                    "adapter": "a" * 64, "core": "b" * 64}
+    context_token = core_runtime._ADAPTER_STARTUP_COHORT_CONTEXT.set(root_context)
+    lock_token = core_runtime._ADAPTER_UPDATE_LOCK_HELD.set(True)
+    monkeypatch.setattr(core_runtime.os, "geteuid", lambda: core_runtime.ROOT_UID)
+    monkeypatch.setattr(core_runtime, "_validate_guarded_new_read", lambda _value: True)
+    monkeypatch.setattr(core_runtime, "_adapter_process_identity",
+                        lambda *_args: (42, "identity"))
+    monkeypatch.setattr(core_runtime, "verify_starting_lifecycle_observer_custody",
+                        lambda _custody: True)
+    registry = SimpleNamespace(enroll_lifecycle_startup_probe=lambda **_kwargs: handle)
+    observer_session = SimpleNamespace(
+        custody=SimpleNamespace(cohort=cohort), registry=registry, rpc=client)
+    monkeypatch.setattr(core_runtime, "_starting_lifecycle_observer",
+                        lambda: contextlib.nullcontext(observer_session))
+
+    # These ordinary fixture callers represent the update plus two nested
+    # lock scopes. Their real test-module filenames stay inside the repo-root
+    # projection so the existing 12-frame report cap must retain the startup
+    # stage while traversing a deliberately conservative caller depth.
+    def fixture_nested_lock():
+        return core_runtime._prove_new_cohort_startup_chat()
+
+    def fixture_lock():
+        return fixture_nested_lock()
+
+    def fixture_update():
+        return fixture_lock()
+
+    class RootSetup:
+        @staticmethod
+        def main(_argv):
+            fixture_update()
+
+    try:
+        cli_exit, origin = _run_cli(
+            RootSetup, candidate_src=Path(__file__).resolve().parents[2])
+    finally:
+        core_runtime._ADAPTER_STARTUP_COHORT_CONTEXT.reset(context_token)
+        core_runtime._ADAPTER_UPDATE_LOCK_HELD.reset(lock_token)
+        os.close(pidfd)
+        os.close(pidfd_writer)
+
+    assert cli_exit == 1
     assert origin is not None
     assert set(origin) == {"exception_type", "frames"}
     assert origin["exception_type"] == "_StartupNativeRuntimeErrorDenied"
     assert len(origin["frames"]) <= 12
     functions = {row["function"] for row in origin["frames"]}
+    assert {"fixture_update", "fixture_lock", "fixture_nested_lock"} <= functions
+    assert "_prove_new_cohort_startup_chat" in functions
+    assert "_run_root_coro" in functions
+    assert "lifecycle_startup_probe" in functions
+    assert "_receive" in functions
     assert "_startup_refused_route" in functions
-    assert "_startup_native_runtime_error" in functions
     assert "private" not in repr(origin)
 
 

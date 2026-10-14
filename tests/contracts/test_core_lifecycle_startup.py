@@ -254,7 +254,11 @@ def test_startup_diagnostic_exception_vocabulary_uses_exact_type_identity():
         == "CoreNativeObservationUnavailable")
 
 
-def test_real_conversation_refusal_keeps_phase_and_closes_agent(monkeypatch, tmp_path):
+@pytest.mark.parametrize("failure_stage", [
+    "root_claim", "route", "agent_setup", "conversation", "terminal", "success", "close",
+])
+def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
+        monkeypatch, tmp_path, failure_stage):
     cohort = _cohort()
     home = tmp_path / "hermes-home"
     home.mkdir()
@@ -277,7 +281,11 @@ def test_real_conversation_refusal_keeps_phase_and_closes_agent(monkeypatch, tmp
         _seal=observer._LIFECYCLE_STARTUP_CONTEXT_SEAL,
     )
     client = observer.CoreNativeObservationClient(socket_path=tmp_path / "unused.sock")
-    client.claim_lifecycle_startup_probe = lambda _handle: context
+    def claim(_handle):
+        if failure_stage == "root_claim":
+            raise observer.CoreNativeObservationUnavailable("PRIVATE_ROOT_CLAIM")
+        return context
+    client.claim_lifecycle_startup_probe = claim
     monkeypatch.setattr(lifecycle_startup.os, "geteuid", lambda: 1000)
     monkeypatch.setattr(observer, "_codex_account_fingerprint",
                         lambda _resolver: cohort.account_fingerprint)
@@ -295,10 +303,12 @@ def test_real_conversation_refusal_keeps_phase_and_closes_agent(monkeypatch, tmp
     hermes_cli = ModuleType("hermes_cli")
     hermes_cli.__path__ = []
     runtime_provider = ModuleType("hermes_cli.runtime_provider")
-    runtime_provider.resolve_runtime_provider = lambda *, requested, target_model: {
-        "provider": requested, "api_mode": context.api_mode,
-        "base_url": context.base_url, "api_key": "private-runtime-credential",
-    }
+    def resolve_runtime(*, requested, target_model):
+        if failure_stage == "route":
+            raise RuntimeError("PRIVATE_ROUTE_FAILURE")
+        return {"provider": requested, "api_mode": context.api_mode,
+                "base_url": context.base_url, "api_key": "private-runtime-credential"}
+    runtime_provider.resolve_runtime_provider = resolve_runtime
     auth_codex = ModuleType("hermes_cli.auth_codex")
     auth_codex.resolve_codex_runtime_credentials = lambda *, read_only: object()
     run_agent = ModuleType("run_agent")
@@ -307,6 +317,9 @@ def test_real_conversation_refusal_keeps_phase_and_closes_agent(monkeypatch, tmp
     class FakeAgent:
         def __init__(self, **kwargs):
             agents.append(self)
+            self.closed = False
+            if failure_stage == "agent_setup":
+                raise ValueError("PRIVATE_AGENT_SETUP")
             self.provider = kwargs["provider"]
             self.model = kwargs["model"]
             self.api_mode = kwargs["api_mode"]
@@ -321,16 +334,22 @@ def test_real_conversation_refusal_keeps_phase_and_closes_agent(monkeypatch, tmp
             self._session_db = None
             self._checkpoint_mgr = SimpleNamespace(enabled=False)
             self.prefill_messages = []
-            self.closed = False
 
         def _build_system_prompt(self):
             return identity
 
         def run_conversation(self, **_kwargs):
-            raise RuntimeError("private provider failure sentinel")
+            if failure_stage == "conversation":
+                raise RuntimeError("PRIVATE_CONVERSATION_FAILURE")
+            if failure_stage == "terminal":
+                return {"completed": False}
+            return {"completed": True, "final_response":
+                    lifecycle_startup._PROMPT_PREFIX + context.nonce}
 
         def close(self):
             self.closed = True
+            if failure_stage == "close":
+                raise OSError("PRIVATE_CLOSE_FAILURE")
 
     run_agent.AIAgent = FakeAgent
     for name, module in (
@@ -356,14 +375,43 @@ def test_real_conversation_refusal_keeps_phase_and_closes_agent(monkeypatch, tmp
 
     server = Server()
     register_lifecycle_startup_probe(server, client=client)
+    if failure_stage in {"success", "close"}:
+        final_response = lifecycle_startup._PROMPT_PREFIX + context.nonce
+        monkeypatch.setattr(lifecycle_startup, "take_lifecycle_startup_terminal",
+                            lambda _context: {
+                                "completion_handle": "Q" * 43,
+                                "response_text_sha256": hashlib.sha256(
+                                    final_response.encode("utf-8")).hexdigest(),
+                            })
     response = server.handler("request-3", {"probe_handle": "P" * 43})
-    assert response["error"] == {
-        "code": -32000, "message": "lifecycle startup probe refused",
-        "data": '{"exception_type":"RuntimeError","schema":1,"stage":"conversation"}',
+    expected = {
+        "root_claim": ("root_claim", "CoreNativeObservationUnavailable"),
+        "route": ("route", "RuntimeError"),
+        "agent_setup": ("agent_setup", "ValueError"),
+        "conversation": ("conversation", "RuntimeError"),
+        "terminal": ("terminal", "CoreNativeObservationUnavailable"),
+        "close": ("response", "OSError"),
     }
-    assert len(agents) == 1 and agents[0].closed is True
-    assert "private provider failure sentinel" not in repr(response)
-    assert "private runtime credential" not in repr(response)
+    if failure_stage == "success":
+        assert response == {"jsonrpc": "2.0", "id": "request-3", "result": {
+            "schema": 1, "probe_handle": "P" * 43, "completion_handle": "Q" * 43,
+            "status": "completed", "response_sha256": hashlib.sha256(
+                (lifecycle_startup._PROMPT_PREFIX + context.nonce).encode("utf-8")).hexdigest(),
+        }}
+    else:
+        stage, exception_type = expected[failure_stage]
+        assert response["error"] == {
+            "code": -32000, "message": "lifecycle startup probe refused",
+            "data": lifecycle_startup._startup_refusal_data(stage, exception_type),
+        }
+    if failure_stage in {"conversation", "terminal", "success", "close"}:
+        assert len(agents) == 1 and agents[0].closed is True
+    elif failure_stage == "agent_setup":
+        assert len(agents) == 1 and agents[0].closed is False
+    else:
+        assert agents == []
+    assert "PRIVATE_" not in repr(response)
+    assert "private-runtime-credential" not in repr(response)
 
 
 def test_root_probe_claim_is_current_peer_only_and_single_use(monkeypatch):
