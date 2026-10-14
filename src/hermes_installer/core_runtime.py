@@ -2875,13 +2875,13 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
     "backup=d.get('adapter_update_backup'); backup_members="+repr(backup_members)+"; "
     "backup_generation="+repr(backup_generation)+"; "
     "backup_manifest_name='adapter-backup-manifest'; "
-    projection_code+
+    +projection_code+
     projection_bindings+
     manifest_read+
     "backup_files=(backup.get('files') if isinstance(backup,dict) else None); "
     "backup_ok="+backup_shape+"; "
     "optional_empty_backup_members="+repr(_ADAPTER_UPDATE_OPTIONAL_EMPTY_BACKUP_MEMBERS)+"; "
-    backup_validation+
+    +backup_validation+
     "backup_ok=backup_ok and all(backup_valid(name,backup_files.get(name)) for name in backup_members) and hashlib.sha256(backup_raw).hexdigest()==hashlib.sha256(canonical(backup_files)).hexdigest(); "
     "initial=c.get('initial_primary_transition'); initial_ok=(initial is None or (isinstance(initial,dict) and initial.get('purpose')=='initial-primary-adoption' and initial.get('prior_record_state')=='absent' and initial.get('state') in ('pending','adopted') and ((initial.get('state')=='pending' and c.get('primary_record_sha256')=='absent' and initial.get('owner_backup_sha256') is None) or (initial.get('state')=='adopted' and initial.get('adopted_record_sha256')==c.get('primary_record_sha256') and initial.get('after_resources_record_sha256')==c.get('starting_resources_record_sha256'))))); "
     "keys_ok=(set(c)==keys or (set(c)==legacy_keys and c.get('native_plugin_transition') is None)); "
