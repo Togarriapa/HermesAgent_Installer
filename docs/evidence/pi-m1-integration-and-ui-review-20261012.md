@@ -1589,3 +1589,21 @@ focused suite passed 137 tests in 0.75s; log:
 `p/candidate177-spec-contracts.log`. Protected apply with union stdin had just
 launched at `p/candidate177-actual-adoption.log`; call-site evidence and outcome
 were pending. No M1 acceptance or Core/peripheral change is claimed.
+
+### Candidate 177 apply outcome
+
+The protected candidate-177 adopter exited 4 with a capped 300000ms timeout,
+null return code/stdout and 1511 stderr bytes. Exact source/archive:
+`14fde987b2c2975a959022c914a24b50f504a3a8` /
+`f5499b4cae11bba55097cf349bd8ba8f37b4da44db837cf260faa939e158e5c3`. Its last
+phase was `adapter_update` (1218ms, sequence 4, count 4, rejected 0). V2 stack
+observation reported 250005ms, 10 frames examined, 9 unmatched, labels
+`updater` and `rowfunction_update_owned_core_adapter_locked`, public Core line
+6694, `unknown=False`, `truncated=False`. Line 6694 calls
+`new-source guarded read_current_resources_discovery` after starting the new
+Core and listener and capturing state; the nested cause remains unknown.
+
+Automatic recovery verified prior Core and ingress; all four services were
+active. The log is `p/candidate177-actual-adoption.log`. No M1 acceptance is
+claimed. Sol was auditing the source/readback path before any fix or deadline
+change.
