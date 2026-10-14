@@ -2696,6 +2696,8 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
     launcher = core.LAUNCHER.read_bytes()
     unit = core.UNIT.read_bytes()
     token = core.TOKEN.read_bytes()
+    from hermes_installer import primary_prompt_manager as primary_manager
+    original_soul, _original_soul_signature = primary_manager._read_soul(core)
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
     def current_journal_listener(*, adapter_source=core.ADAPTER_SOURCE, legacy_launcher=False):
         if not enabled["value"]:
@@ -2721,9 +2723,93 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
     monkeypatch.setattr(core, "_wait_for_listener", fail_first_restart)
     update_call_start = len(_calls)
 
-    with _bounded_owner_generation_restore_failure():
-        with pytest.raises(core.CoreRuntimeError, match="injected adapter update restart failure"):
+    interrupted_restore = {"done": False, "cohort": None, "stage": None}
+    restore_owner_generation = core._restore_adapter_update_owner_generation
+    if registered_obsidian:
+        def interrupt_after_primary_unlink(cohort):
+            if not interrupted_restore["done"]:
+                parsed, _raw = core._read_adapter_update_cohort()
+                transition = parsed["initial_primary_transition"]
+                assert parsed["phase"] == transition["state"] == "rolling-back"
+                assert transition["prior_record_state"] == "absent"
+                assert not core.PRIMARY_PROMPT_JOURNAL.exists()
+                current_soul, signature = primary_manager._read_soul(core)
+                assert hashlib.sha256(current_soul).hexdigest() == transition[
+                    "prior_soul_sha256"]
+                assert core._restored_soul_signature_matches(
+                    signature, transition["prior_soul_signature"])
+                selected_digest = next(transition[key] for key in (
+                    "adopted_record_sha256", "writing_record_sha256",
+                    "preparing_record_sha256") if transition[key] is not None)
+                stage = (core.ADAPTER_UPDATE_BACKUPS /
+                         ("initial-primary-" + parsed["cohort_transaction_id"]) /
+                         (selected_digest + ".json"))
+                interrupted_restore.update({"done": True, "cohort": parsed,
+                                            "stage": stage})
+                raise KeyboardInterrupt("injected after offline primary rollback")
+            return restore_owner_generation(cohort)
+
+        monkeypatch.setattr(core, "_restore_adapter_update_owner_generation",
+                            interrupt_after_primary_unlink)
+        with pytest.raises(KeyboardInterrupt, match="injected after offline primary rollback"):
             core.update_owned_core_adapter()
+        assert interrupted_restore["done"]
+        interrupted_cohort = interrupted_restore["cohort"]
+        interrupted_transition = interrupted_cohort["initial_primary_transition"]
+        assert core.PRIMARY_PROMPT_JOURNAL.exists() is False
+        assert primary_manager._read_soul(core)[0] == original_soul
+        assert interrupted_restore["stage"].is_file()
+        reference = core._adapter_update_backup_reference(interrupted_cohort)
+        _prior_snapshot, backup_contents = core._read_adapter_update_backup(reference)
+        assert hashlib.sha256(backup_contents["primary-record.json"]).hexdigest() == core._ABSENT_DIGEST
+
+        def recovery_snapshot():
+            return (core.JOURNAL.read_bytes(), core.RESOURCES_RECORD.read_bytes(),
+                    core.UNIT.read_bytes(), core.LAUNCHER.read_bytes(),
+                    core.ADAPTER_UPDATE_COHORT.read_bytes(),
+                    core.TOKEN.read_bytes())
+        protected_before_refusals = recovery_snapshot()
+
+        # Currentness failures happen before stop/restore effects. Exercise
+        # owner-byte, retained-stage, and immutable-backup drift independently.
+        calls_before_refusals = list(_calls)
+        soul_path = core.HERMES_HOME / "SOUL.md"
+        changed_soul = bytes([original_soul[0] ^ 1]) + original_soul[1:]
+        soul_path.write_bytes(changed_soul)
+        with pytest.raises(core.CoreRuntimeError):
+            core._recover_interrupted_adapter_update()
+        soul_path.write_bytes(original_soul)
+        assert _calls == calls_before_refusals
+
+        stage_path = interrupted_restore["stage"]
+        stage_raw = stage_path.read_bytes()
+        stage_path.write_bytes(b"{}\n")
+        stage_path.chmod(0o400)
+        with pytest.raises(core.CoreRuntimeError):
+            core._recover_interrupted_adapter_update()
+        stage_path.write_bytes(stage_raw)
+        stage_path.chmod(0o400)
+        assert _calls == calls_before_refusals
+
+        backup_path = core.PRIMARY_PROMPT_BACKUPS / (
+            interrupted_transition["owner_backup_sha256"] + ".bin")
+        backup_raw = backup_path.read_bytes()
+        backup_path.write_bytes(bytes([backup_raw[0] ^ 1]) + backup_raw[1:])
+        with pytest.raises(core.CoreRuntimeError):
+            core._recover_interrupted_adapter_update()
+        backup_path.write_bytes(backup_raw)
+        assert _calls == calls_before_refusals
+        assert core.PRIMARY_PROMPT_JOURNAL.exists() is False
+        assert primary_manager._read_soul(core)[0] == original_soul
+        assert recovery_snapshot() == protected_before_refusals
+
+        monkeypatch.setattr(core, "_restore_adapter_update_owner_generation",
+                            restore_owner_generation)
+        core._recover_interrupted_adapter_update()
+    else:
+        with _bounded_owner_generation_restore_failure():
+            with pytest.raises(core.CoreRuntimeError, match="injected adapter update restart failure"):
+                core.update_owned_core_adapter()
 
     assert listener_sources == [core.ADAPTER_SOURCE, old_source]
 

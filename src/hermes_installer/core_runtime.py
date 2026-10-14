@@ -5336,6 +5336,98 @@ def _restore_adapter_update_owner_generation(cohort):
 def _same_materialization_digests(native,manifest,files):
  return native._same_materialization_digests(manifest,files)
 
+def _verify_absent_initial_primary_rollback(cohort,initial):
+ """Prove the highest immutable manager stage for an interrupted exact rollback."""
+ if (type(cohort) is not dict or cohort.get("phase")!="rolling-back"
+     or type(initial) is not dict or initial.get("state")!="rolling-back"
+     or initial.get("prior_record_state")!="absent"
+     or initial.get("owner_backup_sha256")!=initial.get("prior_soul_sha256")):
+  raise CoreRuntimeError("absent primary rollback is outside its exact retained cohort")
+ stage_fields=(("adopted_record_sha256","adopted"),
+               ("writing_record_sha256","writing"),
+               ("preparing_record_sha256","preparing"))
+ selected=next(((key,initial.get(key),state) for key,state in stage_fields
+                if initial.get(key) is not None),None)
+ if selected is None:
+  raise CoreRuntimeError("written primary rollback has no retained manager stage")
+ _key,digest,state=selected
+ if (not isinstance(digest,str) or re.fullmatch(r"[0-9a-f]{64}",digest) is None
+     or cohort.get("primary_record_sha256")!=digest):
+  raise CoreRuntimeError("retained primary stage digest differs from its cohort")
+ transaction=cohort.get("cohort_transaction_id")
+ if not isinstance(transaction,str) or re.fullmatch(r"[0-9a-f]{32}",transaction) is None:
+  raise CoreRuntimeError("retained primary stage transaction is invalid")
+ path=ADAPTER_UPDATE_BACKUPS/("initial-primary-"+transaction)/(digest+".json")
+ raw=_projection_file(path,owner=ROOT_UID,group=ROOT_UID,mode=0o400,maximum=64*1024)
+ if hashlib.sha256(raw).hexdigest()!=digest:
+  raise CoreRuntimeError("retained primary manager stage digest changed")
+ try:
+  def unique(pairs):
+   row={}
+   for name,value in pairs:
+    if name in row: raise ValueError
+    row[name]=value
+   return row
+  record=json.loads(raw,object_pairs_hook=unique)
+ except (ValueError,TypeError,UnicodeError):
+  raise CoreRuntimeError("retained primary manager stage is malformed") from None
+ from . import primary_prompt_manager as primary
+ prior_signature=initial.get("prior_soul_signature")
+ if (type(record) is not dict or set(record)!=primary._RECORD_FIELDS
+     or type(record.get("schema")) is not int or record.get("schema")!=primary.SCHEMA
+     or record.get("state")!=state
+     or _canonical_json(record)!=raw
+     or not isinstance(record.get("resources_revision"),str)
+     or not record.get("resources_revision")
+     or not isinstance(record.get("resources_tree"),str)
+     or not record.get("resources_tree")
+     or any(not primary._safe_hash(record.get(name)) for name in (
+      "core_source_generation","artifact_sha256","source_prompt_sha256",
+      "managed_block_sha256","owner_backup_name","owner_prefix_sha256","prior_soul_sha256"))
+     or not primary._valid_file_signature(prior_signature)
+     or tuple(record.get("prior_soul_signature",()))!=tuple(prior_signature)
+     or record.get("core_source_generation")!=cohort.get("new_core_source_generation")
+     or record.get("artifact_sha256")!=cohort.get("new_artifact_sha256")
+     or record.get("source_prompt_sha256")!=initial.get("source_prompt_sha256")
+     or record.get("managed_block_sha256")!=initial.get("managed_block_sha256")
+     or record.get("result_soul_sha256")!=initial.get("desired_soul_sha256")
+     or record.get("owner_separator_hex")!=initial.get("owner_separator_hex")
+     or record.get("prior_soul_sha256")!=initial.get("prior_soul_sha256")
+     or record.get("owner_backup_name")!=initial.get("owner_backup_sha256")
+     or record.get("owner_prefix_sha256")!=initial.get("prior_soul_sha256")
+     or type(record.get("owner_prefix_length")) is not int
+     or record.get("owner_prefix_length")!=prior_signature[6]
+     or record.get("owner_separator_hex") not in {"","0a","0a0a"}
+     or not re.fullmatch(r"\.SOUL\.md\.jarvis-[0-9a-f]{24}\.stage",
+                         str(record.get("stage_name","")))
+     or record.get("owner_backup_name")!=record.get("prior_soul_sha256")):
+  raise CoreRuntimeError("retained primary manager stage does not match its exact cohort")
+ if (record.get("error_code") is not None
+     or (state in {"preparing","writing"}
+         and (record.get("native_effective_prompt_sha256") is not None
+              or record.get("native_effective_prompt_chars") is not None))
+     or (state=="adopted"
+         and (not primary._safe_hash(record.get("native_effective_prompt_sha256"))
+              or type(record.get("native_effective_prompt_chars")) is not int
+              or record.get("native_effective_prompt_chars")<0))):
+  raise CoreRuntimeError("retained primary stage readback fields differ from its state")
+ if (state in {"preparing","writing"}
+     and (record.get("owner_prefix_sha256")!=record.get("prior_soul_sha256")
+          or record.get("result_soul_signature") not in ([],prior_signature))):
+  raise CoreRuntimeError("retained primary preparing stage fields differ")
+ if state=="adopted" and (not primary._valid_file_signature(record.get("result_soul_signature"))
+                           or record.get("result_soul_sha256")!=initial.get("desired_soul_sha256")):
+  raise CoreRuntimeError("retained adopted primary stage differs from the prepared SOUL")
+ backup=primary._backup_read(sys.modules[__name__],record)
+ backup_sha=hashlib.sha256(backup).hexdigest()
+ if backup_sha not in {initial.get("prior_soul_sha256"),initial.get("owner_backup_sha256")}:
+  raise CoreRuntimeError("retained primary owner backup differs from the original SOUL")
+ soul,signature=primary._read_soul(sys.modules[__name__])
+ if (hashlib.sha256(soul).hexdigest()!=initial.get("prior_soul_sha256")
+     or not _restored_soul_signature_matches(signature,prior_signature)):
+  raise CoreRuntimeError("restored owner SOUL changed during primary rollback")
+ return True
+
 def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
  """Refuse recovery if a binding changed outside this exact cohort's writes."""
  old_journal=contents["journal.json"]
@@ -5417,6 +5509,8 @@ def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
     if (hashlib.sha256(soul).hexdigest()!=initial.get("prior_soul_sha256")
         or tuple(signature)!=tuple(initial.get("prior_soul_signature",()))):
      raise CoreRuntimeError("unwritten initial-primary rollback lost original owner SOUL")
+   elif (initial.get("state")=="rolling-back" and current_primary is None):
+    _verify_absent_initial_primary_rollback(cohort,initial)
    elif initial.get("state") in {"pending","preparing"} and initial.get("preparing_record_sha256") is None:
     if initial.get("state")=="pending" and current_primary is not None:
      raise CoreRuntimeError("initial primary journal appeared outside its exact staged transition")
