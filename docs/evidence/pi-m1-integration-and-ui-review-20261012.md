@@ -1735,7 +1735,7 @@ candidate-181 apply had occurred.
 ### Candidate 181 full-view memo probe and apply pending
 
 The audited 396-view memo probe completed in 18742ms with 179388 PATH reads,
-396 locator calls, 454ms parsing and all content matches true (exit 0). It
+396 locator calls, 454 parser calls and all content matches true (exit 0). It
 retained blocked write `23/pm_import6` and network/process effects 0. The exact
 V5 helper/source/memo identity remains as above. Log:
 `p/candidate181-native-parse-full396.log`. This establishes all 396 native
@@ -1749,8 +1749,9 @@ claimed pending actual readback.
 
 Candidate 181 (`c91b4f4ba1a7f2652cf21fb598f3ad2338849a18`), archive SHA-256
 `e855f96f349527e97993d5d303ede313ff72e932298b02333358190e723bdc42`, used
-Core `6992`. Its 158 contracts (3 native-target skips) and strict spec/plan
-checks passed. Actual apply timed out at 300000ms. The last-phase record was
+Core `6992`. Its contract suite had 158 passed and 3 native-target skipped;
+strict spec/plan checks passed. Actual apply timed out at 300000ms. The
+last-phase record was
 `adapter_update` (1245ms, sequence 4, count 4, rejected 0); the 250005ms sample
 identified `updater` at Core line 6780, schema 2, with 22 frames examined, 21
 unmatched and `unknown=False`.
