@@ -1498,3 +1498,13 @@ flag proxy. Candidate 171's Pi gate remained pending.
 
 All runtime acceptance remains open. The last observed prior state had all four
 services active; no newer live claim is made.
+
+### Candidate 171 gate and apply pending
+
+Candidate 171 (`bffc9b160968497f2d80ab851ddb149db9109b6b`), archive SHA-256
+`fcaedd33113ff65bd835eccedacfc04ddcd79994262a3346de25f1e1a262a495`, passed
+Pi staging, spec/plan and contract validation (0 spec and plan errors). The two
+focused unit files passed 128 tests in 0.65s; log:
+`p/candidate171-spec-contracts.log`. Protected apply with union stdin had just
+launched at `p/candidate171-actual-adoption.log`; phase evidence and outcome
+were pending. Core `6992` remained unchanged. No full acceptance is claimed.
