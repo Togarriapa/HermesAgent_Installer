@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import hermes_installer.core_runtime as core_runtime
 import hermes_installer.remote.core_native_observer as observer
 from hermes_installer.remote.core_lifecycle_startup import register_lifecycle_startup_probe
 
@@ -78,6 +79,66 @@ def _root_cli_registry_for_probe(cohort, monkeypatch):
     registry._lifecycle_startup_attempts = {}
     monkeypatch.setattr(registry, "_custody_current", lambda: True)
     return registry
+
+
+@pytest.mark.skipif(os.geteuid() != 0 or not hasattr(os, "pidfd_open"),
+                    reason="Root lifecycle registry requires the Root actor and Linux pidfds")
+def test_root_lifecycle_registry_uses_live_pidfd_and_refuses_exited_peer(monkeypatch):
+    monkeypatch.setattr(core_runtime, "verify_starting_lifecycle_observer_custody",
+                        lambda _custody: True)
+    cohort = _cohort(peer_pid=os.getpid())
+    live_fd = os.pidfd_open(os.getpid(), 0)
+    live_custody = core_runtime.StartingLifecycleObserverCustody(
+        cohort=cohort, peer_pid=cohort.peer_pid, peer_uid=cohort.peer_uid,
+        peer_gid=cohort.peer_gid, peer_start_ticks=cohort.peer_start_ticks,
+        boot_id=cohort.boot_id, invocation_id=cohort.invocation_id,
+        pidfd=live_fd, expires_monotonic=cohort.deadline_monotonic,
+        new_read=None, _seal=core_runtime._STARTING_LIFECYCLE_OBSERVER_SEAL)
+    registry = None
+    try:
+        registry = observer.RootLifecycleNativeObservationRegistry.from_starting_custody(
+            live_custody)
+        assert registry._custody_current()
+        assert os.fstat(live_fd).st_ino > 0  # the registry owns only its duplicate
+    finally:
+        if registry is not None:
+            registry.close()
+        os.close(live_fd)
+
+    read_fd, write_fd = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(write_fd)
+        try:
+            os.read(read_fd, 1)
+        finally:
+            os._exit(0)
+    os.close(read_fd)
+    exited_fd = None
+    try:
+        try:
+            exited_fd = os.pidfd_open(child, 0)
+        finally:
+            os.write(write_fd, b"x")
+    finally:
+        os.close(write_fd)
+        os.waitpid(child, 0)
+    exited_cohort = _cohort(peer_pid=child)
+    exited_custody = core_runtime.StartingLifecycleObserverCustody(
+        cohort=exited_cohort, peer_pid=exited_cohort.peer_pid,
+        peer_uid=exited_cohort.peer_uid, peer_gid=exited_cohort.peer_gid,
+        peer_start_ticks=exited_cohort.peer_start_ticks, boot_id=exited_cohort.boot_id,
+        invocation_id=exited_cohort.invocation_id, pidfd=exited_fd,
+        expires_monotonic=exited_cohort.deadline_monotonic, new_read=None,
+        _seal=core_runtime._STARTING_LIFECYCLE_OBSERVER_SEAL)
+    try:
+        with pytest.raises(observer.CoreNativeObservationUnavailable,
+                           match="Root starting lifecycle custody is unavailable"):
+            observer.RootLifecycleNativeObservationRegistry.from_starting_custody(
+                exited_custody)
+        assert os.fstat(exited_fd).st_ino > 0
+    finally:
+        os.close(exited_fd)
 
 
 def _enrolled_row(cohort, *, handle="P" * 43, peer=(411, 1000, 1000)):
