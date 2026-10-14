@@ -1621,3 +1621,23 @@ tracing increased this build's measured cost by about 2.88x; it does not prove
 that tracing alone caused the full adopter timeout. Sol was refining local,
 low-overhead exception monitoring. Core gates and the 300s bound remain
 unchanged; no retry or acceptance is recorded.
+
+### Candidate 177 exception-monitor capability probe
+
+A fresh Python 3.13 isolated API probe returned true for handled main/nested
+tracebacks, main-local return, preserved result `1`, and release of all three
+tools; tracing and profiling remained unused. The probe also confirmed the
+available exception-handled/nonlocal and filtered main-code plus local
+`PY_RETURN` monitoring capabilities against the official Python documentation.
+
+A separate read-only probe (`native-artifact-monitor-probe-177.py`, SHA-256
+`e0d107dcbf9434a1cfb1c11a66408ad0633206b9fbc3c330d111d5e7fe3a5acb`) measured
+fresh untraced time 9895ms and monitored time 9884ms. Both exited 0 and
+processed the same 6,900,775-byte archive with SHA-256
+`850b70f2e9e4e4d5a2d61f7eda41de18ab144aa408722cc6f2956428efdcca74`. Log:
+`p/candidate177-artifact-monitor-probe.log`. This single pair showed no
+measurable overhead; it is not proof about a full adoption run. Sol's four-
+artifact change `65321ca`, imported as Root `4c78440dabc4aa16ae802c0f7302152bbc57a9e5`,
+archive SHA-256
+`0cc64c244d6003c1cdf26393698a799c4c1162b8d0700e9f815a20fdd7cc3d7f`, was
+pending the strict candidate-178 gate. No Core checks or 300s bound changed.
