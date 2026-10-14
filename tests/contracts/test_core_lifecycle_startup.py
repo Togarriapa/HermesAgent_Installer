@@ -156,6 +156,53 @@ def _enrolled_row(cohort, *, handle="P" * 43, peer=(411, 1000, 1000)):
     }
 
 
+def _startup_response_text(nonce, variant):
+    text = observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + nonce
+    if variant == "instruction_echo":
+        return observer._LIFECYCLE_STARTUP_PROMPT_PREFIX + nonce
+    if variant == "leading_space":
+        return " " + text
+    if variant == "trailing_space":
+        return text + " "
+    if variant == "trailing_newline":
+        return text + "\n"
+    if variant == "wrong_nonce":
+        return observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + ("f" * 32)
+    return text
+
+
+@pytest.mark.skipif(os.geteuid() != 0 or not hasattr(os, "pidfd_open"),
+                    reason="Root startup enrollment requires the Root actor and Linux pidfds")
+def test_root_core_registry_enrollment_hashes_distinct_response(monkeypatch):
+    from hermes_installer.remote import core_gateway_inspector
+
+    cohort = _cohort(peer_pid=os.getpid())
+    registry = object.__new__(observer.RootCoreNativeObservationRegistry)
+    registry._closed = False
+    registry._config = object()
+    registry._lock = threading.RLock()
+    registry._lifecycle_startup_probes = {}
+    registry._lifecycle_startup_attempts = {}
+    monkeypatch.setattr(registry, "_ensure_open", lambda: None)
+    monkeypatch.setattr(registry, "_prune", lambda _now: None)
+    monkeypatch.setattr(core_gateway_inspector, "_unit_properties", lambda *_args, **_kwargs: {
+        "MainPID": str(cohort.peer_pid), "InvocationID": cohort.invocation_id})
+    monkeypatch.setattr(core_gateway_inspector, "_boot_id", lambda: cohort.boot_id)
+    monkeypatch.setattr(core_gateway_inspector, "_proc_start_ticks",
+                        lambda _pid: cohort.peer_start_ticks)
+    monkeypatch.setattr(core_gateway_inspector, "_current_core_source",
+                        lambda *_args, **_kwargs: cohort.core_source_generation)
+    handle = registry.enroll_lifecycle_startup_probe(cohort=cohort)
+    try:
+        row = registry._lifecycle_startup_probes[handle]
+        expected = observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + row["nonce"]
+        assert row["expected_text_sha256"] == hashlib.sha256(expected.encode("ascii")).hexdigest()
+        assert row["expected_text_sha256"] != hashlib.sha256(
+            (observer._LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]).encode("ascii")).hexdigest()
+    finally:
+        os.close(registry._lifecycle_startup_probes[handle]["pidfd"])
+
+
 def test_lifecycle_handler_registers_only_the_fixed_method_and_rejects_extra_params():
     class Server:
         def __init__(self):
@@ -603,7 +650,12 @@ def test_root_probe_claim_is_current_peer_only_and_single_use(monkeypatch):
         })
 
 
-def test_root_cli_lifecycle_registry_is_separate_fixed_three_op_surface(monkeypatch):
+@pytest.mark.parametrize("response_variant", [
+    "exact", "instruction_echo", "leading_space", "trailing_space",
+    "trailing_newline", "wrong_nonce",
+])
+def test_root_cli_lifecycle_registry_is_separate_fixed_three_op_surface(
+        monkeypatch, response_variant):
     cohort = _cohort()
     registry = _root_cli_registry_for_probe(cohort, monkeypatch)
     handle = registry.enroll_lifecycle_startup_probe(cohort=cohort)
@@ -632,6 +684,8 @@ def test_root_cli_lifecycle_registry_is_separate_fixed_three_op_surface(monkeypa
         })
 
     row = registry._lifecycle_startup_probes[handle]
+    expected_text = observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + row["nonce"]
+    assert row["expected_text_sha256"] == hashlib.sha256(expected_text.encode("ascii")).hexdigest()
     prompt_sha = hashlib.sha256((observer._LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
         + observer._LIFECYCLE_STARTUP_PROMPT_SUFFIX).encode("ascii")).hexdigest()
     attempt_request = {
@@ -645,15 +699,26 @@ def test_root_cli_lifecycle_registry_is_separate_fixed_three_op_surface(monkeypa
     with pytest.raises(ValueError, match="provider attempt differs"):
         registry._handle_lifecycle(peer, dict(attempt_request, tool_names=["terminal"]))
     attempt = registry._handle_lifecycle(peer, attempt_request)
-    text = observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + row["nonce"]
+    text = _startup_response_text(row["nonce"], response_variant)
     text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    completed = registry._handle_lifecycle(peer, {
+    response_request = {
         "schema": 1, "op": "register-lifecycle-startup-response", "nonce": "response",
         "probe_handle": handle, "attempt_handle": attempt["attempt_handle"],
         "turn_id": "turn-1", "api_request_id": "api-1", "request_sha256": "a" * 64,
         "response_sha256": "b" * 64, "response_text": text,
         "response_text_sha256": text_sha, "completed": True, "tool_call_count": 0,
-    })
+    }
+    if response_variant == "exact":
+        completed = registry._handle_lifecycle(peer, response_request)
+    else:
+        with pytest.raises(ValueError, match="lifecycle terminal differs"):
+            registry._handle_lifecycle(peer, response_request)
+        assert row["completion_handle"] is None and row.get("provider_terminal") is None
+        with pytest.raises(observer.CoreNativeObservationUnavailable):
+            registry.consume_lifecycle_startup_completion(
+                probe_handle=handle, completion_handle="C" * 43,
+                native_response_sha256=text_sha)
+        return
     proof = registry.consume_lifecycle_startup_completion(
         probe_handle=handle, completion_handle=completed["completion_handle"],
         native_response_sha256=text_sha)
@@ -732,7 +797,12 @@ def test_root_cli_lifecycle_server_preserves_foreign_socket_and_cleans_its_inode
     assert ordinary_socket.read_bytes() == b"preserve"
 
 
-def test_root_completion_seals_actual_codex_terminal_and_rejects_tool_use_replay(monkeypatch):
+@pytest.mark.parametrize("response_variant", [
+    "exact", "instruction_echo", "leading_space", "trailing_space",
+    "trailing_newline", "wrong_nonce",
+])
+def test_root_completion_seals_actual_codex_terminal_and_rejects_tool_use_replay(
+        monkeypatch, response_variant):
     cohort = _cohort()
     registry = _registry_for_probe(cohort, monkeypatch)
     handle = "P" * 43
@@ -757,15 +827,28 @@ def test_root_completion_seals_actual_codex_terminal_and_rejects_tool_use_replay
 
     attempt = registry._handle(peer, attempt_request)
     attempt_handle = attempt["attempt_handle"]
-    text = observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + row["nonce"]
+    expected_text = observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + row["nonce"]
+    assert row["expected_text_sha256"] == hashlib.sha256(expected_text.encode("ascii")).hexdigest()
+    text = _startup_response_text(row["nonce"], response_variant)
     text_sha = hashlib.sha256(text.encode()).hexdigest()
-    completion = registry._handle(peer, {
+    response_request = {
         "schema": 1, "op": "register-lifecycle-startup-response", "nonce": "response",
         "probe_handle": handle, "attempt_handle": attempt_handle,
         "turn_id": "turn-1", "api_request_id": "api-1", "request_sha256": "a" * 64,
         "response_sha256": "b" * 64, "response_text": text,
         "response_text_sha256": text_sha, "completed": True, "tool_call_count": 0,
-    })
+    }
+    if response_variant == "exact":
+        completion = registry._handle(peer, response_request)
+    else:
+        with pytest.raises(ValueError, match="lifecycle terminal differs"):
+            registry._handle(peer, response_request)
+        assert row["completion_handle"] is None and row.get("provider_terminal") is None
+        with pytest.raises(observer.CoreNativeObservationUnavailable):
+            registry.consume_lifecycle_startup_completion(
+                probe_handle=handle, completion_handle="C" * 43,
+                native_response_sha256=text_sha)
+        return
     proof = registry.consume_lifecycle_startup_completion(
         probe_handle=handle, completion_handle=completion["completion_handle"],
         native_response_sha256=text_sha)
