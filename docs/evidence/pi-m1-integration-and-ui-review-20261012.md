@@ -1462,3 +1462,16 @@ union stdin had just launched; result was pending at
 `p/candidate168-actual-adoption.log`. Queue composition #21
 (`999933ec`) passed Sol source review but remained on hold. No adoption or
 acceptance is claimed pending actual readback.
+
+### Candidate 168 apply result
+
+The candidate-168 adopter exited 4. Its canonical
+`HERMES_CORE_QUALIFICATION_FAILURE_V1` report identified exact candidate
+`56832d13049505c4fb63a41f21e2d2d00d4c413c` and archive
+`bad473833ac3fd1bcd503508074f05286c03098e95965c064bf8b694b63f224b`, schema 1,
+reason `TIMEOUT`, elapsed 300000ms (capped), and null return code, stdout bytes
+and stderr bytes. Automatic recovery verified prior Core and ingress; all four
+services were active. The log is `p/candidate168-actual-adoption.log`. This
+establishes only the wrapper's 300-second timeout, not an inner blocking phase,
+cause, or adoption acceptance. Sol and Native were investigating before any
+retry or deadline change.
