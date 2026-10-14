@@ -2099,3 +2099,25 @@ and87 remaining of88 tasks. Evidence: `candidate203-stage.log`,
 `candidate203-apply.json`. These checks validate only the bounded diagnostic
 contract. Implementation/review and meaningful Pi contracts remain required
 before one exact startup observation; all runtime acceptance stays open.
+
+### Candidate 204 private same-call refusal classification
+
+Implementation candidate `5cd9a83d6c4427da43ef37b29d6cdaad2e614e04`, archive
+SHA-256 `cabdcfd6da1a74952ff9567ae251f5d6524f86545ef65f1f80e2240901c850d9`,
+contains the reviewed observer/producer/client diagnostic changes and contract
+coverage, with a separate three-row Inspector pin commit. Private diagnostics
+bind the exact lifecycle context and originating thread, retain only the first
+closed failure and reset with the lexical scope. Entered/completed markers
+supply no completion authority. Original callback responses, downstream
+dispatch and genuine native/provider/Root completion gates remain required.
+Core, manual importer and native installer source pins are unchanged.
+
+Sealed Pi staging passed. Strict specification and plan checks exited0 each;
+198 focused lifecycle/RPC-client/qualification-origin tests passed in1.56s
+without skips, contracts exit0. These exercise registered observer/producer
+boundaries, native callback kwargs, copied-thread/context/reset/malformed/type-
+spoof/privacy/cleanup effects, exact response and both registry consumption.
+Evidence: `candidate204-stage.log`, `candidate204-specs.json`,
+`candidate204-gates.log`. One exact separately qualified protected observation
+was started in `candidate204-actual-adoption.log`. Neither a diagnostic nor
+these fixtures establish native/provider completion or M1 acceptance.
