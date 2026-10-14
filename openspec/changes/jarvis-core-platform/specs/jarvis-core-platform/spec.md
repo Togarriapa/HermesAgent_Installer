@@ -2707,3 +2707,17 @@ This projection clarification remains within R0055/R0201 and RT-T266.3/VD-T266.5
 - **WHEN** the fourth recipe validates journal, token, cohort, Resources record, manifest and fixed backup-member credentials
 - **THEN** its measured metadata/ACL contract applies consistently to that exact set, and every parsed record or digest operand comes from, or equals, the stable no-follow descriptor capture. All original content, schema, bounds and authority joins remain mandatory; directory inode currentness is checked without inventing owner/mode expectations.
 - **AND** no new binding code or condition is emitted in historical/default variants. Pi byte comparisons against Core0727 cover all three historical recipes for both plugin flags, while readable extra-ACL denial reaches the actual guard. Invalid fixture construction alone is not denial evidence.
+
+### Requirement: Qualification wrapper refusals retain bounded classification
+The adopter SHALL distinguish fixed qualification-boundary failures with closed safe metadata while preserving all validation, deadlines, report attribution and recovery decisions.
+
+#### Scenario: A wrapper branch refuses qualification
+- **WHEN** execution error, timeout, identity refusal, result/output bounds, report rejection or exit/verification mismatch prevents qualification
+- **THEN** the existing failure output carries one canonical versioned record with exact validated candidate/archive digests, fixed reason and bounded returncode/byte-count/elapsed fields; unavailable numbers are null. No message, raw output, command, path, environment or unvalidated report data is emitted.
+- **AND** the original300s subprocess deadline, output limits, tool identity, report validator, persistence condition and real recovery remain unchanged. A stale report or missing inner origin does not establish timeout or guard failure.
+
+#### Scenario: Classification does not supply acceptance
+- **WHEN** a bounded diagnostic is captured before recovery or the subprocess succeeds
+- **THEN** metadata survives only the existing failure handling, successful adoption emits no failure record, and exact report validation remains independently required. Meaningful Pi branch/privacy/schema/persistence/recovery contracts and four-artifact validation precede another actual attempt; original165 inner cause stays pending until current evidence is observed.
+
+This diagnostic leaf remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35);219/62/18/eight OPEN groups remain unchanged.

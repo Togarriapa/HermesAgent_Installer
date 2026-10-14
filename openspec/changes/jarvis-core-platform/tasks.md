@@ -313,3 +313,9 @@ All four encoding-correction checkboxes above are bounded leaves of existing R00
 - [ ] Sol reviews source/hash and separate literal Core pin; Root qualifies exact candidate before one observed actual apply/readback or strict rollback. Projection evidence, historical fixture evidence and live acceptance stay separate; all scope remains OPEN.
 
 - [ ] In the same projection leaf, qualify the coherent closed journal/token/cohort/Resources/manifest/member set with descriptor-buffer equality and original semantic joins; require named-directory currentness without new metadata assumptions. Pi compares all historical/default generator bytes with Core0727 and proves readable extra-ACL denial reaches the guard. Emit binding checks only in the new fourth variant; no new task group or scope is created.
+
+### Existing R0201/#35 qualification wrapper refusal classification
+
+- [ ] Root Pi strict-validates four artifacts; retain actual165 generic failure/stale-report and automatic prior-runtime restoration evidence without inferring timeout/guard cause. No blind new apply.
+- [ ] Existing Luna owner changes only adopter wrapper refusal construction and existing failure output to a dedicated RuntimeError subtype/closed versioned reason-and-count record. Preserve300s, argv/environment, identity/output/report gates, persistence criteria and recovery; Core and all recipes stay unchanged.
+- [ ] Pi contracts cover each fixed wrapper branch, canonical bounded metadata/private omission, timeout partial-byte counts, silent success, stale-report nonattribution and unchanged persistence/recovery decisions. Sol reviews exact tool/tests; Root qualifies them before one observed attempt and safe current classification. All original acceptance remains open.
