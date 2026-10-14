@@ -261,6 +261,7 @@ _INITIAL_PRIMARY_ROLLBACK_SEAL=object()
 _INITIAL_PRIMARY_ROLLBACK_ACTIVE={}
 _STARTING_LIFECYCLE_OBSERVER_SEAL=object()
 _STARTING_LIFECYCLE_OBSERVER_ACTIVE={}
+_STARTUP_CODEX_SELECTION_SEAL=object()
 
 @dataclass(frozen=True, slots=True)
 class InitialPrimaryAdoptionCustody:
@@ -341,6 +342,14 @@ class StartingLifecycleObserverCustody:
  pidfd:int=field(repr=False,compare=False)
  expires_monotonic:float
  new_read:GuardedNewReadCustody=field(repr=False,compare=False)
+ _seal:object=field(repr=False,compare=False)
+
+@dataclass(frozen=True, slots=True)
+class _StartupCodexSelection:
+ """Private protected config selection bound to one startup observer custody."""
+ provider:str
+ model:str
+ config_sha256:str
  _seal:object=field(repr=False,compare=False)
 
 @dataclass(frozen=True, slots=True)
@@ -5935,6 +5944,38 @@ def _run_root_coro(coroutine):
  if len(result)!=1: raise CoreRuntimeError("native startup chat proof returned no bounded result")
  return result[0]
 
+def _capture_startup_codex_selection(inspector,status):
+ """Bind the native status to the existing protected Codex model selection."""
+ if (type(status) is not dict
+     or status.get("provider_hint") not in ("unknown","openai-codex")
+     or status.get("codex_credential_configured") is not True):
+  raise CoreRuntimeError("new Core does not expose the selected Codex subscription route")
+ model=status.get("model")
+ if (not isinstance(model,str) or inspector._safe_config_label(model,provider=False)!=model):
+  raise CoreRuntimeError("new Core does not expose the selected Codex subscription route")
+ try:
+  provider,configured_model,digest=inspector._fixed_model_config_projection()
+ except Exception:
+  raise CoreRuntimeError("protected Codex model selection is unavailable") from None
+ if (provider!="openai-codex" or configured_model!=model
+     or not isinstance(digest,str) or re.fullmatch(r"[0-9a-f]{64}",digest) is None):
+  raise CoreRuntimeError("protected Codex model selection is absent or stale")
+ return _StartupCodexSelection(provider=provider,model=configured_model,
+  config_sha256=digest,_seal=_STARTUP_CODEX_SELECTION_SEAL)
+
+def _startup_codex_selection_is_current(inspector,selection):
+ if (type(selection) is not _StartupCodexSelection
+     or selection._seal is not _STARTUP_CODEX_SELECTION_SEAL):
+  return False
+ try:
+  provider,model,digest=inspector._fixed_model_config_projection()
+  return (provider==selection.provider=="openai-codex"
+   and model==selection.model
+   and isinstance(digest,str) and re.fullmatch(r"[0-9a-f]{64}",digest) is not None
+   and digest==selection.config_sha256)
+ except Exception:
+  return False
+
 def verify_starting_lifecycle_observer_custody(custody):
  """Revalidate the one active Root-CLI observer against its guarded new peer."""
  try:
@@ -5947,8 +5988,13 @@ def verify_starting_lifecycle_observer_custody(custody):
       or _ADAPTER_STARTUP_COHORT_CONTEXT.get() is not held.get("startup_context")):
    return False
   context=held["startup_context"]; cohort=custody.cohort
+  from .remote import core_gateway_inspector as inspector
+  selection=held.get("codex_selection")
+  if not _startup_codex_selection_is_current(inspector,selection):
+   return False
   from .remote.core_native_observer import RootLifecycleStartupCohort
   if (type(cohort) is not RootLifecycleStartupCohort or not cohort.is_root_selected()
+      or cohort.provider!=selection.provider or cohort.model!=selection.model
       or custody.new_read is not context.get("new_read")
       or custody.peer_pid!=context.get("pid")
       or custody.peer_start_ticks!=context.get("evidence",{}).get("start_ticks")
@@ -5964,7 +6010,6 @@ def verify_starting_lifecycle_observer_custody(custody):
       or evidence["boot_id"]!=custody.boot_id
       or evidence["invocation_id"]!=custody.invocation_id):
    return False
-  from .remote import core_gateway_inspector as inspector
   listener_inode=inspector._core_listener_inode(context["pid"])
   generation_payload=(f"{custody.invocation_id}\0{custody.peer_pid}\0"
    f"{custody.peer_start_ticks}\0{listener_inode}\0{context['core']}").encode("ascii")
@@ -6076,10 +6121,7 @@ def _starting_lifecycle_observer():
  generation_payload=(f"{invocation}\0{pid}\0{start_ticks}\0{listener_inode}\0{context['core']}").encode("ascii")
  core_generation=hashlib.sha256(b"hermes-jarvis-core-generation-v1\0"+generation_payload).hexdigest()
  status=_run_root_coro(CoreRpcClient().get_model_provider_status())
- if (type(status) is not dict or status.get("provider_hint")!="openai-codex"
-     or status.get("codex_credential_configured") is not True
-     or not isinstance(status.get("model"),str)):
-  raise CoreRuntimeError("new Core does not expose the selected Codex subscription route")
+ selection=_capture_startup_codex_selection(inspector,status)
  account=_root_codex_account_fingerprint()
  if not re.fullmatch(r"[0-9a-f]{64}",account):
   raise CoreRuntimeError("current Codex account fingerprint is unavailable")
@@ -6100,14 +6142,15 @@ def _starting_lifecycle_observer():
   peer_pid=pid,peer_uid=int(uids[1]),peer_gid=int(gids[1]),peer_start_ticks=start_ticks,
   boot_id=context["evidence"]["boot_id"],invocation_id=invocation,
   provider="openai-codex",api_mode="codex_responses",
-  base_url="https://chatgpt.com/backend-api/codex",model=status["model"],
+  base_url="https://chatgpt.com/backend-api/codex",model=selection.model,
   account_fingerprint=account,issued_monotonic=now,deadline_monotonic=deadline)
  from .remote.core_native_observer import RootLifecycleNativeObservationRegistry, RootLifecycleNativeObservationServer
  custody=StartingLifecycleObserverCustody(cohort=cohort,peer_pid=pid,peer_uid=int(uids[1]),peer_gid=int(gids[1]),
   peer_start_ticks=start_ticks,boot_id=context["evidence"]["boot_id"],invocation_id=invocation,
   pidfd=pidfd,expires_monotonic=deadline,new_read=context["new_read"],
   _seal=_STARTING_LIFECYCLE_OBSERVER_SEAL)
- _STARTING_LIFECYCLE_OBSERVER_ACTIVE[id(custody)]={"object":custody,"startup_context":context}
+ _STARTING_LIFECYCLE_OBSERVER_ACTIVE[id(custody)]={"object":custody,
+  "startup_context":context,"codex_selection":selection}
  registry=None; server=None
  try:
   if not verify_starting_lifecycle_observer_custody(custody):
@@ -6140,9 +6183,12 @@ def _prove_new_cohort_startup_chat():
  from .remote.core_native_observer import (
   CoreVerifiedLifecycleStartupCompletion, make_root_lifecycle_startup_cohort,
  )
+ from .remote import core_gateway_inspector as inspector
  with _starting_lifecycle_observer() as observer:
   custody=observer.custody; registry=observer.registry; rpc=observer.rpc
   cohort=custody.cohort
+  if not verify_starting_lifecycle_observer_custody(custody):
+   raise CoreRuntimeError("protected Codex model selection changed before enrollment")
   handle=registry.enroll_lifecycle_startup_probe(cohort=cohort)
   wire=_run_root_coro(rpc.lifecycle_startup_probe(handle))
   if (type(wire) is not dict
@@ -6166,10 +6212,12 @@ def _prove_new_cohort_startup_chat():
    raise CoreRuntimeError("new Core lifecycle completion does not join its selected source cohort")
   account=_root_codex_account_fingerprint()
   status=_run_root_coro(rpc.get_model_provider_status())
+  selection=_STARTING_LIFECYCLE_OBSERVER_ACTIVE.get(id(custody),{}).get("codex_selection")
   if (account!=cohort.account_fingerprint or type(status) is not dict
-      or status.get("provider_hint")!=cohort.provider
+      or status.get("provider_hint") not in ("unknown",cohort.provider)
       or status.get("codex_credential_configured") is not True
       or status.get("model")!=cohort.model
+      or not _startup_codex_selection_is_current(inspector,selection)
       or time.monotonic()>=cohort.deadline_monotonic
       or poller.poll(0) or _adapter_process_identity(ADAPTER_SOURCE,context["adapter"],
        context["core"],context["pid"])[1]!=context["identity"]):

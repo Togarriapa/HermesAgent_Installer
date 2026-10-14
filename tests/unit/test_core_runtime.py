@@ -3323,6 +3323,187 @@ def test_wait_for_listener_checks_the_requested_journaled_source(monkeypatch):
     assert observed == [prior_source]
 
 
+@pytest.mark.parametrize("hint", ["unknown", "openai-codex"])
+def test_startup_codex_selection_binds_recognized_hint_to_protected_config(monkeypatch, hint):
+    from hermes_installer.remote import core_gateway_inspector as inspector
+
+    projection = {"value": ("openai-codex", "gpt-5.2", "a" * 64)}
+    reads = []
+
+    def read_projection():
+        reads.append(projection["value"])
+        return projection["value"]
+
+    monkeypatch.setattr(inspector, "_fixed_model_config_projection", read_projection)
+    status = {"provider_hint": hint, "codex_credential_configured": True,
+              "model": "gpt-5.2"}
+    selection = core._capture_startup_codex_selection(inspector, status)
+    assert selection.provider == "openai-codex"
+    assert selection.model == "gpt-5.2"
+    assert selection.config_sha256 == "a" * 64
+    assert core._startup_codex_selection_is_current(inspector, selection)
+    assert len(reads) == 2
+
+    # Even a formatting-only protected config change invalidates this observer.
+    projection["value"] = ("openai-codex", "gpt-5.2", "b" * 64)
+    assert not core._startup_codex_selection_is_current(inspector, selection)
+
+
+@pytest.mark.parametrize("status,projection", [
+    ({"provider_hint": "unknown", "codex_credential_configured": False,
+      "model": "gpt-5.2"}, ("openai-codex", "gpt-5.2", "a" * 64)),
+    ({"provider_hint": "other", "codex_credential_configured": True,
+      "model": "gpt-5.2"}, ("openai-codex", "gpt-5.2", "a" * 64)),
+    ({"provider_hint": "unknown", "codex_credential_configured": True,
+      "model": "gpt-5.2"}, (None, "gpt-5.2", "a" * 64)),
+    ({"provider_hint": "unknown", "codex_credential_configured": True,
+      "model": "gpt-5.2"}, ("openai-codex", "other-model", "a" * 64)),
+    ({"provider_hint": "openai-codex", "codex_credential_configured": True,
+      "model": "gpt-5.2"}, ("openai-codex", "gpt-5.2", "invalid")),
+])
+def test_startup_codex_selection_denies_unproven_or_mismatched_selection(
+        monkeypatch, status, projection):
+    from hermes_installer.remote import core_gateway_inspector as inspector
+
+    monkeypatch.setattr(inspector, "_fixed_model_config_projection", lambda: projection)
+    with pytest.raises(core.CoreRuntimeError):
+        core._capture_startup_codex_selection(inspector, status)
+
+
+def test_startup_codex_selection_refuses_projection_read_failure(monkeypatch):
+    from hermes_installer.remote import core_gateway_inspector as inspector
+
+    def unavailable():
+        raise OSError("private config path must not escape")
+
+    monkeypatch.setattr(inspector, "_fixed_model_config_projection", unavailable)
+    with pytest.raises(core.CoreRuntimeError) as failure:
+        core._capture_startup_codex_selection(inspector, {
+            "provider_hint": "unknown", "codex_credential_configured": True,
+            "model": "gpt-5.2"})
+    assert "private config path must not escape" not in str(failure.value)
+
+    selection = core._StartupCodexSelection(
+        provider="openai-codex", model="gpt-5.2", config_sha256="a" * 64,
+        _seal=object())
+    assert not core._startup_codex_selection_is_current(inspector, selection)
+
+
+@pytest.mark.parametrize("drift_at,expected_enrollments", [
+    ("before-enrollment", 0,
+     "protected Codex model selection changed before enrollment"),
+    ("after-completion", 1,
+     "new Core lifecycle completion is stale against route, account, or peer"),
+])
+def test_startup_selection_drift_denies_at_enrollment_and_completion_boundaries(
+        monkeypatch, drift_at, expected_enrollments, expected_error):
+    if os.geteuid() != core.ROOT_UID:
+        pytest.skip("fixed startup observer custody requires the Root actor")
+    from hermes_installer.remote import core_gateway_inspector as inspector
+    from hermes_installer.remote import core_native_observer
+
+    digest = "a" * 64
+    projection = {"value": ("openai-codex", "gpt-5.2", digest)}
+    monkeypatch.setattr(inspector, "_fixed_model_config_projection",
+                        lambda: projection["value"])
+    status = {"provider_hint": "unknown", "codex_credential_configured": True,
+              "model": "gpt-5.2"}
+    selection = core._capture_startup_codex_selection(inspector, status)
+    identity = object()
+    cohort_values = {
+        "transaction_id": "t" * 32,
+        "starting_journal_sha256": "a" * 64,
+        "cohort_sha256": "b" * 64,
+        "core_generation": "c" * 64,
+        "old_adapter_generation": "d" * 64,
+        "new_adapter_generation": "e" * 64,
+        "core_source_generation": "f" * 64,
+        "generation_a1_sha256": "1" * 64,
+        "js_sha256": "2" * 64, "rs_sha256": "3" * 64,
+        "u1_sha256": "4" * 64, "l1_sha256": "5" * 64,
+        "primary_source_sha256": "6" * 64,
+        "active_soul_sha256": "7" * 64,
+        "native_inventory_sha256": "8" * 64,
+        "peer_pid": os.getpid(), "peer_uid": 1000, "peer_gid": 1000,
+        "peer_start_ticks": "9", "boot_id": "boot", "invocation_id": "invoke",
+        "provider": "openai-codex", "api_mode": "codex_responses",
+        "base_url": "https://chatgpt.com/backend-api/codex",
+        "model": "gpt-5.2", "account_fingerprint": "9" * 64,
+    }
+    cohort = SimpleNamespace(**cohort_values)
+    custody = SimpleNamespace(cohort=cohort)
+    enrollments = []
+
+    class FakeProof:
+        def is_root_verified(self):
+            return True
+
+    proof = FakeProof()
+    for key, value in cohort_values.items():
+        setattr(proof, key, value)
+
+    class FakeRegistry:
+        def enroll_lifecycle_startup_probe(self, *, cohort):
+            enrollments.append(cohort)
+            return "probe-handle"
+
+        def consume_lifecycle_startup_completion(self, **_kwargs):
+            return proof
+
+    class FakePoller:
+        def register(self, *_args):
+            pass
+
+        def poll(self, _timeout):
+            return []
+
+    registry = FakeRegistry()
+    context = {"cohort": {"phase": "source-starting"}, "pidfd": 101,
+               "pid": os.getpid(), "adapter": "a" * 64, "core": "b" * 64,
+               "identity": identity, "new_read": object()}
+    observer = SimpleNamespace(custody=custody, registry=registry,
+        rpc=SimpleNamespace(lifecycle_startup_probe=lambda _handle: "probe-request",
+                            get_model_provider_status=lambda: "status-request"))
+
+    @contextlib.contextmanager
+    def starting_observer():
+        if drift_at == "before-enrollment":
+            projection["value"] = ("openai-codex", "gpt-5.2", "b" * 64)
+        yield observer
+
+    monkeypatch.setattr(core, "_starting_lifecycle_observer", starting_observer)
+    monkeypatch.setattr(core, "_validate_guarded_new_read", lambda _read: True)
+    monkeypatch.setattr(core, "_adapter_process_identity",
+        lambda *_args: ({}, identity))
+    monkeypatch.setattr(core.select, "poll", FakePoller)
+    monkeypatch.setattr(core, "verify_starting_lifecycle_observer_custody",
+        lambda _custody: core._startup_codex_selection_is_current(inspector, selection))
+    monkeypatch.setattr(core, "_root_codex_account_fingerprint",
+        lambda: (projection.__setitem__("value", ("openai-codex", "gpt-5.2", "c" * 64))
+                 or "9" * 64) if drift_at == "after-completion" else "9" * 64)
+    monkeypatch.setattr(core, "_run_root_coro", lambda request: (
+        {"schema": 1, "probe_handle": "probe-handle",
+         "completion_handle": "completion-handle", "status": "completed",
+         "response_sha256": "a" * 64}
+        if request == "probe-request" else status))
+    monkeypatch.setattr(core_native_observer, "CoreVerifiedLifecycleStartupCompletion",
+        FakeProof)
+
+    active_key = id(custody)
+    core._STARTING_LIFECYCLE_OBSERVER_ACTIVE[active_key] = {
+        "object": custody, "startup_context": context, "codex_selection": selection}
+    context_token = core._ADAPTER_STARTUP_COHORT_CONTEXT.set(context)
+    lock_token = core._ADAPTER_UPDATE_LOCK_HELD.set(True)
+    try:
+        with pytest.raises(core.CoreRuntimeError, match=re.escape(expected_error)):
+            core._prove_new_cohort_startup_chat()
+    finally:
+        core._ADAPTER_STARTUP_COHORT_CONTEXT.reset(context_token)
+        core._ADAPTER_UPDATE_LOCK_HELD.reset(lock_token)
+        core._STARTING_LIFECYCLE_OBSERVER_ACTIVE.pop(active_key, None)
+    assert len(enrollments) == expected_enrollments
+
+
 def test_wait_for_listener_keeps_default_source_and_refuses_mismatch(monkeypatch):
     observed = []
     monotonic = {"value": 0.0}
