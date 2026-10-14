@@ -2802,3 +2802,21 @@ The qualifier SHALL observe bounded exception origins with exception-only monito
 - **THEN** monitored and untraced builds retain identical bytes/digest, monitoring is faster than the traced reference, and trace/profile are unused with ID released. Record measured elapsed values; no complete timeout-resolution or live-acceptance claim follows until a current qualified attempt and strict readback.
 
 This observer refinement remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and all existing artifact obligations.
+
+### Requirement: Native probe reuses only exact freshly read frontmatter parsing
+The installer SHALL bound parse-only reuse to one native probe while preserving all fresh reads, complete native selection checks, functional skill loads, currentness and original execution budgets.
+
+#### Scenario: Identical freshly read text repeats within the finite probe
+- **WHEN** the pinned native `_parse_frontmatter` delegate receives an exact string already parsed in this probe
+- **THEN** only its pure dict/body result may be reused, with deep-copied storage/hit dicts and immutable body; complete native scans/path reads and every selected native skill_view still execute. All396 functional views and existing collision, disabled, quarantine, platform, dependency and content checks remain unchanged.
+- **AND** the memo has at most1024 entries and16MiB cumulative UTF8 input, no filename/mtime/digest-only cache or global/persistent YAML state; finally restores the exact original delegate and drops private cache state. No text, cached values or secrets enter output.
+
+#### Scenario: Content changes, a bound is reached or memoization fails
+- **WHEN** freshly read text differs or input/copy/bounds prevent safe reuse
+- **THEN** the original parser runs with unchanged arguments/result/error semantics, without eviction or stale-file fallback. Root digest/currentness and native receipt/report eligibility remain unchanged; no authority, Core or deadline change follows.
+
+#### Scenario: Parse reduction is qualified with actual native reads
+- **WHEN** Pi runs meaningful mutation/currentness/error/restoration and native-path contracts plus audited1/10 comparison
+- **THEN** contents, full scans and path-read counts match baseline while actual parse work/time decreases and write/network/process/PM-import denials stay enforced. A bounded full396 native functional readback and exact candidate qualification precede a current adoption; audited measurements and extrapolations do not establish live acceptance.
+
+This finite parse-reuse correction remains within R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219/62/18/eight OPEN groups and all prior obligations.
