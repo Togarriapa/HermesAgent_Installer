@@ -736,6 +736,14 @@ def test_stack_sample_is_one_shot_and_cancels_without_late_emission(monkeypatch)
             threads[-1].target()
             return 0
 
+    class MainOnlyFrame:
+        f_code = RootSetup.main.__code__
+        f_back = None
+
+    main_ident = qualification.threading.get_ident()
+    monkeypatch.setattr(
+        qualification.sys, "_current_frames",
+        lambda: {main_ident: MainOnlyFrame()})
     monkeypatch.setattr(
         qualification, "_verified_qualification_stack_codes",
         lambda _src: ({id(RootSetup.main.__code__): "updater"}, True))
