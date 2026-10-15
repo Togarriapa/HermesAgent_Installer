@@ -3870,18 +3870,19 @@ class RootCoreNativeObservationRegistry:
 
     def __init__(self, custody: Any, selected_profile_source: Any, *, config: Any):
         from hermes_installer.remote.core_gateway_inspector import CoreNativeObserverCustody
-        from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
         if type(custody) is not CoreNativeObserverCustody:
             raise CoreNativeObservationUnavailable("sealed current-core observer custody is required")
-        if (selected_profile_source is not None
-                and (type(selected_profile_source) is not RootVerifiedJarvisMasterSource
-                     or selected_profile_source.profile_id != "hermes"
-                     or selected_profile_source.native_profile_key != "default"
-                     or selected_profile_source.display_name != "Jarvis")):
-            raise CoreNativeObservationUnavailable("sealed current Jarvis master source is required")
-        if (selected_profile_source is not None
-                and not callable(getattr(selected_profile_source, "is_current_sealed", None))):
-            raise CoreNativeObservationUnavailable("current active Resources source verifier is unavailable")
+        if selected_profile_source is not None:
+            from hermes_installer.components.resources_active_profile_source import (
+                RootVerifiedJarvisMasterSource,
+            )
+            if (type(selected_profile_source) is not RootVerifiedJarvisMasterSource
+                    or selected_profile_source.profile_id != "hermes"
+                    or selected_profile_source.native_profile_key != "default"
+                    or selected_profile_source.display_name != "Jarvis"):
+                raise CoreNativeObservationUnavailable("sealed current Jarvis master source is required")
+            if not callable(getattr(selected_profile_source, "is_current_sealed", None)):
+                raise CoreNativeObservationUnavailable("current active Resources source verifier is unavailable")
         self._custody = custody
         self._source = selected_profile_source
         self._config = config
@@ -3949,16 +3950,8 @@ class RootCoreNativeObservationRegistry:
             self._obsidian_origin_store_ok = False
         self._master_source: Any = None
         self._final_effect_store: Any = None
-        try:
-            from hermes_installer.components.resources_active_profile_source import (
-                RootVerifiedJarvisMasterSource,
-            )
-            self._master_source = RootVerifiedJarvisMasterSource.current_master_source(
-                custody, config=config,
-            )
-        except Exception:
-            # Ordinary ingress stays available; planning/child admission stays unavailable.
-            self._master_source = None
+        # Hydrate the full native source only on a source-dependent demand.
+        # Listener construction retains custody, not planning authority.
         self._closed = False
         self._activity_started_at = time.time()
         self._activity_records: dict[str, dict[str, Any]] = {}

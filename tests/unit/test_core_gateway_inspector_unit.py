@@ -50,9 +50,9 @@ def test_inspector_prestart_recipe_creates_exact_private_runtime_directory(tmp_p
 
 
 def _optional_observer_start_fixture(monkeypatch, *, failure=None, error=None,
-                                     source_failure=False, stop_initial=False,
+                                     stop_initial=False,
                                      stop_after_registry=False, dead_worker=False,
-                                     unavailable_socket=False, source_result=None):
+                                     unavailable_socket=False, actual_registry=False):
     from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
     from hermes_installer.remote import core_native_observer
 
@@ -60,7 +60,21 @@ def _optional_observer_start_fixture(monkeypatch, *, failure=None, error=None,
     stop = threading.Event()
     if stop_initial:
         stop.set()
-    custody = SimpleNamespace(_core_pidfd=778899)
+    if actual_registry:
+        custody = core_gateway_inspector.CoreNativeObserverCustody(
+            core_pid=411, core_uid=1000, core_gid=1000, core_start_ticks="12345",
+            core_generation="a" * 64, core_invocation_id="b" * 32,
+            core_listener_inode=9876, core_source_generation="c" * 64,
+            core_unit_sha256="d" * 64, core_executable_sha256="e" * 64,
+            boot_id="f" * 32, config_sha256="1" * 64, _core_pidfd=778899,
+            _seal=core_gateway_inspector._NATIVE_CUSTODY_SEAL,
+        )
+        monkeypatch.setattr(core_native_observer, "_load_root_obsidian_origin_state",
+                            lambda: ({}, {}))
+        monkeypatch.setattr(core_native_observer, "_load_root_obsidian_history", lambda: [])
+        monkeypatch.setattr(core_native_observer, "_read_root_native_activity_bytes", lambda: None)
+    else:
+        custody = SimpleNamespace(_core_pidfd=778899)
     registry_type = core_native_observer.RootCoreNativeObservationRegistry
     registry = object.__new__(registry_type)
     clock = {"value": 0.0, "reads": []}
@@ -75,20 +89,30 @@ def _optional_observer_start_fixture(monkeypatch, *, failure=None, error=None,
 
     def master_source(cls, _custody, *, config):
         events.append("master_source")
-        if source_failure:
-            raise RuntimeError("PRIVATE source text")
-        return source_result
+        raise AssertionError("optional listener startup must not hydrate MasterSource")
+
+    def master_source_seal(self, *, custody, now=None):
+        events.append("master_source_seal")
+        raise AssertionError("optional listener startup must not verify MasterSource")
 
     monkeypatch.setattr(RootVerifiedJarvisMasterSource, "current_master_source",
                         classmethod(master_source))
+    monkeypatch.setattr(RootVerifiedJarvisMasterSource, "is_current_sealed",
+                        master_source_seal)
     monkeypatch.setattr(registry_type, "close", lambda _self: events.append("registry_close"))
+
+    selected_sources = []
 
     def make_registry(cls, _custody, *, selected_profile_source, config):
         events.append("registry")
+        selected_sources.append(selected_profile_source)
+        assert selected_profile_source is None
         if failure == "registry":
             raise error
         if stop_after_registry:
             stop.set()
+        if actual_registry:
+            return cls(_custody, selected_profile_source, config=config)
         return registry
 
     monkeypatch.setattr(registry_type, "from_current_core_custody", classmethod(make_registry))
@@ -135,6 +159,7 @@ def _optional_observer_start_fixture(monkeypatch, *, failure=None, error=None,
     monkeypatch.setattr(core_gateway_inspector, "time", SimpleNamespace(
         monotonic=monotonic, sleep=lambda _seconds: events.append("sleep")))
     return SimpleNamespace(events=events, stop=stop, custody=custody, registry=registry,
+        selected_sources=selected_sources,
         worker_type=Worker, closed=closed, clock=clock, failure=failure, error=error)
 
 
@@ -144,21 +169,42 @@ def _raise_if(failure, stage, error):
 
 
 _OPTIONAL_OBSERVER_STAGES = (
-    "imports", "custody", "master_source", "registry", "worker_start",
-    "listener_wait", "publish")
+    "imports", "custody", "registry", "worker_start", "listener_wait", "publish")
 
 
-def test_optional_observer_start_emits_once_only_stages_in_order_and_keeps_source_none_fallback(
-        monkeypatch, capsys):
-    fixture = _optional_observer_start_fixture(monkeypatch, source_failure=True)
+def test_optional_observer_start_emits_stages_and_passes_absent_source(monkeypatch, capsys):
+    fixture = _optional_observer_start_fixture(monkeypatch)
     assert core_gateway_inspector._start_optional_core_native_observer(object(), fixture.stop) is True
     captured = capsys.readouterr().err.splitlines()
     assert captured == ["HERMES_OPTIONAL_OBSERVER_STAGE_V1=" + stage
                         for stage in _OPTIONAL_OBSERVER_STAGES]
     assert fixture.events.count("lstat") == 2
     assert fixture.events.count("sleep") == 0
+    assert fixture.selected_sources == [None]
+    assert "master_source" not in fixture.events
+    assert "master_source_seal" not in fixture.events
     assert core_gateway_inspector._CORE_NATIVE_CUSTODY is fixture.custody
     assert core_gateway_inspector._CORE_NATIVE_REGISTRY is fixture.registry
+
+
+def test_optional_observer_uses_real_registry_constructor_without_master_source_hydration(
+        monkeypatch, capsys):
+    from hermes_installer.remote.core_native_observer import RootCoreNativeObservationRegistry
+
+    fixture = _optional_observer_start_fixture(monkeypatch, actual_registry=True)
+    assert core_gateway_inspector._start_optional_core_native_observer(object(), fixture.stop) is True
+    registry = core_gateway_inspector._CORE_NATIVE_REGISTRY
+    assert type(registry) is RootCoreNativeObservationRegistry
+    assert registry._custody is fixture.custody
+    assert registry._source is None and registry._master_source is None
+    assert fixture.selected_sources == [None]
+    assert "master_source" not in fixture.events
+    assert "master_source_seal" not in fixture.events
+    assert core_gateway_inspector._CORE_NATIVE_CUSTODY is fixture.custody
+    assert capsys.readouterr().err.splitlines() == [
+        "HERMES_OPTIONAL_OBSERVER_STAGE_V1=" + stage
+        for stage in _OPTIONAL_OBSERVER_STAGES
+    ]
 
 
 @pytest.mark.parametrize(("error_type", "label"), [
@@ -182,7 +228,7 @@ def test_optional_observer_refusal_uses_only_exact_allowlisted_type_identity(
         "HERMES_OPTIONAL_OBSERVER_REFUSAL_V1=custody/" + label,
     ]
     assert "PRIVATE" not in output
-    assert len(output.encode("ascii")) <= 7 * 128 + 256
+    assert len(output.encode("ascii")) <= 6 * 128 + 256
 
 
 def test_optional_observer_registry_refusal_closes_custody_without_publication(
@@ -193,7 +239,7 @@ def test_optional_observer_registry_refusal_closes_custody_without_publication(
     output = capsys.readouterr().err
     assert output.splitlines() == [
         "HERMES_OPTIONAL_OBSERVER_STAGE_V1=" + stage
-        for stage in _OPTIONAL_OBSERVER_STAGES[:4]
+        for stage in _OPTIONAL_OBSERVER_STAGES[:3]
     ] + ["HERMES_OPTIONAL_OBSERVER_REFUSAL_V1=registry/RuntimeError"]
     assert "PRIVATE" not in output
     assert fixture.stop.is_set() and fixture.closed == [fixture.custody._core_pidfd]
@@ -234,7 +280,7 @@ def test_optional_observer_refusal_at_import_boundary_is_closed_and_private(
     original_import = builtins.__import__
 
     def import_with_fixed_failure(name, globals=None, locals=None, fromlist=(), level=0):
-        if level == 2 and "RootVerifiedJarvisMasterSource" in fromlist:
+        if level == 1 and "RootCoreNativeObservationRegistry" in fromlist:
             raise missing
         return original_import(name, globals, locals, fromlist, level)
 
@@ -248,24 +294,83 @@ def test_optional_observer_refusal_at_import_boundary_is_closed_and_private(
     assert "PRIVATE" not in output and fixture.events == []
 
 
-def test_optional_observer_currentness_exception_remains_failure_at_master_source(
-        monkeypatch, capsys):
+def test_demand_time_master_source_requires_fresh_proof_and_clears_cached_source(monkeypatch):
     from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
+    from hermes_installer.remote.core_native_observer import RootCoreNativeObservationRegistry
 
     source = object.__new__(RootVerifiedJarvisMasterSource)
     object.__setattr__(source, "profile_id", "hermes")
     object.__setattr__(source, "native_profile_key", "default")
     object.__setattr__(source, "display_name", "Jarvis")
-    fixture = _optional_observer_start_fixture(monkeypatch, source_result=source)
+    registry = object.__new__(RootCoreNativeObservationRegistry)
+    registry._custody = object()
+    registry._config = object()
+    registry._master_source = object()
+    lookups = []
+    results = [source, source, source, RuntimeError("private proof failure"), None]
 
-    def currentness_raises(self, *, custody, now):
-        raise ValueError("PRIVATE currentness details")
+    def current_source(cls, custody, *, config):
+        lookups.append((custody, config))
+        result = results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
-    monkeypatch.setattr(RootVerifiedJarvisMasterSource, "is_current_sealed", currentness_raises)
-    assert core_gateway_inspector._start_optional_core_native_observer(object(), fixture.stop) is False
-    output = capsys.readouterr().err
-    assert output.splitlines()[-1] == "HERMES_OPTIONAL_OBSERVER_REFUSAL_V1=master_source/ValueError"
-    assert "PRIVATE" not in output and "registry" not in fixture.events
+    seals = iter((True, False))
+    monkeypatch.setattr(RootVerifiedJarvisMasterSource, "current_master_source",
+                        classmethod(current_source))
+    monkeypatch.setattr(RootVerifiedJarvisMasterSource, "is_current_sealed",
+                        lambda self, custody, *, now: next(seals))
+
+    assert registry._current_master_source() is source
+    assert registry._master_source is source
+    assert registry._current_master_source() is None
+    assert registry._master_source is None
+    object.__setattr__(source, "profile_id", "changed")
+    assert registry._current_master_source() is None
+    assert registry._master_source is None
+    assert registry._current_master_source() is None
+    assert registry._master_source is None
+    assert registry._current_master_source() is None
+    assert registry._master_source is None
+    assert lookups == [(registry._custody, registry._config)] * 5
+
+
+def test_cached_planner_dispatch_denies_absent_source_before_effects():
+    import threading
+    import time
+
+    from hermes_installer.remote.core_native_observer import RootCoreNativeObservationRegistry
+
+    registry = object.__new__(RootCoreNativeObservationRegistry)
+    registry._closed = False
+    registry._lock = threading.RLock()
+    registry._prune = lambda _now: None
+    registry._config = object()
+    registry._custody = object()
+    registry._master_source = None
+    registry._owner_turn_bindings = {"owner-handle": "parent-turn-12345678"}
+    effects = []
+    owner = SimpleNamespace(owner_turn_handle="owner-handle",
+        expires_monotonic=time.monotonic() + 60, session_id="parent-session-123456",
+        is_current_sealed=lambda *_args, **_kwargs: True)
+    registry._owners = {"owner-handle": owner}
+    registry._policy_for_owner = lambda *_args: effects.append("policy")
+    registry._attempts = {}
+    registry._child_sessions = {}
+    request = {"schema": 1, "op": "admit-master-planner-child", "nonce": "test-nonce",
+        "owner_turn_handle": "owner-handle", "parent_session_id": owner.session_id,
+        "parent_turn_id": "parent-turn-12345678", "child_session_id": "child-session-123456",
+        "child_turn_id": "child-turn-12345678", "source_generation_sha256": "a" * 64,
+        "source_manifest_sha256": "b" * 64, "prompt_sha256": "c" * 64,
+        "goal_sha256": "d" * 64, "provider": "openai-codex", "api_mode": "codex_responses",
+        "base_url": "https://chatgpt.com/backend-api/codex", "model": "gpt-6-luna",
+        "tool_names": [], "tool_closure_sha256": "e" * 64}
+
+    with pytest.raises(ValueError, match="current owner turn or master source is unavailable"):
+        registry._handle((100, 1000, 1000), request)
+    assert effects == []
+    assert registry._child_sessions == {}
 
 
 def test_optional_observer_thread_death_is_one_listener_refusal_with_cleanup(
@@ -293,7 +398,7 @@ def test_optional_observer_initial_cancel_is_silent_and_cancel_after_registry_cl
     assert core_gateway_inspector._start_optional_core_native_observer(object(), cancelled.stop) is False
     lines = capsys.readouterr().err.splitlines()
     assert lines == ["HERMES_OPTIONAL_OBSERVER_STAGE_V1=" + stage
-                     for stage in _OPTIONAL_OBSERVER_STAGES[:4]] + [
+                     for stage in _OPTIONAL_OBSERVER_STAGES[:3]] + [
         "HERMES_OPTIONAL_OBSERVER_REFUSAL_V1=registry/CoreInspectionDenied"]
     assert "worker_construct" not in cancelled.events
     assert "registry_close" in cancelled.events

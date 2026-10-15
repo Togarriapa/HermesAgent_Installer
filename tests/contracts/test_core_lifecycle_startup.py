@@ -1136,7 +1136,7 @@ def test_root_completion_rejects_native_response_mismatch_and_expired_cohort(mon
             native_response_sha256="c" * 64)
 
 
-@pytest.mark.parametrize("registry_kind", ["core", "lifecycle"])
+@pytest.mark.parametrize("registry_kind", ["core", "core_constructed", "lifecycle"])
 @pytest.mark.parametrize("response_kind", ["normal", "dict_function_call"])
 def test_lifecycle_llm_observer_consumes_exact_no_tool_terminal_once(
         monkeypatch, tmp_path, registry_kind, response_kind):
@@ -1148,6 +1148,35 @@ def test_lifecycle_llm_observer_consumes_exact_no_tool_terminal_once(
                 and row.get("expiry", 0) > time.monotonic())
         probe_handle = "P" * 43
         registry._lifecycle_startup_probes[probe_handle] = _enrolled_row(cohort, handle=probe_handle)
+        registry_operation = registry._handle
+    elif registry_kind == "core_constructed":
+        from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
+        from hermes_installer.remote import core_gateway_inspector as inspector
+
+        custody = inspector.CoreNativeObserverCustody(
+            core_pid=cohort.peer_pid, core_uid=cohort.peer_uid, core_gid=cohort.peer_gid,
+            core_start_ticks=cohort.peer_start_ticks, core_generation=cohort.core_generation,
+            core_invocation_id=cohort.invocation_id, core_listener_inode=9876,
+            core_source_generation=cohort.core_source_generation,
+            core_unit_sha256="1" * 64, core_executable_sha256="2" * 64,
+            boot_id=cohort.boot_id, config_sha256="3" * 64, _core_pidfd=-1,
+            _seal=inspector._NATIVE_CUSTODY_SEAL,
+        )
+        monkeypatch.setattr(observer, "_load_root_obsidian_origin_state", lambda: ({}, {}))
+        monkeypatch.setattr(observer, "_load_root_obsidian_history", lambda: [])
+        monkeypatch.setattr(observer, "_read_root_native_activity_bytes", lambda: None)
+        monkeypatch.setattr(RootVerifiedJarvisMasterSource, "current_master_source",
+                            classmethod(lambda *_args, **_kwargs: pytest.fail(
+                                "registry construction must not hydrate MasterSource")))
+        registry = observer.RootCoreNativeObservationRegistry(custody, None, config=object())
+        assert registry._source is None and registry._master_source is None
+        monkeypatch.setattr(registry, "_prune", lambda _now: None)
+        monkeypatch.setattr(registry, "_lifecycle_startup_peer_current",
+            lambda row, selected: row.get("current") is True and selected is cohort
+                and row.get("expiry", 0) > time.monotonic())
+        probe_handle = "P" * 43
+        registry._lifecycle_startup_probes[probe_handle] = _enrolled_row(
+            cohort, handle=probe_handle)
         registry_operation = registry._handle
     else:
         registry = _root_cli_registry_for_probe(cohort, monkeypatch)

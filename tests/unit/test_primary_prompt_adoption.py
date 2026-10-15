@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import stat
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -306,6 +307,104 @@ def test_fixed_bundle_joins_finite_discovery_to_protected_resources_record_and_c
     assert actual_block == block
     assert record["owner_prefix_sha256"] == hashlib.sha256(owner_prefix).hexdigest()
     assert record["resources_tree"] == resources_tree
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="sealed native source proof requires the Pi root test role")
+def test_master_source_repeats_real_prompt_and_native_freshness_proof(monkeypatch):
+    from hermes_installer import core_runtime as core
+    from hermes_installer.components import resources_active_profile_source as source_module
+    from hermes_installer.remote import core_gateway_inspector as inspector
+
+    generation = "a" * 64
+    prompt = b"# Jarvis\n\nFinite native proof prompt.\n"
+    profile_yaml = b"name: hermes\n"
+    row = {"source_id": "hermes", "identity_sha256": hashlib.sha256(prompt).hexdigest(),
+           "profile_yaml_sha256": hashlib.sha256(profile_yaml).hexdigest()}
+    manifest = {
+        "source": {"revision": "b" * 40, "git_tree": "c" * 40},
+        "profile_members": [row], "effective_overlay": {"sha256": "d" * 64},
+    }
+    files = {"registry/profiles/hermes/SOUL.md": prompt,
+             "registry/profiles/hermes/profile.yaml": profile_yaml}
+    artifact_sha = "e" * 64
+    discovery = {"ownership_manifest_sha256": "f" * 64, "resources_state": "discovered",
+                 "resources_revision": manifest["source"]["revision"]}
+    prefix = b"Owner-authored context.\n"
+    block = render_managed_block(prompt)
+    active_soul, separator = append_managed_block(prefix, block)
+    signature = [1, 2, stat.S_IFREG | 0o600, 0, 0, 1, len(active_soul), 3, 4]
+    record = manager._new_record(generation, discovery, artifact_sha, manifest["source"]["git_tree"],
+                                 prompt, block, prefix, signature, prefix, separator)
+    record.update({"state": "adopted", "result_soul_signature": signature,
+                   "native_effective_prompt_sha256": hashlib.sha256(active_soul.strip()).hexdigest(),
+                   "native_effective_prompt_chars": len(active_soul.strip().decode("utf-8"))})
+    native_readbacks = []
+    custody_captures = []
+    current_discovery = {"value": discovery}
+    journal = b"fixed protected primary journal projection"
+
+    config = inspector.CoreGatewayConfig(
+        hostname="core.invalid", issuer="https://issuer.invalid", audience="core",
+        allowed_emails=frozenset(), gateway_uid=1, gateway_gid=1, core_uid=0, core_gid=0,
+        boot_id="1" * 32, gateway_unit_sha256="2" * 64, gateway_python_sha256="3" * 64,
+        tunnel_unit_sha256="4" * 64, cloudflared_binary_sha256="5" * 64,
+        core_unit_sha256="6" * 64, core_launcher_sha256="7" * 64,
+        core_python=Path("/usr/bin/python3"),
+        core_python_sha256="8" * 64, ingress_socket=Path("/run/core.sock"),
+        config_path=Path("/etc/core.json"), config_sha256="9" * 64)
+
+    def custody():
+        return inspector.CoreNativeObserverCustody(
+            core_pid=411, core_uid=0, core_gid=0, core_start_ticks="12345",
+            core_generation="1" * 64, core_invocation_id="2" * 32,
+            core_listener_inode=9876, core_source_generation=generation,
+            core_unit_sha256="6" * 64, core_executable_sha256="8" * 64,
+            boot_id="1" * 32, config_sha256="9" * 64, _core_pidfd=-1,
+            _seal=inspector._NATIVE_CUSTODY_SEAL)
+
+    def native_readback(_manifest, _files, soul, *, expected_managed_block_sha256):
+        native_readbacks.append((soul, expected_managed_block_sha256))
+        return {
+            "active_primary_prompt_sha256": hashlib.sha256(soul).hexdigest(),
+            "native_effective_prompt_sha256": hashlib.sha256(soul.strip()).hexdigest(),
+            "native_effective_prompt_chars": len(soul.strip().decode("utf-8")),
+            "effective_prompt_contains_managed_block": True,
+            "effective_prompt_truncated": False,
+            "managed_prompt_block_sha256": expected_managed_block_sha256,
+        }
+
+    monkeypatch.setattr(core, "ROOT_UID", os.geteuid())
+    monkeypatch.setattr(core, "_core_source_generation", lambda: generation)
+    monkeypatch.setattr(core, "_root_native_readback", native_readback)
+    monkeypatch.setattr(core, "_projection_file", lambda *_args, **_kwargs: journal)
+    monkeypatch.setattr(core, "read_current_resources_discovery",
+                        lambda **_kwargs: dict(current_discovery["value"]))
+    monkeypatch.setattr(manager, "_check_root_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(manager, "_read_record", lambda *_args: dict(record))
+    monkeypatch.setattr(manager, "_backup_read", lambda *_args: prefix)
+    monkeypatch.setattr(manager, "_fixed_bundle", lambda *_args: (
+        generation, dict(discovery), artifact_sha, manifest, files, prompt))
+    monkeypatch.setattr(manager, "_read_soul", lambda *_args: (active_soul, signature))
+
+    def capture(_config):
+        custody_captures.append("captured")
+        return custody()
+
+    monkeypatch.setattr(inspector, "capture_current_core_native_custody", capture)
+    issued = source_module.RootVerifiedJarvisMasterSource.current_master_source(custody(), config)
+    assert issued is not None
+    assert native_readbacks == [(active_soul, record["managed_block_sha256"])] * 3
+    assert len(custody_captures) == 2
+
+    assert issued.is_current_sealed(custody()) is True
+    assert native_readbacks == [(active_soul, record["managed_block_sha256"])] * 6
+    assert len(custody_captures) == 4
+
+    current_discovery["value"] = {**discovery, "resources_state": "stale"}
+    assert source_module.RootVerifiedJarvisMasterSource.current_master_source(
+        custody(), config) is None
+    assert native_readbacks[-3:] == [(active_soul, record["managed_block_sha256"])] * 3
+    assert len(custody_captures) == 5
 
 
 def test_same_materialization_primary_rebase_is_metadata_only_and_requires_existing_adoption(

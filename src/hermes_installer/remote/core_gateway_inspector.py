@@ -3493,7 +3493,7 @@ def capture_current_core_native_custody(config: CoreGatewayConfig) -> CoreNative
 
 def _start_optional_core_native_observer(config: CoreGatewayConfig,
                                          stop: threading.Event | None = None) -> bool:
-    """Start the separate admin-readable observer only with verified current source custody."""
+    """Start the separate admin-readable observer with verified process custody."""
     global _CORE_NATIVE_CUSTODY, _CORE_NATIVE_REGISTRY, _CORE_NATIVE_REGISTRY_TYPE
     global _CORE_NATIVE_STOP, _CORE_NATIVE_THREAD
     custody = None
@@ -3509,7 +3509,6 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
             sys.stderr.flush()
         except Exception:
             pass
-        from ..components.resources_active_profile_source import RootVerifiedJarvisMasterSource
         from .core_native_observer import RootCoreNativeObservationRegistry, serve_core_native_observer
         stage = "custody"
         try:
@@ -3520,21 +3519,6 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
         custody = capture_current_core_native_custody(config)
         if stop.is_set():
             raise CoreInspectionDenied("optional native observer startup was cancelled")
-        stage = "master_source"
-        try:
-            sys.stderr.write("HERMES_OPTIONAL_OBSERVER_STAGE_V1=master_source\n")
-            sys.stderr.flush()
-        except Exception:
-            pass
-        try:
-            source = RootVerifiedJarvisMasterSource.current_master_source(custody, config=config)
-        except Exception:
-            source = None
-        if (source is not None and (type(source) is not RootVerifiedJarvisMasterSource
-                or source.profile_id != "hermes" or source.native_profile_key != "default"
-                or source.display_name != "Jarvis"
-                or source.is_current_sealed(custody=custody, now=time.monotonic()) is not True)):
-            source = None
         stage = "registry"
         try:
             sys.stderr.write("HERMES_OPTIONAL_OBSERVER_STAGE_V1=registry\n")
@@ -3542,7 +3526,7 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
         except Exception:
             pass
         registry = RootCoreNativeObservationRegistry.from_current_core_custody(
-            custody, selected_profile_source=source, config=config)
+            custody, selected_profile_source=None, config=config)
         if type(registry) is not RootCoreNativeObservationRegistry:
             raise CoreInspectionDenied("native observation registry is unavailable")
         if stop.is_set():
@@ -3575,9 +3559,6 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
                         and stat.S_IMODE(parent.st_mode) == 0o750
                         and stat.S_ISSOCK(listener.st_mode) and listener.st_uid == 0
                         and listener.st_gid == 1000 and stat.S_IMODE(listener.st_mode) == 0o660):
-                    if (source is not None and source.is_current_sealed(
-                            custody=custody, now=time.monotonic()) is not True):
-                        source = None
                     if stop.is_set():
                         raise CoreInspectionDenied("optional native observer startup was cancelled")
                     stage = "publish"
