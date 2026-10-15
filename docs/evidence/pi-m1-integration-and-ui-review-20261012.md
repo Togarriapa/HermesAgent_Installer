@@ -2779,3 +2779,217 @@ exclusive-create attempt refused to overwrite it. Any compatibility copy
 retains finite asset routes, sandbox/auth/method/host guards and harness pins.
 There is still no current-candidate phone/tablet/wide render pass.
 Tasks108/109,103/full M1 and all219/62/18/eight groups remain OPEN.
+
+### Candidates220b–222: isolated regressions and fixture corrections
+
+Candidate220b's correctly isolated three-file run reached its unchanged1200s
+bound (exit124), without a final pytest report. Log SHA-256
+c4e3265dc221e94fad8449980c85033d913e60ae510a8c6cf03d31de7d7db33e.
+Its raw failure marker was not treated as a completed suite or a product cause.
+One exact, separately bounded220c reproduction then failed1/74.12s:
+`test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pre`.
+Log SHA-2568abf17535ed63dc3a22d6817e5a2ff3f6315ccd5db4c50355a7d0a24c70e3f6c.
+The protected recovery backup remained retained. Bounded origin evidence showed
+the shared test listener stub rejected the real `adapter_source` keyword;
+production recovery already passed that keyword. No production code was changed
+to accommodate this fixture defect.
+
+Luna53b0be99, independently reviewed by Sol, was integrated as
+d46c2e3f083a4a252cb4f97ffb25df195a767466 (candidate221). Its shared stub accepts
+the actual keyword contract and asserts explicit restored source against the
+current journal; the recovery test retains source/generation/receipt/launcher/
+unit/enablement effects and both existing admission outcomes. Archive SHA-256
+2a53b9a54e29be16c314c2f5de045a0bc0f6e4771ab9666018e307fc1a3f880f.
+Pi stage/strict-specs/plan/status/apply all exited0. The exact corrected case
+PASSED1/73.44s in a private Root mount namespace, under the original1200s cap.
+Runner09cf71d992011e6e5da39ceae7a36678fa4a33b96ccd71d8c30cfcd2ead4a921;
+logfc9b36f0523646efe2e3490d61a58dec66cf8f4f3f4f17e3d9e7b928d9f50402
+at `/var/tmp/hermes-native-guard-221-repro-d46c2e3f0-20261015T114518Z-3591990/`.
+This is one fixture effect test, not the timed-out full suite or native acceptance.
+
+Separately,220d's full overlay/factory group stopped at3 failures/9 passes in
+189.95s (log2edcfe1b92fcd9e316e44d101f4909d0f742b373cbc4455d493f56999a6122fc).
+All three reached the real writer's receipt-parent custody check: the test
+placed its receipt directly under a0755 sandbox while the writer requires0700.
+Lunaf2c012b9/Sol review preserves that production check and0755 admin ancestry,
+adding a separate protected0700 receipt directory for all affected test groups.
+Root integrated only this test change asfd103165a198ea00e703add2f9a47fc7609d5954
+(candidate222), archive1e4dad21cc0090048f611520f2a378aeaeaed22bb624e80d34b94ae872f641e2.
+Overlay test SHA-256bb2b08961cd52f90b73b22f0a2f9c61d12b2dd1a3deca6a42bf2deebdbad70b3;
+Core8aaeb069 and all production/member pins remain identical to220/221.
+Pi stage/strict-specs/plan/status/apply all exited0. Full overlay/factory rerun
+is pending under separately reviewed runner7dff3a98d64a30c867e4835f451a37d7394a40a5db13c8d7d2789a9822aaca8b,
+without omitted cases, writable-parent exceptions or changed timeout bounds.
+
+The finite v24 asset compatibility probe now hydrates, then refuses because
+its old work/resources/system navigation groups differ from the current single
+manage group. Candidate222 probe exit2 is not rendered acceptance. Exact current
+navigation/design and the preserved v25 probe require review before asserting
+a stale-probe cause or changing those checks. No protected apply ran after217;
+all four restored production services were freshly active after221's test.
+Tasks108/109/103, full M1 and219/62/18/eight groups remain OPEN.
+
+Candidate222's complete overlay/factory run subsequently finished:48 PASS,
+one FAIL,479.06s; log SHA-256
+cc56ba02c58b6cf4cd0b84acee9ec3bf82fcf017872d4d4bdc72380fd3029adb.
+Every overlay case passed, including both current-discovery writer modes,
+final source/CAS/ancestor invalidation, all nineteen input mutations, retained
+CAS/currentness, owner overlay/archive restoration and failed-native rollback.
+The sole failure was the real cross-UID factory CLI test's origin refusal.
+Its TemporaryDirectory inherited the runner's intentionally Root0700 private
+TMPDIR; chowning the nested admin home did not make those parents traversable.
+An actual read-only admin subprocess confirmed access=False for that exact
+private TMPDIR and access=True for `/run`. No private evidence/log mode changed.
+
+Lunab65a5e33/Sol review changes only that test's TemporaryDirectory parent to
+`/run`, retaining fresh0700/admin-owned base, exact Root-runuser pipe origin,
+direct-owner denial, sanitized environment and every generation/backup effect
+assertion. Root integrated it as555edd1a32e72e8c86e25e5d1a1405c57c0e1781
+(candidate224), archivefe22ca61291b10e875a0d419395a586d9b312d0b3f7e48b929aed4b7d3c957ee.
+Factory test SHA-256086c30858671ff839c1acb31f218b638b1df9a688ef646c255663f0342eb3210.
+All production source/member pins remain identical to222. Pi stage/strict-
+specs/plan/status/apply all exited0. Separately reviewed full-factory runner
+734d6325f64dd420bc543cae81009a8fa70a4c61d540560121053f30e915e3a4 is staged,
+not yet executed; no pass is inferred from static review.
+
+Candidate222 Core coverage is independently running under reviewed runner
+61cc600ab4561dd49fa65896ad9bedf74f2216b7a700c22d7555a104e0eb514e.
+Pi collection proved113 unique cases, disjoint exhaustive partitions A15/B61/C37
+before execution. A finished15 PASS/no skips, log
+ebecb553054a3d5e6d5c3ba36bd619fae2322706f3971072fadb8e9d0aa00a0e;
+B/C remain unqualified here. Coverage counts and deselections are not passes;
+each group retains its original1200s bound and stops on nonzero.
+
+Solb0da904's bounded navigation clarification was separately integrated as
+cc719a7280258bf958de7aab313826d003c6e64a (candidate223), archive
+8d1b53e2cc8f4c43f72020f0f334a31fb0ddbed5bcf7d8e51335d52f1fc9050e.
+Pi stage/strict-specs/plan/status/apply all exited0. All four artifacts now
+consistently describe five semantic areas: direct Overview/Chats plus separately
+labeled Work/Resources/System sections in one Manage disclosure. No destination,
+adapter, permission, pending, focus/keyboard/touch/current-location or exact-
+candidate phone/tablet/wide acceptance requirement was removed. No new task or
+checkbox completion was added. The222 fixture refusal log is
+617739abf9d908c06f2bc9c2ab302346894d15e81fbd04cfd059fa35884b3015.
+
+Luna's standalone finite navigation function was reviewed by Sol against all21
+actual unique destinations. Its original single5s wait now observes selection,
+current view/location, visible selected heading/focus and disclosure closure
+together, without an extra click/retry/deadline. Function SHA-256
+7d9d2d616c76b639ec42459708c3b702ae9ae1644917a7f9128a31f0898f6924.
+An exclusive-create Pi compatibility copy replaces only that function in the
+already exact asset-compatible probe; originalv24/v25/harness pins and finite
+host/auth/method routes remain. New probe SHA-256
+ecfdd2f19f9807d065df74263f1ba4754345f317b3cda14ff58201c1f8a7ddd4,
+`probe_jarvis_affected_flows_v24_nav223.py`, not yet executed. No render pass.
+
+Fresh public Refresh after these isolated tests returned secure idle, zero
+accepted turns in progress,11 accepted/nine completed/two failed and six private
+chats; its text explicitly leaves functional readiness independently unverified.
+No protected apply after217, no new user chat/provider request, data deletion,
+account/HA change, spending or outbound human message. M1 remains OPEN.
+
+Candidate222's exhaustive Core run completed successfully: A15 PASS/83.23s,
+B61 PASS/993.56s, C37 PASS/53.78s, no skips/failures/xfails. These are113
+distinct nodes across the prevalidated disjoint union, not a sum including
+deselected cases. B logd37bbc15b45137a85431303ce2d3201f51b56a72884453cb587ca064d8332864;
+C log3e3601d4caa772d03f9e6d296cbb23a35132088c741cae1aeac2f7a621e9239b.
+All groups finished inside their original1200s bound; an independently reviewed
+conditional smaller-partition helper was prepared but was NOT executed.
+The corresponding Source remains exactfd103165a/Core8aa/Coretesta22a.
+
+Candidate224's full corrected factory file then PASSED22/47.06s, no skips;
+log4c8180f00347f7abbbdb94bfd7863d0999f3d794fd0879c0ac01ceba0a49112f
+at `/var/tmp/hermes-native-guard-224-factory-555edd1a3-20261015T122136Z-3602089/`.
+Together with222's27 overlay passes, this resolves the former real-runuser
+fixture refusal without changing the importer or its checks. Distinct Source
+and test revisions remain explicit:224 changes only the navigation artifacts
+and that factory fixture from222; production runtime/UI bytes and Core/overlay
+tests are identical. Contract evidence is not exact224 native/live acceptance.
+
+The reviewed navigation-compatible rendered probe is now running once against
+224 in an ephemeral admin Chromium fixture. The six complete affected
+Inspector/lifecycle/observer/client/input/activity bridge files are staged for
+subsequent isolated qualification, not yet run. No concurrent Chromium/critical
+contract lane, actual protected update, render pass or live chat acceptance is
+inferred from these pending operations. All remaining acceptance stays OPEN.
+
+The initial224 six-file bridge run completed279 PASS/five missing-SDK skips/
+one FAIL in2.29s, logc9620a224c498661ae5fa0944bb9bdc950407ab8c16d64b739b44222398338f0.
+The sole real lifecycle Unix-socket fixture failed readiness. Read-only Pi
+inspection measured its generated socket path at185 bytes, beyond Linux's108-
+byte sockaddr path capacity. The private runner's long pytest temp ancestor
+caused this environment mismatch; no observer/socket/ownership guard changed.
+Reviewed224b runner93f1e250c328bda6e85f3a45c1424a11890947273195dd2266cd13d92e2dbdc6
+uses an exclusive Root0700 `/run/hb224-XXXXXX` pytest basetemp, checks custody
+before handoff and execution, and cleans only its exact owned fresh directory.
+Evidence/HOME/XDG stay private and retained; namespace/read-only source/provenance/
+test pins/full six files/1200s bounds remain. The full rerun PASSED280/five
+explicit SDK skips in2.50s, log0462a4c42db6f4eefadaefaff41c39588223a5dd5c06e92355c9ef810e1b9318
+at `/var/tmp/hermes-native-guard-224b-affected-bridge-555edd1a3-20261015T123345Z-3604153/`.
+These six files are the recorded affected scope, not an assertion that their
+selection is identical to historical217's369-test invocation.
+
+The existing official managed Python/OpenAI2.24.0 separately ran the exact
+installed_official_sdk/real_openai/native_dict_function_call_callback cases:
+nine PASS/53 deselected/no skips in0.46s; `candidate224-sdk.log`, exit0.
+This covers the five SDK skips and four overlapping callback variants; do not
+add nine to the preceding pass count as unique coverage. No provider request,
+dependency installation or managed-runtime modification occurred.
+
+The exact224 UI probe completed exit1, log
+6a4011c04f2800c1fa9058e45a4d6b25323d0fecce82acb683080b78eeceb3d5.
+Canonical nested navigation checks passed, but phone composer/nav intersection,
+tablet/desktop offscreen-motion pause and profile-empty/mobile-model harness
+checks failed. Static audit identifies the latter two fixture expectations as
+stale: pinned mobile JS still searches a top-level System disclosure; profiles[]
+is invalid under the current exactly-one-Jarvis contract and yields unavailable,
+not the old empty-profile phrase. Neither is evidence of a missing native route.
+Actual phone rectangles and motion scope/geometry/state samples still require
+triage; no visual/render acceptance, profile functionality or motion pass is
+claimed, and no failed assertion was removed to force a pass.
+
+Sol independently audited bounded implementation checkbox108 against its full
+source/pin scope and the completed Core/overlay/factory/bridge/SDK evidence.
+Only108 is marked complete. Task109's real full projection/Overview/model/chat/
+stream/stop/history/concurrency/update/rollback/restart/UI acceptance and task103/
+full M1/all219/62/18/eight groups remain OPEN.
+
+One guarded actual224 update began at2026-10-15T12:35:37Z with the approved
+household email union supplied through the existing protected stdin intake.
+`candidate224-actual.log` currently records source validation/preflight only;
+the update is still running. No native result, successful activation, live chat
+or restoration is inferred from a started command.
+
+### Candidate224 guarded activation and installed Resources readback
+
+The protected update finished exit0 at2026-10-15T12:38:24Z (began12:35:37Z).
+Log SHA-25644e139e374f4da0df2c4e5584fb87e356dc240463d44aa04d46c00f475e8cf00.
+The helper independently verified the refreshed native Core/Inspector/Gateway/
+tunnel cohort and preservation of existing owner registration/vault bytes.
+Root's separate journal readback confirms installed source
+`/opt/hermes-installer-core-555edd1a3/src`, adapter generation
+9d80cb03f368df4e3dd22830d693f9536521d2cc948cca44567740f6d93a91ab,
+unchanged official Core source generation
+9c227b7cbc44630e704a4ef3ca6d4a2006306c337db2c844a823e3b4408e1769.
+All four service states were independently active/running/Result=success.
+No rollback was required or exercised after this activation; do not infer a new
+rollback/restart witness from previous candidates' outcomes.
+
+The actual installed `read_current_resources_discovery` succeeded under an
+independent unchanged five-second alarm, including current-generation lookup:
+0.846156s, resources_state=discovered;396 native skills,207 internal profiles,
+208 source profiles and88 other declarations preserved. This is fresh installed
+projection/native-discovery proof, not successful invocation/authentication of
+every skill/plugin/integration. `candidate224-installed-projection.json` SHA-256
+d8a99f92e43b69e7519c3eca5fc223f9a54bdf05f0ee537ebe8c9c1277f07545.
+
+An unauthenticated HTTPS check from Pi reached Cloudflare's login redirect302 in
+0.128894s; it does not prove authenticated origin or chat. The authenticated IAB
+reload instead displayed a connection-timeout error; subsequent Reload/direct
+hostname navigation were refused by Browser Use URL policy on its internal
+data:error document. No browser-policy bypass, copied cookie/token or fabricated
+Access principal was used. Manual refresh was requested through the pending user
+question while independent Pi validation continued. Actual authenticated public
+Overview/models/chat/stream/stop/history and family logins remain unverified.
+Keep109/103/full M1/all219/62/18/eight groups OPEN; activation0 and the fast
+installed projection are bounded results, not completed public acceptance.
