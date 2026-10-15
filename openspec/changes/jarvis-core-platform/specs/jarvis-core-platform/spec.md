@@ -2994,3 +2994,20 @@ The installer SHALL retain all15 existing Root-runuser snapshot predicates in th
 - **THEN** original failure, unknown classification, close/no-frame/owned cleanup and protected recovery remain; a controlled probe, fixture, historical line or successful receipt contract cannot substitute for actual target completion.
 
 This observability-only R0055/R0201, RT-T266.3/VD-T266.5 (#35) refinement preserves219/62/18/eight OPEN groups and300s/110s. Actual208's failing predicate and genuine startup/live acceptance remain unknown/OPEN despite the separate controlled9/9 guard proof.
+
+### Requirement: Ingress finish and optional observer diagnostics remain finite and non-authoritative
+The installer SHALL expose only closed private attempted-stage diagnostics at the existing ingress-finisher and optional-observer startup boundaries, without changing admission, failure, cleanup or deadline semantics.
+
+#### Scenario: An ingress-finishing boundary fails
+- **WHEN** an existing config/transport/Inspector/socket/peer/activation boundary raises Exception
+- **THEN** at most one fixed bounded stage line identifies that attempted boundary, then the same exception is bare-reraised with original identity/type/traceback and recovery unchanged. No private value or exception content is emitted and no later action is authorized.
+
+#### Scenario: Optional observer initialization progresses or refuses
+- **WHEN** its original imports/custody/source/registry/worker/listener/publication boundaries are entered
+- **THEN** at most seven constant once-only entry labels and at most one closed stage/exact-type refusal line may be emitted; source=None fallback, original socket/currentness/stop/cleanup/result behavior remain. Entry labels do not prove completion, readiness, cause or permission.
+
+#### Scenario: Diagnostics or original startup state are unavailable
+- **WHEN** an output operation fails, an exception type/stage is unsupported, initial stop is already set, or the original startup/peer/deadline check cannot be verified
+- **THEN** diagnostic failure cannot change the original outcome, exception identity, cleanup or deadline epochs; unknown classes map only to OtherError, initial cancellation stays silent, and missing observations stay unknown rather than granting authority or accepting a pending capability.
+
+This diagnostic-only R0055/R0201, RT-T266.3/VD-T266.5 (#35) leaf preserves219/62/18/eight OPEN groups, all pins and300s/110s. Candidate210's later control flow and unit metadata do not identify its exact refusal or close full M1/live acceptance.
