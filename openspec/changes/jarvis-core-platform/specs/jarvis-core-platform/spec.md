@@ -3011,3 +3011,20 @@ The installer SHALL expose only closed private attempted-stage diagnostics at th
 - **THEN** diagnostic failure cannot change the original outcome, exception identity, cleanup or deadline epochs; unknown classes map only to OtherError, initial cancellation stays silent, and missing observations stay unknown rather than granting authority or accepting a pending capability.
 
 This diagnostic-only R0055/R0201, RT-T266.3/VD-T266.5 (#35) leaf preserves219/62/18/eight OPEN groups, all pins and300s/110s. Candidate210's later control flow and unit metadata do not identify its exact refusal or close full M1/live acceptance.
+
+### Requirement: Observer listener construction does not eagerly hydrate MasterSource authority
+The installer SHALL construct the current-custody native observer listener with no selected MasterSource and no eager full native-loader lookup, while preserving complete current proof at every existing source-dependent demand boundary.
+
+#### Scenario: The observer listener starts before any MasterSource demand
+- **WHEN** the fixed Inspector captures current Core custody and constructs its native observation registry
+- **THEN** it passes selected_profile_source=None and the registry retains _master_source=None without calling current_master_source or is_current_sealed; existing exact custody/configuration/peer/socket/receipt gates, stop/publication/cleanup and two/six-second deadlines remain. No background hydration or native subprocess is started for listener construction. The obsolete source-hydration entry label is absent; remaining bounded diagnostics cannot grant authority.
+
+#### Scenario: A source-dependent operation needs current Jarvis proof
+- **WHEN** an existing owner policy, source read/delivery, planner or child/effect path requests MasterSource authority
+- **THEN** its existing full fresh current_master_source, exact Jarvis identity and current-seal/native/Resources/owner/policy/lineage/deadline checks remain authoritative. Only a successful demand verifier may populate _master_source; failure clears it. The direct cached planner path denies None, stale, wrong-type, foreign or changed proof before effects and independently revalidates its source and owner joins. Listener availability or retained qualification evidence cannot substitute for this proof.
+
+#### Scenario: Startup stops or demand proof is unavailable
+- **WHEN** cancellation, invalid custody/listener, unavailable or failed current source proof, or service shutdown occurs
+- **THEN** the existing failure/ordinary receipt/closed-source-operation behavior and owned worker/registry/PIDFD/socket/subprocess cleanup remain; no asynchronous worker, longer deadline, fabricated grant, repeated uncertain effect or proof bypass is introduced. Demand-time full native proof and300s/110s bounds remain unchanged; listener success is not functional chat/Resources/planning or full M1 acceptance.
+
+This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) refinement preserves219/62/18/eight OPEN groups. Root Pi strict validation precedes Luna implementation and Sol separate observer-only pin review; actual effect/denial/recovery and affected-flow UI evidence remain independently required.
