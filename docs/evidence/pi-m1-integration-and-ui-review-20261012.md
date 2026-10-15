@@ -2208,3 +2208,22 @@ representation mismatch is consistent with the precise AttributeError; private
 response content was not collected. Sol is refining a bounded native receipt
 serializer while preserving original SDK handling and all genuine completion,
 digest, no-tools, currentness, privacy and recovery requirements.
+
+### Candidate 207 finite native response receipt refinement
+
+Planning candidate `d290e9b0aad78620186ef163d6771097bae44eb7`, archive SHA-256
+`722f40ff226dd96bb6cac5c7cfbd025744b05f2fb5cc4a091b7dd1f32d548739`, contains
+the Sol-owned four-artifact refinement and append-only native receipt
+amendment. It deliberately covers both receipt serialization sites and the
+same extractor's exact-dictionary function-call representation. Native/SDK
+serialization remains lossless and bounded; unknown representations supply no
+completion authority. Provider dispatch, full digest joins, no-tools policy,
+currentness, diagnostics, cleanup and original deadlines remain required.
+
+Identified Pi sealed staging and strict specs/plan/status/apply-instructions
+checks each exited0. All four artifacts were complete; apply ready,one complete
+and93 remaining of94 tasks. Evidence: `candidate207-stage.log`,
+`candidate207-specs.json`, `candidate207-gates.log`, `candidate207-status.json`,
+`candidate207-apply.json`. These validate planning only; source implementation,
+Sol review and meaningful Pi contracts must precede a protected observation.
+Native/provider/Root completion and M1 acceptance stay open.
