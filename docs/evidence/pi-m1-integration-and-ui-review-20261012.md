@@ -2450,3 +2450,45 @@ lists. Production sources and pins are byte-for-byte unchanged. A new exact
 candidate must pass focused Pi qualification before a protected observation.
 Evidence: `candidate212-stage.log`, `candidate212-specs.json`,
 `candidate212-gates.log`. No local tests,runtime,preview or installer ran.
+
+### Candidate 213 exact observer-startup refusal
+
+Candidate `fac50031ebdc5871106dbcd0340a73662dcb26e7`,archive SHA-256
+`463e3767073ab8557cc60124bd97412442b3abaee7b6d3f5669d8786e7233333`,
+passed Pi sealed staging,strict specs and plan checks (all0). The complete
+adopter/Inspector unit suites passed157 tests in1.11s,no skips,contracts0.
+Core87c3b96d and observer74f9951c remained unchanged. Evidence:
+`candidate213-stage.log`, `candidate213-specs.json`, `candidate213-gates.log`.
+
+The single guarded actual update ended exit4/RuntimeError and automatically
+verified recovery of the prior Core and ingress. Its fixed private refusal
+label was `HERMES_INGRESS_FINISH_REFUSAL_V1=observer_socket`. The log's Pi-local
+birth/end window was09:50:49.187038994–09:54:55.437683595 Europe/Lisbon.
+Log SHA-256: `dffa595bfb6f02eec80def3df63fb91bf4bc88807582dbf3c281509c29c020d9`.
+
+Bounded journal selection retained only closed observer labels and fixed
+invocation/timestamp metadata. Invocation3261dae52eb14916ac6135cc49abf9c0
+emitted imports at1792054471249895us,custody at1792054471300868us,and
+master_source at1792054471491488us. No registry,worker,listener,publish or
+refusal label was observed before recovery. This places the observed interval
+within master-source lookup or its immediate validation before registry;it
+does not identify a particular internal subcall. Labels file
+`candidate213-observer-labels.json` SHA-256:
+`50daa3496a8e69aa5955990f60645c1561f78ed68062c178bd51554bc3fd0fa2`.
+No raw journal messages,arguments,environment,prompt or provider content
+entered the evidence.
+
+Fresh independent readback found all four owned services active;the protected
+public Jarvis page again showed secure IDLE,11 accepted/9 completed/2 failed,
+five private chats and zero active turns. No further actual update was
+attempted. Source inspection shows eager master-source lookup performs full
+native prompt readbacks before the six-second listener wait;the current
+tests had mocked that helper. Sol is refining a demand-only source-hydration
+boundary without weakening source authority or widening deadlines. Full M1
+and public functional/Resources/provider/identity acceptance remain OPEN.
+
+An independent Sol/Luna audit also confirmed that current Overview source is
+byte-identical to PR23 head544f9ae6 and contains the saved763839e5 HUD behavior;
+the current safer iris-CSS test must be retained. No duplicate source merge,
+feature issue,branch or PR is needed. Exact-candidate affected-flow and
+phone/tablet/wide rendered review remain outstanding after M1.
