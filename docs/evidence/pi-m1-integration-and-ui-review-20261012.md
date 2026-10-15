@@ -2668,3 +2668,22 @@ The proposed reader still requires Sol's four-artifact refinement, Luna
 implementation, fresh-install base retention, strict custody/currentness
 failure coverage, source pins and exact Pi effect/render qualification.
 Issue35 was updated with214–217 outcomes and restoration; it remains OPEN.
+
+### Candidate218 compile-free runtime-base specification gate
+
+Sol refinement648bd15e40e1f3766f124e4619bd6d95a4e65707 updated all four
+artifacts and added the append-only2026-10-15 compile-free runtime-base
+amendment. Root integrated it asbff1ca8155b1ae5fb71b13eab671c32f5fb922f5;
+archive SHA-2568ac8df3c253482368623e4d627a5f045e788e338fe2058467d11f3b63c245bae.
+The existing protected Pi stager sealed that exact source without service
+changes. Stage/list/strict-specs/plan/status/apply each exited0; all four
+artifacts were done, apply ready,109 total/five complete/104 remaining.
+The root was the existing local OpenSpec root, with no store change.
+
+The existing Luna owns bounded task108 Core orchestration/tests in isolated
+clone `/private/tmp/hermes-luna-runtime-resources-base-reader`, branch
+`codex/fix-runtime-resources-base-reader`, based on exact218. Root task107
+is complete from these gates; implementation108, qualification109 and full acceptance
+remain separate and OPEN. Runtime code, pins, services or real chat success
+are not inferred from a validated specification. The219/62/18/eight groups,
+task103 and all unobserved target obligations remain OPEN.
