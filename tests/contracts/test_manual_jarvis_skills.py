@@ -378,7 +378,10 @@ class ManualJarvisSkillsTests(unittest.TestCase):
         shared_manifest, shared_tree, shared_count = manual_skills._same_materialization_digests(
             new_manifest, new_files)
 
-        with tempfile.TemporaryDirectory(prefix="hermes-helper-transition-") as directory:
+        # The runuser child validates and resolves this admin-owned home. The
+        # runner's TMPDIR is intentionally root-private, so put only this real
+        # cross-UID fixture under the searchable system /run parent.
+        with tempfile.TemporaryDirectory(prefix="hermes-helper-transition-", dir="/run") as directory:
             base = Path(directory)
             os.chown(base, account.pw_uid, account.pw_gid)
             home = self.make_home(base)
