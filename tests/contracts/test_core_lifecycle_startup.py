@@ -215,6 +215,115 @@ def test_root_core_registry_enrollment_hashes_distinct_response(monkeypatch):
         os.close(registry._lifecycle_startup_probes[handle]["pidfd"])
 
 
+@pytest.mark.skipif(os.geteuid() != 0 or not hasattr(os, "pidfd_open"),
+                    reason="Root startup enrollment requires the Root actor and Linux pidfds")
+@pytest.mark.parametrize("registry_kind", ["core", "lifecycle"])
+@pytest.mark.parametrize("leading_pair", [("-", "_"), ("_", "-")])
+def test_generated_startup_context_ids_keep_full_urlsafe_suffix_and_pass_real_claim(
+        monkeypatch, registry_kind, leading_pair):
+    from dataclasses import replace
+    from hermes_installer.remote import core_gateway_inspector
+
+    cohort = _cohort(peer_pid=os.getpid())
+    suffixes = (leading_pair[0] + "a" * 31, leading_pair[1] + "b" * 31)
+    token_calls = []
+
+    def token_urlsafe(nbytes):
+        token_calls.append(nbytes)
+        if nbytes == 32:
+            return "H" * 43
+        if nbytes == 24 and token_calls.count(24) <= 2:
+            return suffixes[token_calls.count(24) - 1]
+        pytest.fail("unexpected random-token request in enrollment/claim path")
+
+    read_fd, write_fd = os.pipe()
+    monkeypatch.setattr(observer.secrets, "token_urlsafe", token_urlsafe)
+    monkeypatch.setattr(observer.os, "pidfd_open", lambda _pid, _flags: read_fd)
+    monkeypatch.setattr(core_gateway_inspector, "_unit_properties",
+                        lambda *_args, **_kwargs: {
+                            "MainPID": str(cohort.peer_pid), "InvocationID": cohort.invocation_id})
+    monkeypatch.setattr(core_gateway_inspector, "_boot_id", lambda: cohort.boot_id)
+    monkeypatch.setattr(core_gateway_inspector, "_proc_start_ticks",
+                        lambda _pid: cohort.peer_start_ticks)
+    monkeypatch.setattr(core_gateway_inspector, "_current_core_source",
+                        lambda *_args, **_kwargs: cohort.core_source_generation)
+
+    if registry_kind == "core":
+        registry = _registry_for_probe(cohort, monkeypatch)
+        monkeypatch.setattr(registry, "_lifecycle_startup_peer_current",
+            lambda row, selected: row.get("cohort") is selected and selected is cohort
+                and row.get("expiry", 0) > time.monotonic())
+        registry_operation = registry._handle
+    else:
+        registry = _root_cli_registry_for_probe(cohort, monkeypatch)
+        registry._pidfd = read_fd
+        registry._config = object()
+        registry_operation = registry._handle_lifecycle
+
+    try:
+        handle = registry.enroll_lifecycle_startup_probe(cohort=cohort)
+        row = registry._lifecycle_startup_probes[handle]
+        assert token_calls == [32, 24, 24]
+        assert row["probe_id"] == "p-" + suffixes[0]
+        assert row["session_id"] == "s-" + suffixes[1]
+        assert row["probe_id"][2:] == suffixes[0]
+        assert row["session_id"][2:] == suffixes[1]
+        assert row["probe_id"] != row["session_id"]
+        assert row["expiry"] == cohort.deadline_monotonic
+        assert row["expected_text_sha256"] == hashlib.sha256(
+            (observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + row["nonce"]).encode("ascii")).hexdigest()
+
+        client = observer.CoreNativeObservationClient(socket_path=Path("/unused"))
+        monkeypatch.setattr(observer, "_codex_account_fingerprint",
+                            lambda _resolver: cohort.account_fingerprint)
+        peer = (cohort.peer_pid, cohort.peer_uid, cohort.peer_gid)
+        claim_payload = {"probe_handle": handle}
+
+        with pytest.raises(ValueError, match="unavailable to this native peer"):
+            registry_operation((cohort.peer_pid + 1, cohort.peer_uid, cohort.peer_gid), {
+                "schema": 1, "op": "claim-lifecycle-startup-probe", "nonce": "wrong-peer",
+                **claim_payload,
+            })
+        assert row["claimed_peer"] is None
+
+        def root_rpc(operation, payload):
+            return registry_operation(peer, {
+                "schema": 1, "op": operation, "nonce": "claim-nonce", **dict(payload),
+            })
+
+        client._rpc = root_rpc
+        context = client.claim_lifecycle_startup_probe(handle)
+        assert context.is_root_issued()
+        assert context.probe_id == row["probe_id"]
+        assert context.session_id == row["session_id"]
+        assert context.nonce == row["nonce"]
+        assert context.cohort_sha256 == cohort.cohort_sha256
+        assert context.deadline_monotonic == row["expiry"]
+        with pytest.raises(ValueError, match="unavailable to this native peer"):
+            registry_operation(peer, {
+                "schema": 1, "op": "claim-lifecycle-startup-probe", "nonce": "duplicate",
+                **claim_payload,
+            })
+
+        invalid_probe = replace(context, probe_id=suffixes[0])
+        invalid_session = replace(context, session_id=suffixes[1])
+        assert not invalid_probe.is_root_issued()
+        assert not invalid_session.is_root_issued()
+        with pytest.raises(observer.CoreNativeObservationUnavailable,
+                           match="Root lifecycle probe context"):
+            with observer.lifecycle_startup_probe_scope(
+                    invalid_probe, identity="Jarvis", expected_instructions="Jarvis"):
+                pytest.fail("unprefixed probe ID entered the startup scope")
+        with pytest.raises(observer.CoreNativeObservationUnavailable,
+                           match="Root lifecycle probe context"):
+            with observer.lifecycle_startup_probe_scope(
+                    invalid_session, identity="Jarvis", expected_instructions="Jarvis"):
+                pytest.fail("unprefixed session ID entered the startup scope")
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
 def test_lifecycle_handler_registers_only_the_fixed_method_and_rejects_extra_params():
     class Server:
         def __init__(self):

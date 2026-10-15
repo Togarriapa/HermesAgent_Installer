@@ -4276,8 +4276,8 @@ class RootCoreNativeObservationRegistry:
                 os.close(pidfd)
                 raise ValueError
             handle = secrets.token_urlsafe(32)
-            probe_id = secrets.token_urlsafe(24)
-            session_id = secrets.token_urlsafe(24)
+            probe_id = "p-" + secrets.token_urlsafe(24)
+            session_id = "s-" + secrets.token_urlsafe(24)
             nonce = secrets.token_hex(16)
             expected_text_sha256 = hashlib.sha256(
                 (_LIFECYCLE_STARTUP_RESPONSE_PREFIX + nonce).encode("ascii")).hexdigest()
@@ -8434,8 +8434,8 @@ class RootLifecycleNativeObservationRegistry:
             raise CoreNativeObservationUnavailable("guarded new-source cohort is not current")
         try:
             handle = secrets.token_urlsafe(32)
-            probe_id = secrets.token_urlsafe(24)
-            session_id = secrets.token_urlsafe(24)
+            probe_id = "p-" + secrets.token_urlsafe(24)
+            session_id = "s-" + secrets.token_urlsafe(24)
             nonce = secrets.token_hex(16)
             expected_text_sha256 = hashlib.sha256(
                 (_LIFECYCLE_STARTUP_RESPONSE_PREFIX + nonce).encode("ascii")).hexdigest()
