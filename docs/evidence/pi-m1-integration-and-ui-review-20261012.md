@@ -3047,3 +3047,36 @@ need a concrete probe diff. A future finite native IntersectionObserver
 intersectionRect sample/disconnect approach may be reviewed with the same
 visibility/positive-area/44px/center-hit/no-running/240ms-no-advance guards;
 neither this suggestion nor either draft establishes rendered acceptance.
+
+### Heartbeat13:07: preserved service, scope and visual evidence
+
+At2026-10-15T13:09:31Z all four existing Pi services were freshly active.
+Current OpenSpec status/apply-instructions on the exact225 seal both exited0:
+four artifacts present, ready,109 total/eight complete/101 remaining. Root's
+subsequent documentation commits do not change those artifacts or any runtime,
+tool or test bytes. Existing21 remote branches and the open issue queue were
+inspected; no new agent, duplicate issue, remote branch or PR was created.
+
+Root visually inspected the preserved224 desktop1440x900 Overview fixture
+capture through a Pi-generated900x563 JPEG review thumbnail. Original PNG
+`desktop-1440x900-overview-fixture.png` SHA-256
+097c04374f38c8eed87d440ebf43017c300319ac56bd17aba12ffd9d167a3506;
+thumbnail `desktop-overview-review900-hb1307.jpg`,20310 bytes, SHA-256
+14962e1f6a137df52585b9cd41f38b8584ed9d6b37c0efb29c1e0910e82afb55.
+Both remain in `/var/tmp/jarvis-ui224-affected-flows/`. This frame shows the
+central orbital Jarvis reactor, surrounding owner-turn counters, explicit
+service/readiness distinction, primary navigation and voice entry. The command
+panel extends below this viewport. The thumbnail is a qualitative desktop
+frame review, not proof of animation, complete control reachability, contrast,
+phone/tablet UX, live authentication or chat; the failed224 report remains.
+Image decoding/thumbnail generation ran only on Pi; browser-shell reads copied
+the fixture image bytes for inspection without changing the production UI.
+
+Existing Luna independently audited #41/#42 against actual gateway/chat/mobile
+source and three official Cloudflare documentation pages; Sol reviewed source
+and provider claims. Preserve the bounded assessment in
+`docs/research/device-pairing-android-readiness-20261015.md`. Renewable native
+installation binding/individual revoke and an Android build/source owner remain
+missing; Managed OAuth is a candidate whose public-client/PKCE/callback and
+per-installation guarantees are unresolved. Neither issue is promoted to Ready,
+and no new requirement/artifact/issue/account/device/build action follows.
