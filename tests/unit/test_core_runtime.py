@@ -913,8 +913,13 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
                         var / "core-runtime" / "adapter-migration-backup")
     monkeypatch.setattr(core, "RESOURCES_RECORD",
                         var / "core-runtime" / "resources-discovery.json")
+    if request is None:
+        raise AssertionError("runtime CAS fixture needs pytest-owned cleanup")
+    runtime_root = Path(tempfile.mkdtemp(prefix="core-runtime-cas-", dir="/run"))
+    runtime_root.chmod(0o700)
+    request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
     monkeypatch.setattr(core, "RESOURCES_CAS",
-                        var / "core-runtime" / "resources-cas")
+                        runtime_root / "resources-cas")
     monkeypatch.setattr(core, "PRIMARY_PROMPT_JOURNAL",
                         var / "core-runtime" / "primary-prompt-ownership.json")
     monkeypatch.setattr(core, "PRIMARY_PROMPT_BACKUPS",
@@ -945,7 +950,8 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
         core.NATIVE_ADOPTION_INGRESS_BACKUP,
     )
     outside = [str(path) for path in controlled_write_paths
-               if not path.resolve().is_relative_to(fixture_root)]
+               if not path.resolve().is_relative_to(fixture_root)
+               and path != core.RESOURCES_CAS]
     if service_root is not None:
         if (core.UNIT.resolve() != (service_root / "etc/systemd/system" / core.SERVICE).resolve()
                 or core.LIBEXEC_DIR.resolve() != (service_root / "usr/local/libexec").resolve()
@@ -977,19 +983,23 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
                         lambda adapter_source=None: b"test fixed core launcher")
     monkeypatch.setattr(core, "_install_bundled_resources", lambda _account: _resource_receipt())
 
-    def write_fixture_resources_discovery(*, repair_umask_dirs=False):
+    def write_fixture_resources_discovery(*, repair_umask_dirs=False,
+                                          _prepared_base=None):
         """Write a source-bound receipt and real immutable archive for cohort tests."""
         from hermes_installer.registry import manual_jarvis_skills as native
 
-        archive = native.build_manual_jarvis_skills_artifact()
+        if _prepared_base is None:
+            source_witness = core._resources_base_source_witness()
+            archive = native.build_manual_jarvis_skills_artifact()
+            prepared_base = core._retain_compiled_resources_base(archive, source_witness)
+        else:
+            prepared_base = core._check_prepared_resources_base(_prepared_base)
+            archive = prepared_base.archive
         artifact_sha = hashlib.sha256(archive).hexdigest()
         manifest, files = native._read_artifact(archive, artifact_sha)
         journal_raw = core._projection_file(
             core.JOURNAL, owner=core.ROOT_UID, group=core.ROOT_UID,
             mode=0o600, maximum=64 * 1024)
-        core._ensure_dir(core.RESOURCES_CAS, core.ROOT_UID, core.ROOT_UID, 0o700)
-        core._atomic_replace(core.RESOURCES_CAS / (artifact_sha + ".zip"),
-                             archive, 0o600, core.ROOT_UID, core.ROOT_UID)
         record = {
             "schema": 3,
             "native_readback_method": "root-pinned-hermes-loader-v2",
@@ -1027,16 +1037,21 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
 
     monkeypatch.setattr(core, "_write_resources_discovery", write_fixture_resources_discovery)
 
-    def read_fixture_resources_discovery(*, core_source_generation):
+    def read_fixture_resources_discovery(*, core_source_generation,
+                                         _prepared_base=None):
         """Project only a fixture receipt whose journal and CAS still join."""
         try:
+            prepared_base = (core._load_resources_base() if _prepared_base is None
+                             else core._check_prepared_resources_base(_prepared_base))
             raw = core._projection_file(core.RESOURCES_RECORD, owner=core.ROOT_UID,
                                         group=core.ROOT_UID, mode=0o600, maximum=16 * 1024)
             record = json.loads(raw)
             journal_raw = core._projection_file(core.JOURNAL, owner=core.ROOT_UID,
                 group=core.ROOT_UID, mode=0o600, maximum=64 * 1024)
-            archive = core._projection_file(core.RESOURCES_CAS / (record["artifact_sha256"] + ".zip"),
-                owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o600, maximum=16 * 1024 * 1024)
+            archive = core._projection_file(
+                core.RESOURCES_CAS / (record["artifact_sha256"] + ".zip"),
+                owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o600,
+                maximum=16 * 1024 * 1024)
         except (OSError, KeyError, ValueError, TypeError):
             return {"resources_state": "stale"}
         if (record.get("core_source_generation") != core_source_generation
@@ -1059,9 +1074,10 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
             # this transition window as stale; keep the fixture projection
             # aligned with that contract rather than treating the refusal as
             # a malformed journal.
-            overlay_record, overlay_contents, overlay_raw = core._resources_skill_overlay_read()
+            overlay_record, overlay_contents, overlay_raw = core._resources_skill_overlay_read(
+                _prepared_base=prepared_base)
             effective_archive, effective_sha = core._current_resources_overlay_artifact(
-                native.build_manual_jarvis_skills_artifact(), overlay_record,
+                prepared_base.archive, overlay_record,
                 overlay_contents, overlay_raw)
         except core.CoreRuntimeError:
             return {"resources_state": "stale"}
@@ -1105,8 +1121,8 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
     return calls, enabled
 
 
-def test_install_resume_and_rollback_use_only_fixed_owned_paths(tmp_path, monkeypatch):
-    calls, enabled = _fake_runtime(tmp_path, monkeypatch)
+def test_install_resume_and_rollback_use_only_fixed_owned_paths(tmp_path, monkeypatch, request):
+    calls, enabled = _fake_runtime(tmp_path, monkeypatch, request=request)
     recovery_lock_states = []
     original_locked_recovery = core._recover_interrupted_adapter_update_locked
     def observe_locked_recovery():
@@ -1132,8 +1148,8 @@ def test_install_resume_and_rollback_use_only_fixed_owned_paths(tmp_path, monkey
                for argv, unit_exists in calls)
 
 
-def test_interrupted_recovery_reuses_an_already_held_lock(tmp_path, monkeypatch):
-    _fake_runtime(tmp_path, monkeypatch)
+def test_interrupted_recovery_reuses_an_already_held_lock(tmp_path, monkeypatch, request):
+    _fake_runtime(tmp_path, monkeypatch, request=request)
     _prepare_adapter_lock_state_fixture()
     def fail_if_nested_lock():
         raise AssertionError("held recovery attempted a nested adapter lock")
@@ -1154,8 +1170,8 @@ def test_interrupted_recovery_reuses_an_already_held_lock(tmp_path, monkeypatch)
 
 
 def test_interrupted_recovery_locks_before_cohort_read_and_releases_on_failure(
-        tmp_path, monkeypatch):
-    _fake_runtime(tmp_path, monkeypatch)
+        tmp_path, monkeypatch, request):
+    _fake_runtime(tmp_path, monkeypatch, request=request)
     _prepare_adapter_lock_state_fixture()
     events = []
     original_lock = core._adapter_update_lock
@@ -2490,7 +2506,7 @@ def test_root_update_artifact_cache_refuses_lost_lock_and_clears_after_builder_e
 def test_incoming_adapter_verifies_old_a0_without_relaxing_public_discovery(
         tmp_path, monkeypatch, request, owner_overlay):
     calls, enabled, _launcher, _selection = _install_legacy_service_fixture(
-        tmp_path, monkeypatch, journal_state="installed")
+        tmp_path, monkeypatch, journal_state="installed", request=request)
     core.migrate_owned_core_to_adapter_path()
     _prepare_cohort_resource_materialization(
         tmp_path, monkeypatch, request, owner_overlay=owner_overlay)
@@ -2551,7 +2567,7 @@ def test_incoming_adapter_verifies_old_a0_without_relaxing_public_discovery(
 def test_incoming_adapter_old_a0_proof_denies_tamper_before_effects(
         tmp_path, monkeypatch, request, tamper):
     calls, enabled, _launcher, _selection = _install_legacy_service_fixture(
-        tmp_path, monkeypatch, journal_state="installed")
+        tmp_path, monkeypatch, journal_state="installed", request=request)
     core.migrate_owned_core_to_adapter_path()
     _prepare_cohort_resource_materialization(
         tmp_path, monkeypatch, request,
@@ -2709,8 +2725,9 @@ def test_incoming_adapter_old_a0_proof_denies_tamper_before_effects(
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
-def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, monkeypatch):
-    calls, _enabled, old_launcher, _selection = _install_legacy_service_fixture(tmp_path, monkeypatch)
+def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, monkeypatch, request):
+    calls, _enabled, old_launcher, _selection = _install_legacy_service_fixture(
+        tmp_path, monkeypatch, request=request)
     token = core.TOKEN.read_bytes()
     old_unit = core.UNIT.read_bytes()
 
@@ -2729,8 +2746,9 @@ def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, 
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
-def test_adapter_migration_restores_exact_owned_files_after_restart_failure(tmp_path, monkeypatch):
-    calls, _enabled, old_launcher, _selection = _install_legacy_service_fixture(tmp_path, monkeypatch)
+def test_adapter_migration_restores_exact_owned_files_after_restart_failure(tmp_path, monkeypatch, request):
+    calls, _enabled, old_launcher, _selection = _install_legacy_service_fixture(
+        tmp_path, monkeypatch, request=request)
     token = core.TOKEN.read_bytes()
     old_unit = core.UNIT.read_bytes()
     old_journal = core.JOURNAL.read_bytes()
@@ -2748,8 +2766,9 @@ def test_adapter_migration_restores_exact_owned_files_after_restart_failure(tmp_
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
-def test_post_migration_recovery_restores_exact_legacy_files_and_selection(tmp_path, monkeypatch):
-    calls, enabled, old_launcher, selection = _install_legacy_service_fixture(tmp_path, monkeypatch)
+def test_post_migration_recovery_restores_exact_legacy_files_and_selection(tmp_path, monkeypatch, request):
+    calls, enabled, old_launcher, selection = _install_legacy_service_fixture(
+        tmp_path, monkeypatch, request=request)
     bootstrap = sys.modules["hermes_installer.remote.native_plugin_bootstrap"]
     restore_selection = bootstrap.restore_native_resources_plugin_selection
     def tracked_restore_selection(*args, **kwargs):
@@ -2782,8 +2801,10 @@ def test_post_migration_recovery_restores_exact_legacy_files_and_selection(tmp_p
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
-def test_post_migration_recovery_refuses_changed_current_launcher_before_touching_state(tmp_path, monkeypatch):
-    calls, _enabled, _old_launcher, _selection = _install_legacy_service_fixture(tmp_path, monkeypatch)
+def test_post_migration_recovery_refuses_changed_current_launcher_before_touching_state(
+        tmp_path, monkeypatch, request):
+    calls, _enabled, _old_launcher, _selection = _install_legacy_service_fixture(
+        tmp_path, monkeypatch, request=request)
     core.migrate_owned_core_to_adapter_path()
     before_journal = core.JOURNAL.read_bytes()
     before_unit = core.UNIT.read_bytes()
@@ -3111,7 +3132,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(
         tmp_path, monkeypatch, request, registered_obsidian):
     real_wait_for_listener = core._wait_for_listener
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
-        tmp_path, monkeypatch, journal_state="installed")
+        tmp_path, monkeypatch, journal_state="installed", request=request)
     core.migrate_owned_core_to_adapter_path()
     prepared = _prepare_cohort_resource_materialization(
         tmp_path, monkeypatch, request, registered_obsidian=registered_obsidian)
@@ -3707,7 +3728,7 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     guard_runner = subprocess.run
     real_wait_for_listener = core._wait_for_listener
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
-        tmp_path, monkeypatch, journal_state="installed")
+        tmp_path, monkeypatch, journal_state="installed", request=request)
     core.migrate_owned_core_to_adapter_path()
     _prepare_cohort_resource_materialization(tmp_path, monkeypatch, request)
     _fake_update_pidfd(monkeypatch, enabled, request)
@@ -5309,8 +5330,8 @@ def test_m1_rollback_refuses_owner_resources_edit_before_any_restore_effect(
     assert resources_raw != core.RESOURCES_RECORD.read_bytes()
 
 
-def test_failed_start_is_resumable_without_rotating_session_credential(tmp_path, monkeypatch):
-    _fake_runtime(tmp_path, monkeypatch, fail_enable_once=True)
+def test_failed_start_is_resumable_without_rotating_session_credential(tmp_path, monkeypatch, request):
+    _fake_runtime(tmp_path, monkeypatch, fail_enable_once=True, request=request)
     with pytest.raises(core.CoreRuntimeError, match="injected"):
         core.install_or_resume()
     token = core.TOKEN.read_bytes()
@@ -5320,8 +5341,8 @@ def test_failed_start_is_resumable_without_rotating_session_credential(tmp_path,
     assert core.TOKEN.read_bytes() == token
 
 
-def test_rollback_cleans_journaled_preparing_partial_stage(tmp_path, monkeypatch):
-    _fake_runtime(tmp_path, monkeypatch)
+def test_rollback_cleans_journaled_preparing_partial_stage(tmp_path, monkeypatch, request):
+    _fake_runtime(tmp_path, monkeypatch, request=request)
     original = core._owned_file
     interrupted = {"done": False}
 

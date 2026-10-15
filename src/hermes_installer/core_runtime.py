@@ -35,6 +35,8 @@ _HELPER_IMPORT_STDERR_LIMIT=16*1024
 # hardened. Its only difference from the current package is that helper member;
 # the helper itself is not installed into the owner's Hermes tree.
 LEGACY_MATERIALIZED_RESOURCES_ARTIFACT_SHA256="f73463c641ac3744007ee8395b663802d5c916f59256fa8184ad2b4f5594b274"
+_RESOURCES_BASE_ARTIFACT_SHA256="76d01dd6547025945e04f9b3fdd521e3419bc1ba523def4a9304335099a09741"
+_RESOURCES_BASE_SEAL=object()
 # Exact PM paths observed with the original 002 umask. Only these admin-owned
 # directories may be normalized by the explicit root Resources refresh.
 PM_DIRECTORY_MODE_CONTRACT={
@@ -1826,16 +1828,160 @@ def _verified_legacy_materialization(native,current_manifest,current_files,*,rep
    repair_umask_dirs=True)
  return archive,old_manifest,old_files,artifact_sha,manifest_sha
 
+@dataclass(frozen=True,slots=True)
+class _PreparedResourcesBase:
+ archive:bytes
+ source_witness:tuple
+ cas_identity:tuple
+ ancestry_identity:tuple
+ _seal:object=field(repr=False,compare=False)
+
+def _resources_base_source_witness():
+ """Bind the fixed pure Resources base to the exact installed builder inputs."""
+ from .registry import manual_jarvis_skills as native
+ try:
+  _validate_adapter_source_path()
+  return native._root_artifact_source_witness(
+   ADAPTER_SOURCE,tuple(_ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256))
+ except Exception:
+  raise CoreRuntimeError("fixed Resources base source witness differs") from None
+
+def _resources_base_cas_snapshot():
+ """Read the one reviewed base archive through retained no-follow Root ancestry."""
+ if (not isinstance(RESOURCES_CAS,Path) or not RESOURCES_CAS.is_absolute()
+     or ".." in RESOURCES_CAS.parts):
+  raise CoreRuntimeError("fixed Resources base CAS path differs")
+ flags=os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0)
+ rootfd=os.open("/",flags); fds=[rootfd]; chain=[]
+ try:
+  root_info=os.fstat(rootfd)
+  directory_signature=lambda item:(item.st_dev,item.st_ino,item.st_mode,item.st_uid,item.st_gid,
+                                   item.st_nlink,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
+  if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid!=ROOT_UID
+      or root_info.st_gid!=ROOT_UID or stat.S_IMODE(root_info.st_mode)&0o022
+      or directory_signature(root_info)!=directory_signature(
+          os.stat("/",follow_symlinks=False))):
+   raise CoreRuntimeError("fixed Resources base ancestry differs")
+  root_ancestry=("/",root_info.st_dev,root_info.st_ino,root_info.st_mode,
+                 root_info.st_uid,root_info.st_gid)
+  chain.append((None,"/",rootfd,directory_signature(root_info),root_ancestry))
+  parent=rootfd
+  for index,component in enumerate(RESOURCES_CAS.parts[1:]):
+   child=os.open(component,flags,dir_fd=parent)
+   fds.append(child)
+   info=os.fstat(child)
+   named=os.stat(component,dir_fd=parent,follow_symlinks=False)
+   final=index==len(RESOURCES_CAS.parts[1:])-1
+   if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=ROOT_UID or info.st_gid!=ROOT_UID
+       or stat.S_IMODE(info.st_mode)&0o022
+       or (final and stat.S_IMODE(info.st_mode)!=0o700)
+       or directory_signature(info)!=directory_signature(named)):
+    raise CoreRuntimeError("fixed Resources base ancestry custody differs")
+   ancestry=(component,info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_gid)
+   chain.append((parent,component,child,directory_signature(info),ancestry)); parent=child
+  name=_RESOURCES_BASE_ARTIFACT_SHA256+".zip"
+  file_fd=os.open(name,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0),dir_fd=parent)
+  try:
+   before=os.fstat(file_fd)
+   signature=lambda item:(item.st_dev,item.st_ino,item.st_mode,item.st_uid,item.st_gid,
+                          item.st_nlink,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
+   if (not stat.S_ISREG(before.st_mode) or before.st_uid!=ROOT_UID or before.st_gid!=ROOT_UID
+       or stat.S_IMODE(before.st_mode)!=0o600 or before.st_nlink!=1
+       or not 0<before.st_size<=16*1024*1024):
+    raise CoreRuntimeError("fixed Resources base CAS custody differs")
+   chunks=[]; total=0
+   while total<=16*1024*1024:
+    block=os.read(file_fd,min(65536,16*1024*1024+1-total))
+    if not block: break
+    chunks.append(block); total+=len(block)
+   after=os.fstat(file_fd)
+   named=os.stat(name,dir_fd=parent,follow_symlinks=False)
+   data=b"".join(chunks)
+   if (len(data)!=before.st_size or len(data)>16*1024*1024
+       or signature(before)!=signature(after) or signature(before)!=signature(named)):
+    raise CoreRuntimeError("fixed Resources base CAS changed while reading")
+   for ancestor,component,opened,expected,_ancestry in chain:
+    named_signature=(directory_signature(os.stat("/",follow_symlinks=False))
+                     if ancestor is None else directory_signature(os.stat(
+                         component,dir_fd=ancestor,follow_symlinks=False)))
+    if directory_signature(os.fstat(opened))!=expected or named_signature!=expected:
+     raise CoreRuntimeError("fixed Resources base ancestry changed while reading")
+   if hashlib.sha256(data).hexdigest()!=_RESOURCES_BASE_ARTIFACT_SHA256:
+    raise CoreRuntimeError("fixed Resources base CAS digest differs")
+   return data,signature(before),tuple(row[4] for row in chain)
+  finally:
+   os.close(file_fd)
+ except OSError:
+  raise CoreRuntimeError("fixed Resources base CAS is unavailable") from None
+ finally:
+  for fd in reversed(fds): os.close(fd)
+
+def _check_prepared_resources_base(base):
+ if (type(base) is not _PreparedResourcesBase or base._seal is not _RESOURCES_BASE_SEAL
+     or type(base.archive) is not bytes or not 0<len(base.archive)<=16*1024*1024
+     or hashlib.sha256(base.archive).hexdigest()!=_RESOURCES_BASE_ARTIFACT_SHA256):
+  raise CoreRuntimeError("prepared Resources base is unavailable")
+ before=_resources_base_source_witness()
+ archive,identity,ancestry=_resources_base_cas_snapshot()
+ after=_resources_base_source_witness()
+ if (before!=after or after!=base.source_witness
+     or archive!=base.archive or identity!=base.cas_identity
+     or ancestry!=base.ancestry_identity):
+  raise CoreRuntimeError("prepared Resources base changed during use")
+ return base
+
+def _load_resources_base():
+ """Verify one retained base CAS without invoking the pure Resources compiler."""
+ from .registry import manual_jarvis_skills as native
+ before=_resources_base_source_witness()
+ archive,identity,ancestry=_resources_base_cas_snapshot()
+ try:
+  native._read_artifact(archive,_RESOURCES_BASE_ARTIFACT_SHA256)
+ except Exception:
+  raise CoreRuntimeError("fixed Resources base archive is invalid") from None
+ after_archive,after_identity,after_ancestry=_resources_base_cas_snapshot()
+ after=_resources_base_source_witness()
+ if (before!=after or archive!=after_archive or identity!=after_identity
+     or ancestry!=after_ancestry):
+  raise CoreRuntimeError("fixed Resources base changed during verification")
+ return _PreparedResourcesBase(archive,before,identity,ancestry,_RESOURCES_BASE_SEAL)
+
+def _retain_compiled_resources_base(archive,source_witness):
+ """Retain the exact output of an existing deliberate compiler operation."""
+ from .registry import manual_jarvis_skills as native
+ if (type(archive) is not bytes or not archive
+     or len(archive)>16*1024*1024
+     or hashlib.sha256(archive).hexdigest()!=_RESOURCES_BASE_ARTIFACT_SHA256):
+  raise CoreRuntimeError("compiled Resources base differs from the reviewed output")
+ try:
+  native._read_artifact(archive,_RESOURCES_BASE_ARTIFACT_SHA256)
+ except Exception:
+  raise CoreRuntimeError("compiled Resources base archive is invalid") from None
+ if _resources_base_source_witness()!=source_witness:
+  raise CoreRuntimeError("compiled Resources base source witness changed before retention")
+ _write_resources_cas_artifact(archive,_RESOURCES_BASE_ARTIFACT_SHA256)
+ retained,identity,ancestry=_resources_base_cas_snapshot()
+ final_witness=_resources_base_source_witness()
+ if retained!=archive or final_witness!=source_witness:
+  raise CoreRuntimeError("compiled Resources base changed before retention")
+ return _PreparedResourcesBase(archive,final_witness,identity,ancestry,_RESOURCES_BASE_SEAL)
+
 def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False,
-                                _prepared_transition=None):
+                                _prepared_transition=None,_prepared_base=None):
  """Build a root-derived receipt and initiate a fresh pinned native-loader query."""
  from .registry import manual_jarvis_skills as native
- archive=native.build_manual_jarvis_skills_artifact()
+ if _prepared_base is None:
+  source_witness=_resources_base_source_witness()
+  archive=native.build_manual_jarvis_skills_artifact()
+  base=_retain_compiled_resources_base(archive,source_witness)
+ else:
+  base=_check_prepared_resources_base(_prepared_base)
+  archive=base.archive
  base_archive=archive
  # Owner edits are root-journaled overlays over exact pinned member IDs. The
  # source artifact remains byte-for-byte immutable and is rebuilt above.
  if _prepared_transition is None:
-  overlay_record,overlay_contents,overlay_raw=_resources_skill_overlay_read()
+  overlay_record,overlay_contents,overlay_raw=_resources_skill_overlay_read(_prepared_base=base)
   archive,artifact_sha=_current_resources_overlay_artifact(
    base_archive,overlay_record,overlay_contents,overlay_raw)
  else:
@@ -1891,6 +2037,7 @@ def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False,
        repair_umask_dirs=False)!=manifest_sha
      or hashlib.sha256(_current_primary_prompt()).hexdigest()!=active_sha):
   raise CoreRuntimeError("pinned source or owned Resources changed during native read-back")
+ _check_prepared_resources_base(base)
  if (native_receipt["active_primary_prompt_sha256"]!=active_sha
      or native_receipt["bundled_primary_prompt_sha256"]!=bundled_sha
      or native_receipt["active_prompt_matches_bundled_primary"] is not (active_sha==bundled_sha)):
@@ -1915,10 +2062,11 @@ def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False,
   "state":"discovered","functional":False,"enabled":False,"target_verified":False,
  }
 
-def _write_resources_discovery(*,repair_umask_dirs=False):
+def _write_resources_discovery(*,repair_umask_dirs=False,_prepared_base=None):
  """Retain the source-bound artifact and independently read-backed receipt as root."""
  _ensure_dir(RESOURCES_RECORD.parent,ROOT_UID,ROOT_UID,0o700)
- archive,record=_verified_resources_payload(repair_umask_dirs=repair_umask_dirs)
+ archive,record=_verified_resources_payload(repair_umask_dirs=repair_umask_dirs,
+  _prepared_base=_prepared_base)
  _ensure_dir(RESOURCES_CAS,ROOT_UID,ROOT_UID,0o700)
  cas=RESOURCES_CAS/(record["artifact_sha256"]+".zip")
  try: os.lstat(cas); cas_present=True
@@ -1931,14 +2079,17 @@ def _write_resources_discovery(*,repair_umask_dirs=False):
  _atomic_replace(RESOURCES_RECORD,(json.dumps(record,sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
  return record
 
-def _resources_skill_overlay_read():
+def _resources_skill_overlay_read(*, _prepared_base=None):
  """Read the strict root journal and its content-addressed owner bytes."""
  path=RESOURCES_SKILL_OVERLAYS/"active.json"
  try: raw=_projection_file(path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
  except FileNotFoundError: raw=None
- from .registry import manual_jarvis_skills as native
- base_archive=native.build_manual_jarvis_skills_artifact(); base_sha=hashlib.sha256(base_archive).hexdigest()
- if raw is None: return {"schema":1,"base_artifact_sha256":base_sha,"skills":{}}, {}, None
+ base=_load_resources_base() if _prepared_base is None else _check_prepared_resources_base(_prepared_base)
+ base_archive=base.archive; base_sha=_RESOURCES_BASE_ARTIFACT_SHA256
+ if raw is None:
+  result=({"schema":1,"base_artifact_sha256":base_sha,"skills":{}}, {}, None)
+  _check_prepared_resources_base(base)
+  return result
  try:
   record=json.loads(raw)
   if (type(record) is not dict or set(record)!={"schema","base_artifact_sha256","skills"}
@@ -1956,6 +2107,7 @@ def _resources_skill_overlay_read():
    if hashlib.sha256(content).hexdigest()!=row["content_sha256"]: raise ValueError
    contents[name]=content
   _current_resources_overlay_artifact(base_archive,record,contents,raw)
+  _check_prepared_resources_base(base)
   return record,contents,raw
  except Exception:
   raise CoreRuntimeError("root Resources skill overlay journal is malformed or unverifiable") from None
@@ -2098,11 +2250,15 @@ def list_archived_resources_skill_versions(skill_id,core_source_generation):
      or re.fullmatch(r"[0-9a-f]{64}",core_source_generation) is None):
   raise CoreRuntimeError("Resources archive-list request is malformed")
  recover_resources_skill_overlay()
- current=read_current_resources_discovery(core_source_generation=core_source_generation)
+ base=_load_resources_base()
+ current=read_current_resources_discovery(core_source_generation=core_source_generation,
+  _prepared_base=base)
  if current.get("resources_state")!="discovered": raise CoreRuntimeError("verified Resources source is unavailable")
  directory=RESOURCES_SKILL_OVERLAYS
  try: names=os.listdir(directory)
- except FileNotFoundError: return []
+ except FileNotFoundError:
+  _check_prepared_resources_base(base)
+  return []
  candidates=sorted(name[:-5] for name in names if re.fullmatch(r"[0-9a-f]{64}\.json",name))
  if len(candidates)>4096: raise CoreRuntimeError("Resources archive inventory exceeds its bound")
  results=[]
@@ -2119,10 +2275,11 @@ def list_archived_resources_skill_versions(skill_id,core_source_generation):
      group=ROOT_UID,mode=0o600,maximum=256*1024)
    if hashlib.sha256(content).hexdigest()!=metadata["content_sha256"]: continue
    from .registry import manual_jarvis_skills as native
-   transform.build_effective_artifact(native.build_manual_jarvis_skills_artifact(),skill_id,content)
+   transform.build_effective_artifact(base.archive,skill_id,content)
    results.append({"restore_id":restore_id,"sha256":metadata["content_sha256"]})
   except (CoreRuntimeError,ValueError,TypeError,KeyError):
    continue
+ _check_prepared_resources_base(base)
  return results
 
 def list_archived_resources_skills(core_source_generation):
@@ -2131,17 +2288,20 @@ def list_archived_resources_skills(core_source_generation):
      or re.fullmatch(r"[0-9a-f]{64}",core_source_generation) is None):
   raise CoreRuntimeError("Resources archive inventory request is malformed")
  recover_resources_skill_overlay()
- current=read_current_resources_discovery(core_source_generation=core_source_generation)
+ base=_load_resources_base()
+ current=read_current_resources_discovery(core_source_generation=core_source_generation,
+  _prepared_base=base)
  if current.get("resources_state")!="discovered": raise CoreRuntimeError("verified Resources source is unavailable")
  directory=RESOURCES_SKILL_OVERLAYS
  try: names=os.listdir(directory)
- except FileNotFoundError: return []
+ except FileNotFoundError:
+  _check_prepared_resources_base(base)
+  return []
  candidates=sorted(name[:-5] for name in names if re.fullmatch(r"[0-9a-f]{64}\.json",name))
  if len(candidates)>4096: raise CoreRuntimeError("Resources archive inventory exceeds its bound")
  from .registry import manual_jarvis_skills as native
  from .registry import resources_skill_overlay as transform
- base=native.build_manual_jarvis_skills_artifact()
- base_manifest,_=native._read_artifact(base,hashlib.sha256(base).hexdigest())
+ base_manifest,_=native._read_artifact(base.archive,_RESOURCES_BASE_ARTIFACT_SHA256)
  pinned={row["skill_id"] for row in base_manifest["skill_members"]}
  output={}
  for restore_id in candidates:
@@ -2154,10 +2314,11 @@ def list_archived_resources_skills(core_source_generation):
    content=_projection_file(directory/(metadata["content_sha256"]+".bin"),owner=ROOT_UID,
      group=ROOT_UID,mode=0o600,maximum=256*1024)
    if hashlib.sha256(content).hexdigest()!=metadata["content_sha256"]: continue
-   transform.build_effective_artifact(base,skill_id,content)
+   transform.build_effective_artifact(base.archive,skill_id,content)
    output.setdefault(skill_id,[]).append({"restore_id":restore_id,"sha256":metadata["content_sha256"]})
   except (CoreRuntimeError,ValueError,TypeError,KeyError):
    continue
+ _check_prepared_resources_base(base)
  return [{"skill_id":name,"versions":sorted(versions,key=lambda row:row["restore_id"])}
          for name,versions in sorted(output.items())]
 
@@ -2268,7 +2429,14 @@ def admin_resources_skill(action,skill_id,*,expected_sha256,idempotency_key,core
     raise CoreRuntimeError("Resources skill idempotency key was reused with different input")
    return prior["result"]
   except FileNotFoundError: pass
-  before=read_current_resources_discovery(core_source_generation=core_source_generation)
+  # A mutation is an explicit compile operation. Retain and bind that exact
+  # output before any currentness/readback path consumes the runtime reader.
+  from .registry import manual_jarvis_skills as native
+  base_source_witness=_resources_base_source_witness()
+  base_archive=native.build_manual_jarvis_skills_artifact()
+  base=_retain_compiled_resources_base(base_archive,base_source_witness)
+  before=read_current_resources_discovery(core_source_generation=core_source_generation,
+   _prepared_base=base)
   if before.get("resources_state")!="discovered": raise CoreRuntimeError("verified Resources source is unavailable")
   current_sha=before["artifact_sha256"]
   current_archive=_projection_file(RESOURCES_CAS/(current_sha+".zip"),owner=ROOT_UID,group=ROOT_UID,
@@ -2278,7 +2446,7 @@ def admin_resources_skill(action,skill_id,*,expected_sha256,idempotency_key,core
   current_manifest,current_files=native._read_artifact(current_archive,current_sha)
   row=next((item for item in current_manifest["skill_members"] if item["skill_id"]==skill_id),None)
   if row is None: raise CoreRuntimeError("skill is not pinned in the current Resources source")
-  old_record,old_contents,old_raw=_resources_skill_overlay_read()
+  old_record,old_contents,old_raw=_resources_skill_overlay_read(_prepared_base=base)
   current_content=current_files[row["archive_path"]]
   current_content_sha=hashlib.sha256(current_content).hexdigest()
   if current_content_sha!=expected_sha256: raise CoreRuntimeError("Resources skill changed; reload before editing")
@@ -2315,7 +2483,6 @@ def admin_resources_skill(action,skill_id,*,expected_sha256,idempotency_key,core
    next_sha=hashlib.sha256(next_content).hexdigest()
    _atomic_replace(RESOURCES_SKILL_OVERLAYS/(next_sha+".bin"),next_content,0o600,ROOT_UID,ROOT_UID)
    next_contents[skill_id]=next_content
-  base_archive=native.build_manual_jarvis_skills_artifact()
   next_archive,digests=transform.compose_overlays(base_archive,next_contents)
   next_sha=hashlib.sha256(next_archive).hexdigest()
   next_record={"schema":1,"base_artifact_sha256":hashlib.sha256(base_archive).hexdigest(),"skills":{
@@ -2336,7 +2503,7 @@ def admin_resources_skill(action,skill_id,*,expected_sha256,idempotency_key,core
     next_sha=next_sha,previous_sha=current_sha)
    _atomic_replace(RESOURCES_SKILL_OVERLAYS/"active.json",
     (json.dumps(next_record,sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
-   receipt=_write_resources_discovery()
+   receipt=_write_resources_discovery(_prepared_base=base)
    _atomic_replace(operation_path,(json.dumps({"schema":1,"request_sha256":request_sha,"result":result},
     sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
    (RESOURCES_SKILL_OVERLAYS/"pending.json").unlink(missing_ok=True); _sync_directory(RESOURCES_SKILL_OVERLAYS)
@@ -2350,7 +2517,7 @@ def admin_resources_skill(action,skill_id,*,expected_sha256,idempotency_key,core
  finally:
   fcntl.flock(fd,fcntl.LOCK_UN); os.close(fd)
 
-def read_current_resources_discovery(*,core_source_generation):
+def read_current_resources_discovery(*,core_source_generation,_prepared_base=None):
  """Recheck the root receipt, held CAS, owner manifest, and every installed member."""
  pending={"core_version":None,"provider":None,"model":None,"account_state":"unknown",
   "resources_state":"pending","resource_counts":None,"resources_revision":None,
@@ -2397,6 +2564,7 @@ def read_current_resources_discovery(*,core_source_generation):
       or record["enabled"] is not False or record["target_verified"] is not False):
    return {**pending,"resources_state":"stale"}
   _journal()
+  base=_load_resources_base() if _prepared_base is None else _check_prepared_resources_base(_prepared_base)
   artifact_sha=record["artifact_sha256"]
   if not isinstance(artifact_sha,str) or len(artifact_sha)!=64 or any(c not in "0123456789abcdef" for c in artifact_sha):
    return {**pending,"resources_state":"stale"}
@@ -2405,9 +2573,9 @@ def read_current_resources_discovery(*,core_source_generation):
   if hashlib.sha256(archive).hexdigest()!=artifact_sha: return {**pending,"resources_state":"stale"}
   from .registry import manual_jarvis_skills as native
   manifest,files=native._read_artifact(archive,artifact_sha)
-  overlay_record,overlay_contents,overlay_raw=_resources_skill_overlay_read()
+  overlay_record,overlay_contents,overlay_raw=_resources_skill_overlay_read(_prepared_base=base)
   effective_archive,effective_sha=_current_resources_overlay_artifact(
-   native.build_manual_jarvis_skills_artifact(),overlay_record,overlay_contents,overlay_raw)
+   base.archive,overlay_record,overlay_contents,overlay_raw)
   if effective_sha!=artifact_sha or effective_archive!=archive:
    return {**pending,"resources_state":"stale"}
   overlay=manifest.get("effective_overlay")
@@ -2452,6 +2620,7 @@ def read_current_resources_discovery(*,core_source_generation):
       or record["resources_revision"]!=manifest["source"]["revision"]
       or record["resources_tree"]!=manifest["source"]["git_tree"]):
    return {**pending,"resources_state":"stale"}
+  _check_prepared_resources_base(base)
   return {"core_version":COMMIT[:12],"provider":None,"model":None,"account_state":"unknown",
    "resources_state":"discovered","resource_counts":counts,"resources_revision":record["resources_revision"],
    "artifact_sha256":artifact_sha,"discovery_observed_at_utc":record["observed_at_utc"],
@@ -2471,7 +2640,10 @@ def read_current_resources_profile_source(*,core_source_generation):
  if (os.geteuid()!=ROOT_UID or not isinstance(core_source_generation,str)
      or re.fullmatch(r"[0-9a-f]{64}",core_source_generation) is None):
   return None
- before=read_current_resources_discovery(core_source_generation=core_source_generation)
+ try: base=_load_resources_base()
+ except Exception: return None
+ before=read_current_resources_discovery(core_source_generation=core_source_generation,
+  _prepared_base=base)
  if before.get("resources_state")!="discovered": return None
  try:
   record_bytes=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
@@ -2507,12 +2679,14 @@ def read_current_resources_profile_source(*,core_source_generation):
   # archive/member work; no mutable dict from an earlier observation is trusted.
   after_record=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
    mode=0o600,maximum=16*1024)
-  after=read_current_resources_discovery(core_source_generation=core_source_generation)
+  after=read_current_resources_discovery(core_source_generation=core_source_generation,
+   _prepared_base=base)
   if (after_record!=record_bytes or after!=before
       or hashlib.sha256(_projection_file(RESOURCES_CAS/(artifact_sha+".zip"),
        owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)).hexdigest()!=artifact_sha
       or _hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)!=ownership_sha):
    return None
+  _check_prepared_resources_base(base)
   return VerifiedResourcesProfileSource(
    schema=1,core_source_generation=core_source_generation,hermes_revision=record["hermes_revision"],
    resources_revision=record["resources_revision"],resources_tree=record["resources_tree"],
@@ -5920,11 +6094,12 @@ def _bind_resources_record_to_final_journal(record,final_journal_raw):
  result["core_ownership_sha256"]=hashlib.sha256(final_journal_raw).hexdigest()
  return result
 
-def _adapter_update_current_resource_payload(*,overlay_snapshot,reconstruction):
+def _adapter_update_current_resource_payload(*,overlay_snapshot,reconstruction,prepared_base):
  """Run the fixed native loader and prove A1 while the old process is still held."""
  overlay_record,contents,overlay_raw=overlay_snapshot
  archive,record=_verified_resources_payload(
-  _prepared_transition=(overlay_record,contents,overlay_raw,reconstruction))
+  _prepared_transition=(overlay_record,contents,overlay_raw,reconstruction),
+  _prepared_base=prepared_base)
  if (archive!=reconstruction.new_composed_archive
      or record.get("artifact_sha256")!=reconstruction.new_composed_artifact_sha256
      or record.get("core_source_generation")!=_core_source_generation()
@@ -6566,7 +6741,9 @@ def _update_owned_core_adapter_locked():
    owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
   if hashlib.sha256(old_base).hexdigest()!=old_base_sha:
    raise CoreRuntimeError("original owner-overlay base CAS is unavailable")
+ new_base_source_witness=_resources_base_source_witness()
  new_base=native.build_manual_jarvis_skills_artifact()
+ prepared_base=_retain_compiled_resources_base(new_base,new_base_source_witness)
  reconstruction=_make_adapter_update_reconstruction(old_base,new_base,old_archive,
   overlay_record,overlay_contents,overlay_raw,
   _projection_file(HERMES_HOME/"skills"/native._GENERATION/native._OWNER_FILE,
@@ -6819,7 +6996,8 @@ def _update_owned_core_adapter_locked():
    raise CoreRuntimeError("native helper-only importer returned a different generation")
   with _guarded_old_read_scope(old_read,purpose="resources-readback"):
    verified_archive,rpre_record=_adapter_update_current_resource_payload(
-    overlay_snapshot=(overlay_record,overlay_contents,overlay_raw),reconstruction=reconstruction)
+    overlay_snapshot=(overlay_record,overlay_contents,overlay_raw),reconstruction=reconstruction,
+    prepared_base=prepared_base)
   _write_resources_cas_artifact(verified_archive,rpre_record["artifact_sha256"])
   rpre_raw=(json.dumps(rpre_record,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
   cohort["phase"]="resources-rebound"
@@ -6852,7 +7030,8 @@ def _update_owned_core_adapter_locked():
    state["primary_raw"]=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
     group=ROOT_UID,mode=0o600,maximum=64*1024)
   with _guarded_old_read_scope(old_read,purpose="resources-readback"):
-   if read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered":
+   if read_current_resources_discovery(core_source_generation=old_core,
+       _prepared_base=prepared_base).get("resources_state")!="discovered":
     raise CoreRuntimeError("rebound A1 discovery/current installed tree did not verify")
   from .remote import obsidian_owner_lifecycle as obsidian
   if (snapshots["obsidian_registration_state"]=="registered"
@@ -6920,9 +7099,10 @@ def _update_owned_core_adapter_locked():
    process_identity_sha256=new_process_sha,purpose="resources-readback")
   state["new_read"]=new_read
   with _guarded_new_read_scope(new_read,purpose="resources-readback"):
-   if read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered":
+   if read_current_resources_discovery(core_source_generation=old_core,
+       _prepared_base=prepared_base).get("resources_state")!="discovered":
     raise CoreRuntimeError("new-source current Resources A1 readback failed")
-   actual_archive,actual_resources=_verified_resources_payload()
+   actual_archive,actual_resources=_verified_resources_payload(_prepared_base=prepared_base)
   if (actual_archive!=new_archive or actual_resources.get("artifact_sha256")!=new_artifact
       or actual_resources.get("loaded_skill_inventory_sha256")!=starting_record.get("loaded_skill_inventory_sha256")
       or actual_resources.get("active_primary_prompt_sha256")!=starting_record.get("active_primary_prompt_sha256")):
@@ -7006,9 +7186,10 @@ def _update_owned_core_adapter_locked():
         or not _validate_guarded_new_read(new_read)):
      raise CoreRuntimeError("initial adopted starting tuple changed during guarded journal read")
     state["resources_raw"]=starting_resources_raw
-    if read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered":
+    if read_current_resources_discovery(core_source_generation=old_core,
+        _prepared_base=prepared_base).get("resources_state")!="discovered":
      raise CoreRuntimeError("initial adopted A1 Resources discovery did not verify")
-    actual_archive,actual_resources=_verified_resources_payload()
+    actual_archive,actual_resources=_verified_resources_payload(_prepared_base=prepared_base)
    if (actual_archive!=new_archive
        or actual_resources.get("active_primary_prompt_sha256")!=primary_values["soul_sha256"]):
     raise CoreRuntimeError("initial adopted primary differs from current native Resources readback")
@@ -7028,7 +7209,7 @@ def _update_owned_core_adapter_locked():
       or _adapter_process_identity(ADAPTER_SOURCE,new_adapter,old_core,new_pid)[1]!=new_process_sha):
    raise CoreRuntimeError("new Core startup proof lost its held source/process tuple")
   with _guarded_new_read_scope(new_read,purpose="resources-readback"):
-   fresh_archive,fresh_resources=_verified_resources_payload()
+   fresh_archive,fresh_resources=_verified_resources_payload(_prepared_base=prepared_base)
    if (fresh_archive!=new_archive
        or any(fresh_resources.get(key)!=actual_resources.get(key)
               for key in set(actual_resources)-{"observed_at_utc"})):
@@ -7115,7 +7296,8 @@ def _update_owned_core_adapter_locked():
   final_record=_journal()
   if (final_record.get("adapter_source")!=str(ADAPTER_SOURCE)
       or final_record.get("adapter_generation")!=new_adapter
-      or read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered"):
+      or read_current_resources_discovery(core_source_generation=old_core,
+       _prepared_base=prepared_base).get("resources_state")!="discovered"):
    raise CoreRuntimeError("committed source/Resources/discovery cohort failed final readback")
   return "journal-owned Hermes core and preserved Resources bindings updated to the verified adapter generation"
  except Exception as exc:

@@ -22,6 +22,9 @@ from hermes_installer.registry import manual_jarvis_skills as native
 from hermes_installer.registry import resources_skill_overlay as overlay
 from hermes_installer.registry.native_install import NativeInstallReceipt
 
+_PRODUCTION_READ_RESOURCES_DISCOVERY = core.read_current_resources_discovery
+_PRODUCTION_WRITE_RESOURCES_DISCOVERY = core._write_resources_discovery
+
 
 def _replace_helper(archive_bytes, helper_bytes):
     manifest, files = native._read_artifact(archive_bytes, hashlib.sha256(archive_bytes).hexdigest())
@@ -172,9 +175,8 @@ def overlay_runtime(tmp_path, monkeypatch, request):
     account = pwd.getpwnam("admin")
     # The verifier intentionally accepts only the real production layout:
     # every ancestor is root-owned/non-writable, then `admin/.hermes` is
-    # admin-owned mode 0700. A pytest tmp_path beneath sticky `/tmp` cannot
-    # satisfy that contract, so place only this isolated Hermes fixture under
-    # root-owned `/run`; journals and CAS remain under pytest's private tmp_path.
+    # admin-owned mode 0700. A pytest tmp_path beneath `/tmp` cannot satisfy
+    # that contract, so keep this fixture's journals and CAS under `/run` too.
     sandbox = Path(tempfile.mkdtemp(prefix="hermes-overlay-fixture-", dir="/run"))
     sandbox.chmod(0o755)
     admin_home = sandbox / "admin"
@@ -184,8 +186,10 @@ def overlay_runtime(tmp_path, monkeypatch, request):
     request.addfinalizer(lambda: shutil.rmtree(sandbox, ignore_errors=True))
     (home / "SOUL.md").write_text("# Jarvis\n", encoding="utf-8")
     (home / "SOUL.md").chmod(0o644)
-    store = tmp_path / "overlay-journal"
-    cas = tmp_path / "cas"
+    store = sandbox / "overlay-journal"
+    cas_parent = sandbox / "resource-cas-parent"
+    cas_parent.mkdir(mode=0o700)
+    cas = cas_parent / "cas"
     monkeypatch.setattr(core, "ROOT_UID", 0)
     monkeypatch.setattr(core, "HERMES_HOME", home)
     monkeypatch.setattr(core, "RESOURCES_SKILL_OVERLAYS", store)
@@ -267,11 +271,411 @@ def overlay_runtime(tmp_path, monkeypatch, request):
     monkeypatch.setattr(core, "_write_resources_discovery", write_receipt)
     member = native._read_artifact(base, base_sha)[0]["skill_members"][0]
     content = native._read_artifact(base, base_sha)[1][member["archive_path"]]
-    return SimpleNamespace(home=home, base=base, base_sha=base_sha,
+    return SimpleNamespace(sandbox=sandbox, home=home, base=base, base_sha=base_sha,
+        cas_parent=cas_parent, cas=cas,
         skill_id=member["skill_id"], base_content=content, installed=installed,
         current=current, generation="a" * 64,
         own_generation=lambda uid=account.pw_uid, gid=account.pw_gid: set_generation_owner(uid, gid),
         set_home_owner=set_home_owner, own_generation_as_admin=own_generation_as_admin)
+
+
+def _replace_resources_base_ancestor(fixture):
+    path = fixture.cas / f"{fixture.base_sha}.zip"
+    before = path.stat()
+    signature = lambda value: (value.st_dev, value.st_ino, value.st_mode, value.st_uid,
+                               value.st_gid, value.st_nlink, value.st_size,
+                               value.st_mtime_ns, value.st_ctime_ns)
+    moved = fixture.sandbox / "previous-resource-cas-parent"
+    os.replace(fixture.cas_parent, moved)
+    fixture.cas_parent.mkdir(mode=0o700)
+    fixture.cas_parent.chmod(0o700)
+    os.replace(moved / "cas", fixture.cas)
+    assert signature((fixture.cas / f"{fixture.base_sha}.zip").stat()) == signature(before)
+
+
+def test_runtime_resources_base_reads_retained_cas_without_recompiling(overlay_runtime, monkeypatch):
+    fixture = overlay_runtime
+
+    def forbidden_compile():
+        raise AssertionError("runtime Resources reads must not invoke the compiler")
+
+    monkeypatch.setattr(native, "build_manual_jarvis_skills_artifact", forbidden_compile)
+    prepared = core._load_resources_base()
+    record, contents, raw = core._resources_skill_overlay_read()
+
+    assert prepared.archive == fixture.base
+    assert prepared.source_witness
+    assert record == {"schema": 1, "base_artifact_sha256": fixture.base_sha, "skills": {}}
+    assert contents == {} and raw is None
+
+
+def test_runtime_base_bound_precedes_hashing_and_retention_recovers_cleanly(
+        overlay_runtime, monkeypatch):
+    fixture = overlay_runtime
+    oversized = core._PreparedResourcesBase(
+        bytes(16 * 1024 * 1024 + 1), (), (), (), core._RESOURCES_BASE_SEAL)
+
+    def forbidden_hash(_value):
+        raise AssertionError("prepared bytes must be bounded before hashing")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(core.hashlib, "sha256", forbidden_hash)
+        with pytest.raises(core.CoreRuntimeError, match="prepared Resources base is unavailable"):
+            core._check_prepared_resources_base(oversized)
+
+    path = fixture.cas / f"{fixture.base_sha}.zip"
+    witness = core._resources_base_source_witness()
+    path.chmod(0o640)
+    with pytest.raises(core.CoreRuntimeError, match="projection file custody"):
+        core._retain_compiled_resources_base(fixture.base, witness)
+    assert path.read_bytes() == fixture.base
+    assert path.stat().st_mode & 0o777 == 0o640
+    path.chmod(0o600)
+    path.unlink()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(core, "_resources_base_source_witness", lambda: ("changed",))
+        with pytest.raises(core.CoreRuntimeError, match="changed before retention"):
+            core._retain_compiled_resources_base(fixture.base, witness)
+    assert not path.exists()
+
+    original_writer = core._write_resources_cas_artifact
+
+    def interrupt_after_retaining(archive, digest):
+        original_writer(archive, digest)
+        raise core.CoreRuntimeError("simulated stop after immutable CAS retention")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(core, "_write_resources_cas_artifact", interrupt_after_retaining)
+        with pytest.raises(core.CoreRuntimeError, match="simulated stop"):
+            core._retain_compiled_resources_base(fixture.base, witness)
+    assert path.read_bytes() == fixture.base
+    first = core._load_resources_base()
+    first_file_identity = path.stat().st_ino
+    second = core._retain_compiled_resources_base(fixture.base, witness)
+    assert second.archive == first.archive == fixture.base
+    assert path.stat().st_ino == first_file_identity
+
+
+def test_runtime_base_denies_missing_cas_without_compiler_fallback(overlay_runtime, monkeypatch):
+    fixture = overlay_runtime
+    (fixture.cas / f"{fixture.base_sha}.zip").unlink()
+    calls = []
+
+    def forbidden_compile():
+        calls.append("compile")
+        raise AssertionError("runtime read must not invoke the compiler")
+
+    monkeypatch.setattr(native, "build_manual_jarvis_skills_artifact", forbidden_compile)
+    with pytest.raises(core.CoreRuntimeError, match="CAS is unavailable"):
+        core._load_resources_base()
+    assert calls == []
+
+
+def test_archived_resources_readers_reuse_the_verified_base(overlay_runtime, monkeypatch):
+    fixture = overlay_runtime
+    restore_id = "a" * 64
+    content = fixture.base_content + b"\narchived version\n"
+    content_sha = hashlib.sha256(content).hexdigest()
+    core._ensure_dir(core.RESOURCES_SKILL_OVERLAYS, core.ROOT_UID, core.ROOT_UID, 0o700)
+    core._atomic_replace(core.RESOURCES_SKILL_OVERLAYS / f"{content_sha}.bin",
+        content, 0o600, core.ROOT_UID, core.ROOT_UID)
+    metadata = {"schema": 1, "skill_id": fixture.skill_id,
+                "content_sha256": content_sha, "restore_id": restore_id}
+    core._atomic_replace(core.RESOURCES_SKILL_OVERLAYS / f"{restore_id}.json",
+        (json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n").encode(),
+        0o600, core.ROOT_UID, core.ROOT_UID)
+
+    def current(*, core_source_generation, _prepared_base):
+        assert core_source_generation == fixture.generation
+        assert _prepared_base.archive == fixture.base
+        return {"resources_state": "discovered"}
+
+    def forbidden_compile():
+        raise AssertionError("archive reads must not invoke the Resources compiler")
+
+    monkeypatch.setattr(core, "read_current_resources_discovery", current)
+    monkeypatch.setattr(native, "build_manual_jarvis_skills_artifact", forbidden_compile)
+
+    assert core.list_archived_resources_skill_versions(
+        fixture.skill_id, fixture.generation) == [{"restore_id": restore_id, "sha256": content_sha}]
+    assert core.list_archived_resources_skills(fixture.generation) == [{
+        "skill_id": fixture.skill_id,
+        "versions": [{"restore_id": restore_id, "sha256": content_sha}],
+    }]
+
+
+@pytest.mark.parametrize("fresh_writer", [False, True])
+def test_current_discovery_verifies_installed_tree_without_recompiling(
+        overlay_runtime, monkeypatch, fresh_writer):
+    fixture = overlay_runtime
+    journal = {"schema": 1, "state": "installed", "service": core.SERVICE}
+    journal_path = fixture.sandbox / "ownership.json"
+    record_path = fixture.sandbox / "resources-discovery.json"
+    journal_raw = (json.dumps(journal, sort_keys=True) + "\n").encode()
+    core._atomic_replace(journal_path, journal_raw, 0o600, core.ROOT_UID, core.ROOT_UID)
+    monkeypatch.setattr(core, "JOURNAL", journal_path)
+    monkeypatch.setattr(core, "RESOURCES_RECORD", record_path)
+    monkeypatch.setattr(core, "_journal", lambda: journal)
+    monkeypatch.setattr(core, "_core_source_generation", lambda: fixture.generation)
+
+    prepared = None if fresh_writer else core._load_resources_base()
+    if fresh_writer:
+        (fixture.cas / f"{fixture.base_sha}.zip").unlink()
+    source_archive = fixture.base if fresh_writer else prepared.archive
+    manifest, files = native._read_artifact(source_archive, fixture.base_sha)
+    inventory = native._canonical_json([{
+        "skill_id": row["skill_id"],
+        "sha256": hashlib.sha256(files[row["archive_path"]]).hexdigest(),
+    } for row in sorted(manifest["skill_members"], key=lambda item: item["skill_id"])])
+    active_prompt = (fixture.home / "SOUL.md").read_bytes()
+    monkeypatch.setattr(core, "_root_native_readback", lambda _manifest, _files, prompt, **_kwargs: {
+        "active_primary_prompt_sha256": hashlib.sha256(prompt).hexdigest(),
+        "bundled_primary_prompt_sha256": hashlib.sha256(
+            _files["registry/profiles/hermes/SOUL.md"]).hexdigest(),
+        "active_prompt_matches_bundled_primary": prompt == _files[
+            "registry/profiles/hermes/SOUL.md"],
+        "loaded_skill_inventory_sha256": hashlib.sha256(inventory).hexdigest(),
+    })
+
+    if fresh_writer:
+        original_compile = native.build_manual_jarvis_skills_artifact
+        compile_calls = []
+
+        def counted_compile():
+            compile_calls.append("compile")
+            return original_compile()
+
+        monkeypatch.setattr(native, "build_manual_jarvis_skills_artifact", counted_compile)
+        _PRODUCTION_WRITE_RESOURCES_DISCOVERY()
+        assert compile_calls == ["compile"]
+    else:
+        _PRODUCTION_WRITE_RESOURCES_DISCOVERY(_prepared_base=prepared)
+
+    def forbidden_compile():
+        raise AssertionError("current discovery must read the retained base CAS")
+
+    monkeypatch.setattr(native, "build_manual_jarvis_skills_artifact", forbidden_compile)
+    result = _PRODUCTION_READ_RESOURCES_DISCOVERY(core_source_generation=fixture.generation)
+
+    assert result["resources_state"] == "discovered"
+    assert result["artifact_sha256"] == fixture.base_sha
+    assert result["resource_counts"]["native_skills"] == 396
+
+
+@pytest.mark.parametrize("mutation", ["source", "cas-file", "ancestor"])
+def test_current_discovery_rechecks_source_and_cas_before_disclosure(
+        overlay_runtime, monkeypatch, mutation):
+    fixture = overlay_runtime
+    journal = {"schema": 1, "state": "installed", "service": core.SERVICE}
+    journal_path = fixture.sandbox / "ownership.json"
+    record_path = fixture.sandbox / "resources-discovery.json"
+    journal_raw = (json.dumps(journal, sort_keys=True) + "\n").encode()
+    core._atomic_replace(journal_path, journal_raw, 0o600, core.ROOT_UID, core.ROOT_UID)
+    monkeypatch.setattr(core, "JOURNAL", journal_path)
+    monkeypatch.setattr(core, "RESOURCES_RECORD", record_path)
+    monkeypatch.setattr(core, "_journal", lambda: journal)
+    monkeypatch.setattr(core, "_core_source_generation", lambda: fixture.generation)
+    prepared = core._load_resources_base()
+    manifest, files = native._read_artifact(prepared.archive, fixture.base_sha)
+    inventory = native._canonical_json([{
+        "skill_id": row["skill_id"],
+        "sha256": hashlib.sha256(files[row["archive_path"]]).hexdigest(),
+    } for row in sorted(manifest["skill_members"], key=lambda item: item["skill_id"])])
+    original_witness = core._resources_base_source_witness
+    changed = {"value": False}
+
+    def root_readback(_manifest, _files, prompt, **_kwargs):
+        if mutation == "source":
+            changed["value"] = True
+        elif mutation == "cas-file":
+            core._atomic_replace(fixture.cas / f"{fixture.base_sha}.zip", fixture.base,
+                0o600, core.ROOT_UID, core.ROOT_UID)
+        else:
+            _replace_resources_base_ancestor(fixture)
+        return {
+            "active_primary_prompt_sha256": hashlib.sha256(prompt).hexdigest(),
+            "bundled_primary_prompt_sha256": hashlib.sha256(
+                _files["registry/profiles/hermes/SOUL.md"]).hexdigest(),
+            "active_prompt_matches_bundled_primary": prompt == _files[
+                "registry/profiles/hermes/SOUL.md"],
+            "loaded_skill_inventory_sha256": hashlib.sha256(inventory).hexdigest(),
+        }
+
+    def source_witness():
+        witness = original_witness()
+        return witness + (("changed",) if changed["value"] else ())
+
+    monkeypatch.setattr(core, "_resources_base_source_witness", source_witness)
+    monkeypatch.setattr(core, "_root_native_readback", root_readback)
+    with pytest.raises(core.CoreRuntimeError, match="prepared Resources base changed during use"):
+        _PRODUCTION_WRITE_RESOURCES_DISCOVERY(_prepared_base=prepared)
+    assert not record_path.exists()
+
+
+@pytest.mark.parametrize("mutation", ["source", "cas-file", "ancestor"])
+def test_current_discovery_read_rechecks_final_base_before_disclosure(
+        overlay_runtime, monkeypatch, mutation):
+    fixture = overlay_runtime
+    journal = {"schema": 1, "state": "installed", "service": core.SERVICE}
+    journal_path = fixture.sandbox / "ownership.json"
+    core._atomic_replace(journal_path,
+        (json.dumps(journal, sort_keys=True) + "\n").encode(),
+        0o600, core.ROOT_UID, core.ROOT_UID)
+    monkeypatch.setattr(core, "JOURNAL", journal_path)
+    monkeypatch.setattr(core, "RESOURCES_RECORD", fixture.sandbox / "resources-discovery.json")
+    monkeypatch.setattr(core, "_journal", lambda: journal)
+    monkeypatch.setattr(core, "_core_source_generation", lambda: fixture.generation)
+    prepared = core._load_resources_base()
+    manifest, files = native._read_artifact(prepared.archive, fixture.base_sha)
+    inventory = native._canonical_json([{
+        "skill_id": row["skill_id"],
+        "sha256": hashlib.sha256(files[row["archive_path"]]).hexdigest(),
+    } for row in sorted(manifest["skill_members"], key=lambda item: item["skill_id"])])
+    monkeypatch.setattr(core, "_root_native_readback",
+        lambda _manifest, _files, prompt, **_kwargs: {
+            "active_primary_prompt_sha256": hashlib.sha256(prompt).hexdigest(),
+            "bundled_primary_prompt_sha256": hashlib.sha256(
+                _files["registry/profiles/hermes/SOUL.md"]).hexdigest(),
+            "active_prompt_matches_bundled_primary": prompt == _files[
+                "registry/profiles/hermes/SOUL.md"],
+            "loaded_skill_inventory_sha256": hashlib.sha256(inventory).hexdigest(),
+        })
+    _PRODUCTION_WRITE_RESOURCES_DISCOVERY(_prepared_base=prepared)
+
+    original_hash_tree = core._hash_generation_tree
+    original_witness = core._resources_base_source_witness
+    changed = {"value": False}
+    source_changed = {"value": False}
+
+    def hash_then_mutate(home, current_manifest, current_files, artifact_sha, **kwargs):
+        result = original_hash_tree(home, current_manifest, current_files, artifact_sha, **kwargs)
+        if not changed["value"]:
+            changed["value"] = True
+            if mutation == "source":
+                source_changed["value"] = True
+            elif mutation == "cas-file":
+                core._atomic_replace(fixture.cas / f"{fixture.base_sha}.zip", fixture.base,
+                    0o600, core.ROOT_UID, core.ROOT_UID)
+            else:
+                _replace_resources_base_ancestor(fixture)
+        return result
+
+    def source_witness():
+        witness = original_witness()
+        return witness + (("changed",) if source_changed["value"] else ())
+
+    monkeypatch.setattr(core, "_hash_generation_tree", hash_then_mutate)
+    monkeypatch.setattr(core, "_resources_base_source_witness", source_witness)
+
+    def forbidden_compile():
+        raise AssertionError("discovery reads must not fall back to the compiler")
+
+    monkeypatch.setattr(native, "build_manual_jarvis_skills_artifact", forbidden_compile)
+    result = _PRODUCTION_READ_RESOURCES_DISCOVERY(core_source_generation=fixture.generation)
+    assert changed["value"]
+    assert result["resources_state"] == "stale"
+
+
+def test_runtime_resources_base_rejects_each_changed_pinned_input(
+        overlay_runtime, monkeypatch):
+    original = tuple(core._ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256)
+    assert len(original) == 19
+    for index, (path, _digest) in enumerate(original):
+        pins = list(original)
+        pins[index] = (path, "0" * 64)
+        monkeypatch.setattr(core, "_ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256", tuple(pins))
+        with pytest.raises(core.CoreRuntimeError, match="source witness differs"):
+            core._load_resources_base()
+        monkeypatch.setattr(core, "_ROOT_UPDATE_ARTIFACT_EXPECTED_INPUT_SHA256", original)
+
+
+def test_runtime_resources_base_rejects_unsafe_or_changed_cas(overlay_runtime):
+    fixture = overlay_runtime
+    path = fixture.cas / f"{fixture.base_sha}.zip"
+    link = fixture.cas / "unexpected-link"
+
+    path.chmod(0o640)
+    with pytest.raises(core.CoreRuntimeError, match="CAS custody"):
+        core._load_resources_base()
+    path.chmod(0o600)
+
+    os.link(path, link)
+    with pytest.raises(core.CoreRuntimeError, match="CAS custody"):
+        core._load_resources_base()
+    link.unlink()
+
+    path.write_bytes(fixture.base[:-1] + bytes([fixture.base[-1] ^ 1]))
+    path.chmod(0o600)
+    with pytest.raises(core.CoreRuntimeError, match="CAS digest"):
+        core._load_resources_base()
+    core._atomic_replace(path, fixture.base, 0o600, core.ROOT_UID, core.ROOT_UID)
+
+    with path.open("wb") as stream:
+        stream.truncate(16 * 1024 * 1024 + 1)
+    path.chmod(0o600)
+    with pytest.raises(core.CoreRuntimeError, match="CAS custody"):
+        core._load_resources_base()
+    path.unlink()
+    target = fixture.cas / "replacement.zip"
+    target.write_bytes(fixture.base)
+    target.chmod(0o600)
+    path.symlink_to(target.name)
+    with pytest.raises((core.CoreRuntimeError, OSError)):
+        core._load_resources_base()
+    path.unlink()
+    target.unlink()
+    core._atomic_replace(path, fixture.base, 0o600, core.ROOT_UID, core.ROOT_UID)
+
+
+def test_runtime_resources_base_rejects_sticky_writable_ancestor(overlay_runtime):
+    fixture = overlay_runtime
+    fixture.sandbox.chmod(0o1777)
+    try:
+        with pytest.raises(core.CoreRuntimeError, match="ancestry custody"):
+            core._load_resources_base()
+    finally:
+        fixture.sandbox.chmod(0o755)
+
+
+def test_runtime_resources_base_rechecks_cas_identity_before_return(
+        overlay_runtime, monkeypatch):
+    fixture = overlay_runtime
+    snapshot = core._resources_base_cas_snapshot
+    calls = 0
+
+    def replace_after_first_snapshot():
+        nonlocal calls
+        result = snapshot()
+        calls += 1
+        if calls == 1:
+            core._atomic_replace(fixture.cas / f"{fixture.base_sha}.zip",
+                fixture.base, 0o600, core.ROOT_UID, core.ROOT_UID)
+        return result
+
+    monkeypatch.setattr(core, "_resources_base_cas_snapshot", replace_after_first_snapshot)
+    with pytest.raises(core.CoreRuntimeError, match="changed during verification"):
+        core._load_resources_base()
+    assert calls == 2
+
+
+def test_prepared_base_keeps_directory_object_identity_without_rejecting_owned_writes(
+        overlay_runtime):
+    fixture = overlay_runtime
+    prepared = core._load_resources_base()
+    sibling = fixture.cas / "owned-composed-or-journal-entry"
+    core._atomic_replace(sibling, b"legitimate operation-local artifact",
+        0o600, core.ROOT_UID, core.ROOT_UID)
+    assert core._check_prepared_resources_base(prepared) is prepared
+
+    before_file_identity = prepared.cas_identity
+    _replace_resources_base_ancestor(fixture)
+    path = fixture.cas / f"{fixture.base_sha}.zip"
+    file_stat = path.stat()
+    assert (file_stat.st_dev, file_stat.st_ino, file_stat.st_mode, file_stat.st_uid,
+            file_stat.st_gid, file_stat.st_nlink, file_stat.st_size,
+            file_stat.st_mtime_ns, file_stat.st_ctime_ns) == before_file_identity
+    with pytest.raises(core.CoreRuntimeError, match="changed during use"):
+        core._check_prepared_resources_base(prepared)
 
 
 def test_resources_write_cas_idempotency_archive_restore_and_native_readback(overlay_runtime):
