@@ -179,6 +179,9 @@ def overlay_runtime(tmp_path, monkeypatch, request):
     # that contract, so keep this fixture's journals and CAS under `/run` too.
     sandbox = Path(tempfile.mkdtemp(prefix="hermes-overlay-fixture-", dir="/run"))
     sandbox.chmod(0o755)
+    record_dir = sandbox / "root-records"
+    record_dir.mkdir(mode=0o700)
+    record_dir.chmod(0o700)
     admin_home = sandbox / "admin"
     admin_home.mkdir(mode=0o700)
     home = admin_home / ".hermes"
@@ -271,7 +274,8 @@ def overlay_runtime(tmp_path, monkeypatch, request):
     monkeypatch.setattr(core, "_write_resources_discovery", write_receipt)
     member = native._read_artifact(base, base_sha)[0]["skill_members"][0]
     content = native._read_artifact(base, base_sha)[1][member["archive_path"]]
-    return SimpleNamespace(sandbox=sandbox, home=home, base=base, base_sha=base_sha,
+    return SimpleNamespace(sandbox=sandbox, record_dir=record_dir,
+        home=home, base=base, base_sha=base_sha,
         cas_parent=cas_parent, cas=cas,
         skill_id=member["skill_id"], base_content=content, installed=installed,
         current=current, generation="a" * 64,
@@ -410,7 +414,7 @@ def test_current_discovery_verifies_installed_tree_without_recompiling(
     fixture = overlay_runtime
     journal = {"schema": 1, "state": "installed", "service": core.SERVICE}
     journal_path = fixture.sandbox / "ownership.json"
-    record_path = fixture.sandbox / "resources-discovery.json"
+    record_path = fixture.record_dir / "resources-discovery.json"
     journal_raw = (json.dumps(journal, sort_keys=True) + "\n").encode()
     core._atomic_replace(journal_path, journal_raw, 0o600, core.ROOT_UID, core.ROOT_UID)
     monkeypatch.setattr(core, "JOURNAL", journal_path)
@@ -468,7 +472,7 @@ def test_current_discovery_rechecks_source_and_cas_before_disclosure(
     fixture = overlay_runtime
     journal = {"schema": 1, "state": "installed", "service": core.SERVICE}
     journal_path = fixture.sandbox / "ownership.json"
-    record_path = fixture.sandbox / "resources-discovery.json"
+    record_path = fixture.record_dir / "resources-discovery.json"
     journal_raw = (json.dumps(journal, sort_keys=True) + "\n").encode()
     core._atomic_replace(journal_path, journal_raw, 0o600, core.ROOT_UID, core.ROOT_UID)
     monkeypatch.setattr(core, "JOURNAL", journal_path)
@@ -522,7 +526,7 @@ def test_current_discovery_read_rechecks_final_base_before_disclosure(
         (json.dumps(journal, sort_keys=True) + "\n").encode(),
         0o600, core.ROOT_UID, core.ROOT_UID)
     monkeypatch.setattr(core, "JOURNAL", journal_path)
-    monkeypatch.setattr(core, "RESOURCES_RECORD", fixture.sandbox / "resources-discovery.json")
+    monkeypatch.setattr(core, "RESOURCES_RECORD", fixture.record_dir / "resources-discovery.json")
     monkeypatch.setattr(core, "_journal", lambda: journal)
     monkeypatch.setattr(core, "_core_source_generation", lambda: fixture.generation)
     prepared = core._load_resources_base()
