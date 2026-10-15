@@ -2977,3 +2977,20 @@ The installer SHALL serialize the pinned native Codex response through one finit
 - **THEN** it reads only the literal call_id/name/arguments fields and applies its unchanged validation, duplicate-key-rejecting argument parse and canonical bytes, matching SDK/namespace extraction. Lifecycle/protected no-tools traffic refuses before a successful receipt; ordinary permitted calls retain existing lineage and independent Root review/admission. No generic mapping/object inspection or new tool authority follows.
 
 This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) correction preserves219/62/18/eight OPEN groups and300s/110s. Actual206 observer_receipt/AttributeError plus pinned source establishes the serialization mismatch; it does not establish a completed Root receipt or live acceptance.
+
+### Requirement: Root-runuser predicate refusal preserves exact behavior and source identity
+The installer SHALL retain all15 existing Root-runuser snapshot predicates in their original short-circuit order while giving each identical refusal a distinct literal source line for the existing source-bound failure-origin projection.
+
+#### Scenario: All existing process and pipe predicates pass
+- **WHEN** the actual snapshot's existing proc reads, Root IDs/parent/group/session, executable/argv and captured anonymous-pipe checks pass
+- **THEN** it returns the exact original snapshot tuple through unchanged repeated-currentness/PIDFD and no-frame-before-proof boundaries, without new effects, waits, retries or acceptance authority.
+
+#### Scenario: One or more existing predicates fail
+- **WHEN** any of the15 existing predicates refuses
+- **THEN** the first failing predicate in the unchanged order raises the same exact CoreRuntimeError and static message at its own distinct literal source line; the existing bounded source-provenance/tb_lineno projection may identify only that boundary. No field value, private payload, report/schema field, exception metadata or new permission is added.
+
+#### Scenario: Proc input or source-bound origin is unavailable
+- **WHEN** an existing read/conversion/short-stat check fails or exact candidate source/line identity cannot be verified
+- **THEN** original failure, unknown classification, close/no-frame/owned cleanup and protected recovery remain; a controlled probe, fixture, historical line or successful receipt contract cannot substitute for actual target completion.
+
+This observability-only R0055/R0201, RT-T266.3/VD-T266.5 (#35) refinement preserves219/62/18/eight OPEN groups and300s/110s. Actual208's failing predicate and genuine startup/live acceptance remain unknown/OPEN despite the separate controlled9/9 guard proof.
