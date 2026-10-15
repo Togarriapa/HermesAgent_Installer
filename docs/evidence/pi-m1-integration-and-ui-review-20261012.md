@@ -2514,3 +2514,35 @@ and all target acceptance remain separate. Logs: `candidate214-stage.log`,
 `candidate214-apply.json`. The recovered active ingress backup was independently
 confirmed absent. Existing Luna owns the two-source change and focused tests;
 Sol reviews before the observer-only pin and any new Root qualification.
+
+### Candidate 215 startup correction and independent lifecycle refusal
+
+Reviewed Luna source12f320f8 and test follow-ups32140af4/fddcbb78 were imported
+as6ead298,with separate observer-only pin edfb320. Exact candidate
+`edfb3203491f99890328a102757da6c3a7e00cae`,archive SHA-256
+`f3a6d00669155f844355e6719763bb891db35bfaf2bd148b2f84dc7d3ecbfea3`,
+passed Pi sealed staging and strict specs/plan checks (all0). Observer source
+and sole changed pin are
+`0aaee0ece618752f2b6c8955c49719d15bcfdebaa5c210ec27d4dab85201c8f4`;
+Core87c and every other existing pin remain unchanged.
+
+Six complete affected suites produced364 passed,one failed and five explicit
+official-SDK skips in45.83s,contracts exit1. The new Root-only full demand
+proof test ran and passed;the actual prompt-status/native readback path and
+absent-source constructed-registry receipt cases were exercised. Source/tests
+received independent Sol review. No local runtime or tests ran. Evidence:
+`candidate215-stage.log`, `candidate215-specs.json`, `candidate215-gates.log`.
+Candidate215 was not applied.
+
+The failed existing case was
+`test_lifecycle_llm_observer_consumes_exact_no_tool_terminal_once[dict_function_call-lifecycle]`.
+It refused before the callback,at the claimed context's `is_root_issued`
+validation (`Root startup probe is stale or malformed`). The failed generated
+ID values were not captured;neither field nor exact cause is asserted.
+Independent source inspection did establish a concrete pre-existing mismatch:
+both registries generate probe/session IDs with `token_urlsafe(24)`,whose
+first character can be a hyphen or underscore,but the unchanged ID validator
+requires an alphanumeric first character. Sol is refining a fixed-prefix
+producer correction with deterministic adverse-suffix tests. The failed gate
+will not be waived or rerun until chance produces a passing token. All source
+authority,custody,nonce entropy and deadlines must remain intact.
