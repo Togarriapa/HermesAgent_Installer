@@ -2546,7 +2546,7 @@ def test_adapter_refresh_finisher_success_order_is_silent(monkeypatch, capsys):
         "inspector-start-action", "inspector_active", "inspector_file", "inspector_process",
         "observer_socket", "inspector_pid", "observer_peer", "gateway_start", "tunnel_start",
         "active_config", "active_transport", "active_cohort", "active_cohort-check",
-        "active_cohort-check"]
+        "active_cohort-check", "active_cohort-check"]
     assert capsys.readouterr().err == ""
 
 
@@ -2567,7 +2567,7 @@ def test_adapter_refresh_finisher_reports_fixed_boundary_and_reraises_same_excep
         "inspector-start-action", "inspector_active", "inspector_file", "inspector_process",
         "observer_socket", "inspector_pid", "observer_peer", "gateway_start", "tunnel_start",
         "active_config", "active_transport", "active_cohort", "active_cohort-check",
-        "active_cohort-check"]
+        "active_cohort-check", "active_cohort-check"]
     assert events == success_order[:len(events)]
 
 
