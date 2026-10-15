@@ -2546,3 +2546,103 @@ requires an alphanumeric first character. Sol is refining a fixed-prefix
 producer correction with deterministic adverse-suffix tests. The failed gate
 will not be waived or rerun until chance produces a passing token. All source
 authority,custody,nonce entropy and deadlines must remain intact.
+
+### Candidate 216 ID-prefix specification gate
+
+Sol dbebf61f was imported as
+`7eda891ac67b3a3250a2a6fd370b9b2482fc68fc`,archive SHA-256
+`231ec1722f5c50ea61c42435b41bcc9c4d65301d54202e7f51e2ef94f7167172`.
+All four artifacts and one amendment restrict the correction to four p-/s-
+prefix assignments,full original24-byte random suffixes and deterministic
+both-producer/adverse-suffix tests. Pi sealed staging,strict specs/plan/status/
+apply each exited0. Evidence: `candidate216-stage.log`,
+`candidate216-specs.json`, `candidate216-gates.log`, `candidate216-status.json`,
+`candidate216-apply.json`. No activation followed from this plan gate.
+
+### Candidate 217 qualified update, public refusal and guarded restoration
+
+Reviewed Luna20ede931 plus867a097a test correction were imported as eedcf9d;
+separate observer-only pin8097ca9 became ed1c5c1. Exact candidate
+`ed1c5c108c5dc0d52fe31a12ec8dfcaa925af17f`,archive SHA-256
+`e930a27ee0b46e37e1d864a0740a54028ba66627c3c498503c1a586f4f3ad9e1`,
+passed Pi staging and strict specs/plan/status/apply (all0,four artifacts done,
+ready,106 total/two complete104 remaining at that seal). Observer source/pin:
+`d2baa338b7fad72c1707a0cc2e9b18dbdb67beee747043f8fafe21aea7f8033f`;
+Inspector source `16ea6713851796f2c0586eddb75f8774622bb15d701af3a0f7d7a83dd808976f`.
+Core87c and all other existing pins remain unchanged.
+
+Six full affected suites passed369 tests in45.38s with five explicit missing-
+SDK skips,contracts0. All four forced-prefix Root/Linux cases and the Root-only
+full demand proof ran. The existing official managed runtime's OpenAI2.24.0
+then passed all nine SDK/mixed-callback cases in0.46s,no skips,SDK0. These
+cover the five skipped cases plus four overlapping callback variants;they are
+not378 unique tests. No local runtime,tests,preview or installer ran. Logs:
+`candidate217-stage.log`, `candidate217-specs.json`, `candidate217-gates.log`,
+`candidate217-status.json`, `candidate217-apply.json`, `candidate217-sdk.log`.
+
+One guarded actual update succeeded exit0,independently reading back the new
+Core and Inspector/Gateway/tunnel cohort and preserving owner registration/
+vault bytes. Its log window was10:33:42.747250027–10:37:24.542239984 Europe/
+Lisbon;SHA-256 `8b3f99967d7da58922767d6437cbdffdf4998f5a599d96635f4ed9d1eb2dd8db`.
+Fresh service readback found all four active and the protected public page
+served the updated UI. This proves guarded update qualification,not full M1.
+
+Public acceptance failed: Overview showed unknown/stale data,per-message
+settings were unavailable,and a harmless identity request received a generic
+failure. A separate sequential New conversation action also reported a stale
+secure session. No new turn was reserved in the chat database;the latest
+stored failed-turn row was an older October12 record and is not this test's
+failure. One empty conversation was nevertheless created and retained (the
+private count becomes six). No user conversation or knowledge was deleted.
+The updated UI's unavailable/error flow was inspected;phone/tablet/wide and
+complete rendered acceptance were not cleared.
+
+Closed Gateway records showed root_ipc_exchange TimeoutError followed by
+root_inspection/accept_ingress refusals,plus route HTTP failures. Their exact
+subphase/request cause remains unknown. Inspector was idle with two polling
+threads before a controlled read. During one Overview read,45 bounded samples
+observed at most three threads,two polling/one classified running,and no
+recognized owned child processes. This does not establish slot exhaustion.
+Metadata JSON SHA-256:
+`66c7134d3a9a43c2e492e910eb50aed13db25aa8c364eb642c2b33e0420c04ad`.
+
+One transient direct ingress proof using actual current DynamicUser peer
+identities and `_retain_issuance=False` succeeded in0.285577s,without returning
+or retaining its proof. JSON SHA-256:
+`9340accb72ea2338f4d37c9e631686691ed4dd42dba4f1a7f90ee4e1df663023`.
+An initial diagnostic incorrectly assumed tunnel UID0 and was denied;it is
+explicitly invalid as a current-peer timing witness. A separate read-only
+Core model-status call under UID996/group981 succeeded in0.162903s,without
+printing values or credentials. It does not prove HTTP admission or model-
+settings prerequisites. Owned units reported no CPU quota/private network.
+
+The exact protected217 rollback then exited0 and verified restoration of the
+prior adapter/Core/Inspector/Gateway/tunnel cohort. Rollback log SHA-256:
+`2b554f4e6c457dd8f52d2bdc93a154f681971a366b490c463e17a3e03e4e0f22`.
+Independent journal readback confirmed source `/opt/hermes-installer-core-0cbf9b819/src`,
+adapter generation3b7e6097f819ba81fc762b5455fc3948a684157120bc54570c399efcd925fe6a,
+and absent active ingress backup. All four services were active;fresh public
+readback restored secure IDLE,11 accepted/9 completed/2 failed/six private
+chats/zero active turns. Real chat functionality remains independently pending.
+
+### Pure Resources compilation timing after restoration
+
+Sol/source inspection found the discovered-Resources Overview path rebuilds
+the full deterministic bundle twice and hashes its current installed members;
+these calls lack the surrounding five-second request deadline. Model settings
+require the same projection. This path does not call primary_prompt_status or
+the native loader. Missing Resources records take the cheap pending path.
+
+Without reapplying or modifying target state,a transient Pi process measured
+two builds from the exact217 seal outside any update cache scope. Each had an
+independent45-second process-local alarm;both succeeded as bytes within16MiB,
+in10.371015s and10.165319s. Both artifact digests were
+`76d01dd6547025945e04f9b3fdd521e3419bc1ba523def4a9304335099a09741`.
+JSON `candidate217-pure-artifact-timing.json` SHA-256:
+`6b64bcba8cdad6e618d87b556ea0513d34a4dc37f4a002de9dec8c4aa6a9846f`.
+This demonstrates a concrete runtime cost exposure;it does not identify every
+actual217 failed HTTP subcall. Removing just one duplicate build still exceeds
+five seconds. Sol is evaluating a source-bound prepared-base design that
+preserves native/CAS/installed-member/overlay/currentness proofs;no deadline
+increase,unverified authority or further actual apply is authorized by this
+measurement. Full M1 and all219/62/18/eight acceptance groups remain OPEN.
