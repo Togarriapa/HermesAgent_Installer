@@ -1521,27 +1521,50 @@ def _valid_native_plugin_transition(value: object) -> bool:
 def _finish_adapter_refresh_ingress(candidate_sha: str, expected_source: Path,
                                     core_runtime, observer_socket: Path,
                                     old_observer_identity: tuple[int, int] | None) -> None:
-    _refresh_migrated_core_config(candidate_sha, expected_source, core_runtime)
-    from hermes_installer.remote.core_gateway import CoreGatewayConfig
-    config = CoreGatewayConfig.load(expected_owner_uid=0)
-    _verify_gateway_tunnel(config, require_active=False)
-    if _unit_state(INSPECTOR) in {"inactive", "failed"}:
-        _run("systemctl", "start", INSPECTOR)
-    if not _unit_is_exact_and_active(INSPECTOR):
-        raise RuntimeError("new fixed Inspector did not become active")
-    unit_raw, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
-                              mode=0o644, maximum=64 * 1024)
-    _verify_inspector_process(unit_raw, str(expected_source).encode("ascii"))
-    phase_identity = _wait_observer_socket(previous_inode=old_observer_identity)
-    inspector_pid = int(_run("systemctl", "show", "--property=MainPID", "--value", INSPECTOR))
-    if phase_identity != _verify_observer_peer(observer_socket, inspector_pid):
-        raise RuntimeError("fresh normal observer socket changed after peer verification")
-    _run("systemctl", "start", GATEWAY)
-    _run("systemctl", "start", TUNNEL)
-    config = CoreGatewayConfig.load(expected_owner_uid=0)
-    _verify_gateway_tunnel(config, require_active=True)
-    if not all(_unit_is_exact_and_active(name) for name in (INSPECTOR, GATEWAY, TUNNEL)):
-        raise RuntimeError("updated ingress cohort did not verify")
+    stage = "config_bind"
+    try:
+        _refresh_migrated_core_config(candidate_sha, expected_source, core_runtime)
+        stage = "config_load"
+        from hermes_installer.remote.core_gateway import CoreGatewayConfig
+        config = CoreGatewayConfig.load(expected_owner_uid=0)
+        stage = "stopped_transport"
+        _verify_gateway_tunnel(config, require_active=False)
+        stage = "inspector_start"
+        if _unit_state(INSPECTOR) in {"inactive", "failed"}:
+            _run("systemctl", "start", INSPECTOR)
+        stage = "inspector_active"
+        if not _unit_is_exact_and_active(INSPECTOR):
+            raise RuntimeError("new fixed Inspector did not become active")
+        stage = "inspector_file"
+        unit_raw, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
+                                  mode=0o644, maximum=64 * 1024)
+        stage = "inspector_process"
+        _verify_inspector_process(unit_raw, str(expected_source).encode("ascii"))
+        stage = "observer_socket"
+        phase_identity = _wait_observer_socket(previous_inode=old_observer_identity)
+        stage = "inspector_pid"
+        inspector_pid = int(_run("systemctl", "show", "--property=MainPID", "--value", INSPECTOR))
+        stage = "observer_peer"
+        if phase_identity != _verify_observer_peer(observer_socket, inspector_pid):
+            raise RuntimeError("fresh normal observer socket changed after peer verification")
+        stage = "gateway_start"
+        _run("systemctl", "start", GATEWAY)
+        stage = "tunnel_start"
+        _run("systemctl", "start", TUNNEL)
+        stage = "active_config"
+        config = CoreGatewayConfig.load(expected_owner_uid=0)
+        stage = "active_transport"
+        _verify_gateway_tunnel(config, require_active=True)
+        stage = "active_cohort"
+        if not all(_unit_is_exact_and_active(name) for name in (INSPECTOR, GATEWAY, TUNNEL)):
+            raise RuntimeError("updated ingress cohort did not verify")
+    except Exception:
+        try:
+            sys.stderr.write("HERMES_INGRESS_FINISH_REFUSAL_V1=" + stage + "\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
+        raise
 
 
 def _verify_current_adapter_refresh_join(core_runtime, row: dict) -> tuple[dict, bytes, dict, dict, str]:

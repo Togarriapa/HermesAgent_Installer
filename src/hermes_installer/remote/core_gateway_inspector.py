@@ -15,6 +15,7 @@ import sqlite3
 import stat
 import struct
 import subprocess
+import sys
 import threading
 import time
 import pwd
@@ -3499,14 +3500,32 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
     registry = None
     worker = None
     stop = stop or threading.Event()
+    stage = "imports"
     try:
         if stop.is_set():
             return False
+        try:
+            sys.stderr.write("HERMES_OPTIONAL_OBSERVER_STAGE_V1=imports\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
         from ..components.resources_active_profile_source import RootVerifiedJarvisMasterSource
         from .core_native_observer import RootCoreNativeObservationRegistry, serve_core_native_observer
+        stage = "custody"
+        try:
+            sys.stderr.write("HERMES_OPTIONAL_OBSERVER_STAGE_V1=custody\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
         custody = capture_current_core_native_custody(config)
         if stop.is_set():
             raise CoreInspectionDenied("optional native observer startup was cancelled")
+        stage = "master_source"
+        try:
+            sys.stderr.write("HERMES_OPTIONAL_OBSERVER_STAGE_V1=master_source\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
         try:
             source = RootVerifiedJarvisMasterSource.current_master_source(custody, config=config)
         except Exception:
@@ -3516,18 +3535,36 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
                 or source.display_name != "Jarvis"
                 or source.is_current_sealed(custody=custody, now=time.monotonic()) is not True)):
             source = None
+        stage = "registry"
+        try:
+            sys.stderr.write("HERMES_OPTIONAL_OBSERVER_STAGE_V1=registry\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
         registry = RootCoreNativeObservationRegistry.from_current_core_custody(
             custody, selected_profile_source=source, config=config)
         if type(registry) is not RootCoreNativeObservationRegistry:
             raise CoreInspectionDenied("native observation registry is unavailable")
         if stop.is_set():
             raise CoreInspectionDenied("optional native observer startup was cancelled")
+        stage = "worker_start"
+        try:
+            sys.stderr.write("HERMES_OPTIONAL_OBSERVER_STAGE_V1=worker_start\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
         worker = threading.Thread(target=serve_core_native_observer,
             kwargs={"registry": registry, "socket_path": CORE_NATIVE_OBSERVER_SOCKET,
                     "admin_gid": 1000, "stop_event": stop}, daemon=True,
             name="jarvis-native-observer")
         worker.start()
         deadline = time.monotonic() + 2.0
+        stage = "listener_wait"
+        try:
+            sys.stderr.write("HERMES_OPTIONAL_OBSERVER_STAGE_V1=listener_wait\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
         while time.monotonic() < deadline and not stop.is_set():
             if not worker.is_alive():
                 raise CoreInspectionDenied("native observer listener did not start")
@@ -3543,6 +3580,12 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
                         source = None
                     if stop.is_set():
                         raise CoreInspectionDenied("optional native observer startup was cancelled")
+                    stage = "publish"
+                    try:
+                        sys.stderr.write("HERMES_OPTIONAL_OBSERVER_STAGE_V1=publish\n")
+                        sys.stderr.flush()
+                    except Exception:
+                        pass
                     _CORE_NATIVE_CUSTODY = custody
                     _CORE_NATIVE_REGISTRY = registry
                     _CORE_NATIVE_REGISTRY_TYPE = RootCoreNativeObservationRegistry
@@ -3553,7 +3596,7 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
                 pass
             time.sleep(0.02)
         raise CoreInspectionDenied("native observer listener is unavailable")
-    except Exception:
+    except Exception as error:
         stop.set()
         if worker is not None and worker is not threading.current_thread():
             worker.join(timeout=1.0)
@@ -3567,6 +3610,39 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
                 os.close(custody._core_pidfd)
             except OSError:
                 pass
+        refusal_type = "OtherError"
+        if type(error) is CoreInspectionDenied:
+            refusal_type = "CoreInspectionDenied"
+        elif type(error) is FileNotFoundError:
+            refusal_type = "FileNotFoundError"
+        elif type(error) is FileExistsError:
+            refusal_type = "FileExistsError"
+        elif type(error) is PermissionError:
+            refusal_type = "PermissionError"
+        elif type(error) is ModuleNotFoundError:
+            refusal_type = "ModuleNotFoundError"
+        elif type(error) is ImportError:
+            refusal_type = "ImportError"
+        elif type(error) is NameError:
+            refusal_type = "NameError"
+        elif type(error) is AttributeError:
+            refusal_type = "AttributeError"
+        elif type(error) is TypeError:
+            refusal_type = "TypeError"
+        elif type(error) is ValueError:
+            refusal_type = "ValueError"
+        elif type(error) is OSError:
+            refusal_type = "OSError"
+        elif type(error) is TimeoutError:
+            refusal_type = "TimeoutError"
+        elif type(error) is RuntimeError:
+            refusal_type = "RuntimeError"
+        try:
+            sys.stderr.write("HERMES_OPTIONAL_OBSERVER_REFUSAL_V1="
+                             + stage + "/" + refusal_type + "\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
         return False
 
 

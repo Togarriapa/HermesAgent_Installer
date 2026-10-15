@@ -2434,6 +2434,164 @@ def test_cli_rollback_recovers_core_before_restoring_old_ingress(monkeypatch, tm
     assert events[0] == ("source", candidate, source)
 
 
+_INGRESS_FINISH_STAGES = (
+    "config_bind", "config_load", "stopped_transport", "inspector_start",
+    "inspector_active", "inspector_file", "inspector_process", "observer_socket",
+    "inspector_pid", "observer_peer", "gateway_start", "tunnel_start",
+    "active_config", "active_transport", "active_cohort",
+)
+
+
+def _adapter_refresh_finisher_fixture(monkeypatch, *, failure=None, sentinel=None):
+    events = []
+    sentinel = sentinel or RuntimeError("PRIVATE diagnostic sentinel")
+    state = {"loads": 0, "verifications": 0, "active_checks": 0}
+
+    def fail(stage):
+        if failure == stage:
+            raise sentinel
+
+    class Config:
+        @classmethod
+        def load(cls, *, expected_owner_uid):
+            stage = "config_load" if state["loads"] == 0 else "active_config"
+            state["loads"] += 1
+            events.append(stage)
+            assert expected_owner_uid == 0
+            fail(stage)
+            return object()
+
+    gateway = ModuleType("hermes_installer.remote.core_gateway")
+    gateway.CoreGatewayConfig = Config
+    monkeypatch.setitem(sys.modules, "hermes_installer.remote.core_gateway", gateway)
+
+    def bind(*_args):
+        events.append("config_bind")
+        fail("config_bind")
+
+    def verify_transport(_config, *, require_active):
+        stage = "active_transport" if require_active else "stopped_transport"
+        state["verifications"] += 1
+        events.append(stage)
+        fail(stage)
+
+    def unit_state(_name):
+        events.append("inspector_start")
+        return "inactive"
+
+    def run(*args):
+        if args[:3] == ("systemctl", "start", adopt.INSPECTOR):
+            events.append("inspector-start-action")
+            fail("inspector_start")
+        elif args[:3] == ("systemctl", "start", adopt.GATEWAY):
+            events.append("gateway_start")
+            fail("gateway_start")
+        elif args[:3] == ("systemctl", "start", adopt.TUNNEL):
+            events.append("tunnel_start")
+            fail("tunnel_start")
+        elif args[:2] == ("systemctl", "show"):
+            events.append("inspector_pid")
+            fail("inspector_pid")
+            return "123"
+        return ""
+
+    def exact_active(_name):
+        state["active_checks"] += 1
+        if state["active_checks"] == 1:
+            events.append("inspector_active")
+            fail("inspector_active")
+        else:
+            if state["active_checks"] == 2:
+                events.append("active_cohort")
+                fail("active_cohort")
+            events.append("active_cohort-check")
+        return True
+
+    def read_fixed(*_args, **_kwargs):
+        events.append("inspector_file")
+        fail("inspector_file")
+        return b"fixed unit", None
+
+    def verify_process(*_args):
+        events.append("inspector_process")
+        fail("inspector_process")
+
+    def wait_socket(**_kwargs):
+        events.append("observer_socket")
+        fail("observer_socket")
+        return (10, 20)
+
+    def verify_peer(*_args):
+        events.append("observer_peer")
+        fail("observer_peer")
+        return (10, 20)
+
+    for name, value in (
+        ("_refresh_migrated_core_config", bind),
+        ("_verify_gateway_tunnel", verify_transport),
+        ("_unit_state", unit_state), ("_unit_is_exact_and_active", exact_active),
+        ("_run", run), ("_read_fixed", read_fixed),
+        ("_verify_inspector_process", verify_process),
+        ("_wait_observer_socket", wait_socket), ("_verify_observer_peer", verify_peer),
+    ):
+        monkeypatch.setattr(adopt, name, value)
+    return events, sentinel
+
+
+def test_adapter_refresh_finisher_success_order_is_silent(monkeypatch, capsys):
+    events, _ = _adapter_refresh_finisher_fixture(monkeypatch)
+    adopt._finish_adapter_refresh_ingress("a" * 40, Path("/fixed/source"), object(),
+        Path("/run/observer.sock"), None)
+    assert events == ["config_bind", "config_load", "stopped_transport", "inspector_start",
+        "inspector-start-action", "inspector_active", "inspector_file", "inspector_process",
+        "observer_socket", "inspector_pid", "observer_peer", "gateway_start", "tunnel_start",
+        "active_config", "active_transport", "active_cohort", "active_cohort-check",
+        "active_cohort-check"]
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("failure", _INGRESS_FINISH_STAGES)
+def test_adapter_refresh_finisher_reports_fixed_boundary_and_reraises_same_exception(
+        monkeypatch, capsys, failure):
+    events, sentinel = _adapter_refresh_finisher_fixture(monkeypatch, failure=failure)
+    with pytest.raises(RuntimeError) as caught:
+        adopt._finish_adapter_refresh_ingress("a" * 40, Path("/fixed/source"), object(),
+            Path("/run/observer.sock"), None)
+    assert caught.value is sentinel
+    captured = capsys.readouterr().err
+    lines = captured.splitlines()
+    assert lines == ["HERMES_INGRESS_FINISH_REFUSAL_V1=" + failure]
+    assert len(captured.encode("ascii")) <= 128
+    assert "PRIVATE" not in captured and "/fixed/source" not in captured
+    success_order = ["config_bind", "config_load", "stopped_transport", "inspector_start",
+        "inspector-start-action", "inspector_active", "inspector_file", "inspector_process",
+        "observer_socket", "inspector_pid", "observer_peer", "gateway_start", "tunnel_start",
+        "active_config", "active_transport", "active_cohort", "active_cohort-check",
+        "active_cohort-check"]
+    assert events == success_order[:len(events)]
+
+
+def test_adapter_refresh_finisher_sink_failure_does_not_replace_refusal(monkeypatch):
+    import unittest.mock
+
+    events, sentinel = _adapter_refresh_finisher_fixture(
+        monkeypatch, failure="observer_peer", sentinel=ValueError("PRIVATE sentinel"))
+
+    class BrokenSink:
+        def write(self, _value):
+            raise OSError("private sink failure")
+
+        def flush(self):
+            raise OSError("private sink failure")
+
+    with unittest.mock.patch.object(adopt.sys, "stderr", BrokenSink()):
+        with pytest.raises(ValueError) as caught:
+            adopt._finish_adapter_refresh_ingress("a" * 40, Path("/fixed/source"), object(),
+                Path("/run/observer.sock"), None)
+    assert caught.value is sentinel
+    assert "gateway_start" not in events and "tunnel_start" not in events
+
+
 @pytest.mark.parametrize("failure", [None, "ingress-drift", "late-ingress-drift",
                                      "late-ingress-read-failure", "late-unit-ownership",
                                      "owner", "migration", "migration-unclassified",
@@ -2721,7 +2879,8 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
             "inspector-restart": "restart Inspector for migrated Core PID",
             "fresh-observer": "bind fresh Inspector observer to migrated Core",
         }[failure]
-        output = capsys.readouterr().out
+        captured = capsys.readouterr()
+        output = captured.out
         assert "Failed phase: " + expected_phase in output
         if failure in {"migration", "migration-unclassified"}:
             expected_reason = "native_bridge_unavailable" if failure == "migration" else "unclassified"
