@@ -4981,16 +4981,21 @@ def _root_runuser_proc_snapshot(process,identity,pipe_fd):
  proc_stdin=proc/"fd"/"0"
  stdin_target=os.readlink(proc_stdin)
  stdin_stat=proc_stdin.stat()
- if (state in {"Z","X"} or ppid!=identity["root_pid"]
-     or process_group!=pid or session!=pid or not start_ticks.isdecimal()
-     or values.get("Uid")!=["0"]*4 or values.get("Gid")!=["0"]*4 or comm!="runuser"
-     or tuple(actual_argv)!=identity["argv"]
-     or (exe.st_dev,exe.st_ino,exe.st_uid)!=(identity["exe_dev"],identity["exe_ino"],ROOT_UID)
-     or not stat.S_ISFIFO(stdin_stat.st_mode) or stdin_stat.st_uid!=ROOT_UID
-     or (stdin_stat.st_dev,stdin_stat.st_ino)!=(pipe.st_dev,pipe.st_ino)
-     or stdin_target!=f"pipe:[{pipe.st_ino}]"
-     or (pipe.st_dev,pipe.st_ino,pipe.st_uid)!=(identity["pipe_dev"],identity["pipe_ino"],ROOT_UID)):
-  raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if state in {"Z","X"}: raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if ppid!=identity["root_pid"]: raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if process_group!=pid: raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if session!=pid: raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if not start_ticks.isdecimal(): raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if values.get("Uid")!=["0"]*4: raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if values.get("Gid")!=["0"]*4: raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if comm!="runuser": raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if tuple(actual_argv)!=identity["argv"]: raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if (exe.st_dev,exe.st_ino,exe.st_uid)!=(identity["exe_dev"],identity["exe_ino"],ROOT_UID): raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if not stat.S_ISFIFO(stdin_stat.st_mode): raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if stdin_stat.st_uid!=ROOT_UID: raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if (stdin_stat.st_dev,stdin_stat.st_ino)!=(pipe.st_dev,pipe.st_ino): raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if stdin_target!=f"pipe:[{pipe.st_ino}]": raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ if (pipe.st_dev,pipe.st_ino,pipe.st_uid)!=(identity["pipe_dev"],identity["pipe_ino"],ROOT_UID): raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
  return (start_ticks,ppid,process_group,session,comm,tuple(actual_argv),
   exe.st_dev,exe.st_ino,stdin_target,stdin_stat.st_dev,stdin_stat.st_ino)
 

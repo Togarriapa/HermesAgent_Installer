@@ -1461,6 +1461,182 @@ def test_native_plugin_source_accepts_root_0644_but_rejects_group_write(tmp_path
 _REAL_CORE_LAUNCHER = core._launcher
 
 
+def _root_runuser_snapshot_fixture(tmp_path, monkeypatch, *, name="valid"):
+    if os.geteuid() != core.ROOT_UID:
+        pytest.skip("Root-runuser snapshot fixture requires Root-owned FIFO")
+    proc_root = tmp_path / name
+    pid = 765432
+    proc = proc_root / str(pid)
+    (proc / "fd").mkdir(parents=True)
+    pipe_path = tmp_path / (name + "-pipe")
+    os.mkfifo(pipe_path, 0o600)
+    pipe_fd = os.open(pipe_path, os.O_RDONLY | os.O_NONBLOCK)
+    pipe = os.fstat(pipe_fd)
+    argv = (b"runuser", b"--user", b"admin")
+    fields = ["S", "4321", str(pid), str(pid)] + ["0"] * 16
+    fields[19] = "12345"
+    def write_stat():
+        (proc / "stat").write_text(f"{pid} (runuser) " + " ".join(fields))
+    write_stat()
+    (proc / "status").write_text("Uid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\n")
+    (proc / "cmdline").write_bytes(b"\0".join(argv) + b"\0")
+    (proc / "comm").write_text("runuser\n")
+    executable = tmp_path / (name + "-executable")
+    executable.write_bytes(b"fixture executable identity\n")
+    executable.chmod(0o755)
+    (proc / "exe").symlink_to(executable)
+    stdin_path = proc / "fd" / "0"
+    stdin_path.symlink_to(pipe_path)
+    data = {
+        "pid": pid, "proc": proc, "stat_fields": fields, "stdin_path": stdin_path,
+        "pipe_path": pipe_path, "pipe_fd": pipe_fd, "pipe": pipe, "argv": argv,
+        "link_target": f"pipe:[{pipe.st_ino}]", "executable": executable,
+        "write_stat": write_stat,
+    }
+    identity = {
+        "pid": pid, "root_pid": 4321, "argv": argv,
+        "exe_dev": executable.stat().st_dev, "exe_ino": executable.stat().st_ino,
+        "pipe_dev": pipe.st_dev, "pipe_ino": pipe.st_ino,
+    }
+    real_readlink = os.readlink
+
+    def fixture_readlink(path, *args, **kwargs):
+        if os.fspath(path) == os.fspath(stdin_path):
+            return data["link_target"]
+        return real_readlink(path, *args, **kwargs)
+
+    real_path = Path
+    monkeypatch.setattr(core, "Path", lambda value: proc_root if str(value) == "/proc"
+                        else real_path(value))
+    monkeypatch.setattr(core.os, "readlink", fixture_readlink)
+    return data, identity
+
+
+def _root_runuser_snapshot_error_line(error):
+    tb = error.value.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code.co_name == "_root_runuser_proc_snapshot":
+            return tb.tb_lineno
+        tb = tb.tb_next
+    raise AssertionError("snapshot refusal did not retain its source frame")
+
+
+def test_root_runuser_proc_snapshot_returns_the_original_complete_tuple(tmp_path, monkeypatch):
+    data, identity = _root_runuser_snapshot_fixture(tmp_path, monkeypatch)
+    try:
+        actual = core._root_runuser_proc_snapshot(object(), identity, data["pipe_fd"])
+        pipe = data["pipe"]
+        assert actual == ("12345", 4321, data["pid"], data["pid"], "runuser",
+            data["argv"], identity["exe_dev"], identity["exe_ino"],
+            f"pipe:[{pipe.st_ino}]", pipe.st_dev, pipe.st_ino)
+    finally:
+        os.close(data["pipe_fd"])
+
+
+def test_root_runuser_proc_snapshot_refuses_each_predicate_at_its_ordered_line(
+        tmp_path, monkeypatch):
+    tool_path = Path(__file__).resolve().parents[2] / "tools" / "pi_core_lifecycle_qualification.py"
+    tool_spec = importlib.util.spec_from_file_location(
+        "pi_core_lifecycle_qualification_for_snapshot_origin", tool_path)
+    assert tool_spec is not None and tool_spec.loader is not None
+    qualification = importlib.util.module_from_spec(tool_spec)
+    tool_spec.loader.exec_module(qualification)
+
+    def state(data, identity):
+        data["stat_fields"][0] = "Z"
+    def parent(data, identity):
+        data["stat_fields"][1] = "4322"
+    def group(data, identity):
+        data["stat_fields"][2] = "765433"
+    def session(data, identity):
+        data["stat_fields"][3] = "765433"
+    def ticks(data, identity):
+        data["stat_fields"][19] = "bad"
+    def uids(data, identity):
+        (data["proc"] / "status").write_text("Uid:\t0\t0\t1\t0\nGid:\t0\t0\t0\t0\n")
+    def gids(data, identity):
+        (data["proc"] / "status").write_text("Uid:\t0\t0\t0\t0\nGid:\t0\t0\t1\t0\n")
+    def comm(data, identity):
+        (data["proc"] / "comm").write_text("not-runuser\n")
+    def argv(data, identity):
+        (data["proc"] / "cmdline").write_bytes(b"runuser\0--user\0other\0")
+    def executable(data, identity):
+        identity["exe_ino"] += 1
+    def stdin_type(data, identity):
+        regular = data["proc"].parent / "regular"
+        regular.write_text("not a pipe")
+        data["stdin_path"].unlink()
+        data["stdin_path"].symlink_to(regular)
+    def stdin_owner(data, identity):
+        os.chown(data["pipe_path"], 1, -1)
+    def stdin_inode(data, identity):
+        other = data["proc"].parent / "other-pipe"
+        os.mkfifo(other, 0o600)
+        data["stdin_path"].unlink()
+        data["stdin_path"].symlink_to(other)
+    def stdin_target(data, identity):
+        data["link_target"] = f"pipe:[{data['pipe'].st_ino + 1}]"
+    def pipe_identity(data, identity):
+        identity["pipe_ino"] += 1
+
+    mutations = (state, parent, group, session, ticks, uids, gids, comm, argv,
+        executable, stdin_type, stdin_owner, stdin_inode, stdin_target, pipe_identity)
+    lines = []
+    for index, mutate in enumerate(mutations):
+        data, identity = _root_runuser_snapshot_fixture(
+            tmp_path, monkeypatch, name=f"predicate-{index}")
+        try:
+            mutate(data, identity)
+            data["write_stat"]()
+            with pytest.raises(core.CoreRuntimeError) as error:
+                core._root_runuser_proc_snapshot(object(), identity, data["pipe_fd"])
+            assert str(error.value) == "Root runuser parent, command, or inherited pipe changed"
+            line = _root_runuser_snapshot_error_line(error)
+            lines.append(line)
+            if index == 0:
+                origin = qualification._root_setup_exception_origin(
+                    error.value, Path(__file__).resolve().parents[2] / "src")
+                assert origin is not None and set(origin) == {"exception_type", "frames"}
+                assert {"source_relative_path": "hermes_installer/core_runtime.py",
+                    "function": "_root_runuser_proc_snapshot", "line": line} in origin["frames"]
+                assert all(set(frame) == {"source_relative_path", "function", "line"}
+                    for frame in origin["frames"])
+        finally:
+            os.close(data["pipe_fd"])
+    assert len(set(lines)) == 15
+    assert lines == sorted(lines)
+
+    data, identity = _root_runuser_snapshot_fixture(tmp_path, monkeypatch, name="ordered")
+    try:
+        data["stat_fields"][0] = "Z"
+        data["stat_fields"][1] = "4322"
+        data["write_stat"]()
+        with pytest.raises(core.CoreRuntimeError) as error:
+            core._root_runuser_proc_snapshot(object(), identity, data["pipe_fd"])
+        assert str(error.value) == "Root runuser parent, command, or inherited pipe changed"
+        assert _root_runuser_snapshot_error_line(error) == lines[0]
+    finally:
+        os.close(data["pipe_fd"])
+
+
+def test_root_runuser_proc_snapshot_keeps_prepredicate_read_failures(tmp_path, monkeypatch):
+    data, identity = _root_runuser_snapshot_fixture(tmp_path, monkeypatch, name="short")
+    try:
+        (data["proc"] / "stat").write_text("765432 (runuser) S 4321")
+        with pytest.raises(core.CoreRuntimeError,
+                           match="Root runuser process identity is unavailable"):
+            core._root_runuser_proc_snapshot(object(), identity, data["pipe_fd"])
+        (data["proc"] / "stat").write_text("765432 (runuser) S bad 765432 765432 "
+            + "0 " * 16 + "12345")
+        with pytest.raises(ValueError):
+            core._root_runuser_proc_snapshot(object(), identity, data["pipe_fd"])
+        (data["proc"] / "stat").unlink()
+        with pytest.raises(FileNotFoundError):
+            core._root_runuser_proc_snapshot(object(), identity, data["pipe_fd"])
+    finally:
+        os.close(data["pipe_fd"])
+
+
 def _fixture_prior_adapter_source():
     """Return the historical source alias only inside Root's private /opt view."""
     if os.environ.get("HERMES_PI_FIXTURE_PRIVATE_OPT") != "1":
