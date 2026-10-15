@@ -2399,3 +2399,11 @@ process refusal remains unexplained;210 passed that boundary without a guard
 relaxation. Full M1,public functional/provider/Resources/identity and feature
 acceptance remain OPEN. Sol is analysing bounded startup observability before
 any further implementation or newly qualified observation.
+
+Fresh readback confirmed the active ingress backup absent. The selected
+three-unit lifecycle metadata file SHA-256 is
+`6bb7a25ca9709bb896d0b5442c78a0081d46fbe89ec7d69644dc1070cf0d730e`.
+Pi list/status/apply refresh on the exact210 seal exited0,nearest root
+`/opt/hermes-installer-core-7c7af0c70`,all four artifacts done and apply ready,
+one complete96 remaining of97. Existing feature issues and unmerged branches
+remain preserved; no duplicate issue,remote branch or PR was created.
