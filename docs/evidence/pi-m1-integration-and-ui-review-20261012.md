@@ -2186,3 +2186,25 @@ and read `candidate206-actual-adoption.log` and exact-candidate qualification
 report before any further apply. The last confirmed recovered availability
 belongs to candidate204; current services/public functional state require a
 fresh Pi/browser read after reconnection.
+
+### Candidate 206 result recovered on 2026-10-15
+
+After the browser reconnected, the exact retained candidate206 log was read
+without repeating the apply. It records validated failure/returncode4 and CLI
+exit4 after146.935s; report emission146.753s,seven valid phase records. The
+exact-candidate closed origin identifies `observer_receipt` / `AttributeError`.
+The prior Core/ingress cohort was verified restored automatically; fresh reads
+confirmed all four owned services active. The previously unknown outcome is
+therefore resolved as failed, with no M1 acceptance.
+
+The callback advanced through fixed route/request/instructions/input/account,
+provider-completed and exact no-tools nonce-output predicates before the
+receipt boundary. It has not established Root receipt consumption or full
+native completion. Pinned official7085 `agent/codex_runtime.py` reconstructs
+streamed Responses as a nine-field `SimpleNamespace`; this object has no SDK
+`model_dump` method. Both receipt paths in the installer currently assume that
+method, and controlled fixtures supplied it artificially. This verified native
+representation mismatch is consistent with the precise AttributeError; private
+response content was not collected. Sol is refining a bounded native receipt
+serializer while preserving original SDK handling and all genuine completion,
+digest, no-tools, currentness, privacy and recovery requirements.
