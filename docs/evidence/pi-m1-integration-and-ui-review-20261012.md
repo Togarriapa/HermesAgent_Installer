@@ -2364,3 +2364,38 @@ Evidence: `candidate210-stage.log`, `candidate210-specs.json`,
 `candidate210-gates.log` and the fixed v4 probe/result. One newly qualified
 protected update was started in `candidate210-actual-adoption.log`. Its
 outcome and required live acceptance remain separately pending.
+
+### Candidate 210 later ingress failure and verified recovery
+
+The one actual210 attempt completed with exit4,`RuntimeError`,reported phase
+`bind config to current journaled Core`. Its log was created at09:11:11.452928
+and last written09:15:16.706915 on2026-10-15 Europe/Lisbon. No qualification
+failure record was emitted. In this exact source,the reported phase is assigned
+only after the validated Core qualification subprocess,independent committed
+backup/binding checks,protected Core recovery join and migrated-state write
+return. Observed control flow therefore advanced past those gates. The success
+report was returned in memory and discarded; no separate persisted success
+report or qualification elapsed time is claimed.
+
+The reported outer phase covers the entire ingress-finishing function,including
+config CAS/readback,closed-ingress checks,Inspector/process/socket/peer proof
+and Gateway/tunnel activation. It does not identify one failed condition.
+Bounded fixed-unit journal metadata records an intermediate Inspector start
+at09:14:52.308319 and started event09:14:52.352200,then stop09:15:00.092129.
+The restored Inspector starts09:15:14.319859,followed by Gateway/tunnel started
+events09:15:16.265781/.296220. No intermediate Gateway/tunnel start event was
+observed. This narrows investigation to the new Inspector/observer interval;
+its exact refusal remains unknown. Only event IDs,unit names and timestamps
+were collected; no log messages,argv,environment or private payloads were read
+into evidence. Metadata: `candidate210-ingress-metadata.json`,49 records before
+selection. The successful recovery removes the active ingress backup,so the
+restored files cannot reconstruct the failed transient config/socket state.
+
+Automatic recovery verified the prior Core/ingress cohort. Fresh readback
+confirmed all four owned services active,and the protected public Jarvis page
+again showed secure IDLE,11 accepted/9 completed/2 failed/5 private chats and
+zero active turns. No further update was attempted. Actual208's individual
+process refusal remains unexplained;210 passed that boundary without a guard
+relaxation. Full M1,public functional/provider/Resources/identity and feature
+acceptance remain OPEN. Sol is analysing bounded startup observability before
+any further implementation or newly qualified observation.
