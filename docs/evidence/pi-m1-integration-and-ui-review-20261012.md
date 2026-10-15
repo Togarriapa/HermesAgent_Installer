@@ -3080,3 +3080,23 @@ installation binding/individual revoke and an Android build/source owner remain
 missing; Managed OAuth is a candidate whose public-client/PKCE/callback and
 per-installation guarantees are unresolved. Neither issue is promoted to Ready,
 and no new requirement/artifact/issue/account/device/build action follows.
+
+Existing Luna's isolated local `codex/fix-ui-acceptance-native-io` stack
+3fc917da→0f88debe→f89399e6f10cf5f1496cb9dd55e464a3c4f614cc received
+qualified Sol static SOURCE review only. Root imports its final two-file tree
+under `tools/ui_acceptance/`, retaining the original v24/v25 files and source
+harness pins. Final probe SHA-256
+5bf9b4d8e4abd9a10f0d98e7e8db8e15196fd2abc3f9fbd250cc274ce7e12bcd;
+new mobile harness0b3c38a8d2e42e919443137f4062a84e63a70cd19a10aa0269be4be75770125e.
+This uses finite fresh native IntersectionObserver clipping entries, exact
+current target/viewport/scroll/view/document state and native-entry time/bounds,
+positive visible required controls, same-state both-sample offscreen proof and
+original240ms no-advance/no-running checks. It corrects only nested System
+fixture lookup and valid Profiles/search-empty plus invalid[] unavailable-denial.
+All finite routes/auth/method/CSP/no-effect/touch/focus/hidden/reduced/resume
+gates and existing outer deadlines remain. Geometry is clipping-only, not proof
+of painted occlusion. Sol caught and Luna corrected quoted fixture IDs, stale
+Chat samples, collapsed/duplicate stage and premature Profiles hydration before
+Root selected Pi use. Pi memory-compile, Node check, strict gates and actual
+three-viewport render qualification are still pending; no runtime/UI acceptance
+or product/source/specification/checkbox change follows from static approval.
