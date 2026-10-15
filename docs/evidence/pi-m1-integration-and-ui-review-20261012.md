@@ -2264,3 +2264,28 @@ During development the Luna worker used local Python once solely for a text
 substitution, contrary to the Pi-only runtime instruction. This was disclosed
 and corrected; it supplies no validation evidence. All tests, previews and
 installer execution for this candidate were confined to the identified Pi.
+
+### Candidate 208 actual result and bounded process diagnosis
+
+The single protected observation failed after23.805s with validated
+returncode4/CLI exit4; report emission23.660s,seven valid phase records and no
+rejected records. Exact-candidate closed origin ends at CoreRuntime's
+`_root_runuser_proc_snapshot` line4993, reached from the importer pipe capture
+before any frame write. It did not reach the newly corrected receipt path;
+native receipt compatibility therefore remains tested but unverified live.
+The failed predicate within the fixed process/pipe identity guard is unknown.
+No retry or guard relaxation follows from this result.
+
+Automatic recovery verified the prior Core and ingress cohort. Fresh service
+readback confirmed Core, Inspector, gateway and tunnel active. Existing source,
+credentials, knowledge and unmerged feature work are retained. Qualification
+failure is not M1 acceptance.
+
+Read-only Pi provenance identifies `/usr/sbin/runuser` from util-linux2.41.5,
+Debian package2.41.5-0+deb13u1,Root-owned0755,executable SHA-256
+`6c6e5dc82b91113ec0197d5a027c0a03562f38db5b085a392d12e34180136400`;
+package verification emitted no differences. A bounded no-frame stdin-wait
+probe is being reviewed to inspect only the same fifteen process/pipe
+predicates against isolated owned children. It must not import resources,
+write a frame, touch services or confer acceptance; actual208 remains distinct
+from any controlled probe.
