@@ -2714,3 +2714,22 @@ Neither a stale-probe cause nor a product regression is asserted. No browser
 sandbox/fixture guard was weakened, no pass/render qualification claimed, and
 all four live restored services were independently active afterward. Candidate-
 bound affected-flow and phone/tablet/wide visual acceptance remain OPEN.
+
+### Candidate219 finite ancestry specification clarification
+
+Sol clarification31e18347b5ed7618ecd8a88ff9777e99ce974206 integrated as
+20343cfba13a5f8102a3ac27733b6b51440adcbc, archive SHA-256
+69a50fbe0afbb64e34324289319c597c7c1cea856951994e7d3a57cb6a82e5c8.
+Pi stage/strict-specs/plan/status/apply all exited0; all four artifacts done,
+ready,109 total/seven complete/102 remaining. Existing tasks108/109 remain;
+no new task or acceptance group was added. Issue35 reflects these gates.
+
+Review requires strict Root ancestor custody without a sticky writable-parent
+exception, component/device/inode/mode/UID/GID equality across use, full stable
+ancestor metadata within each individual no-follow read and unchanged full
+CAS-file/source/provenance checks. Same-inode directory rename/restore wholly
+between samples remains explicitly unobserved. Legitimate Root CAS/journal
+writes may change directory timestamps; they create no general bypass flag.
+Luna's initial source was held for syntax/custody/fixture/negative-effect
+corrections before any source pin or actual activation. No actual apply ran
+after217; restored production and every unobserved acceptance remain as above.
