@@ -2492,3 +2492,25 @@ byte-identical to PR23 head544f9ae6 and contains the saved763839e5 HUD behavior;
 the current safer iris-CSS test must be retained. No duplicate source merge,
 feature issue,branch or PR is needed. Exact-candidate affected-flow and
 phone/tablet/wide rendered review remain outstanding after M1.
+
+### Candidate 214 demand-only hydration specification gate
+
+Sol refinement f65e2da4a1 was imported as
+`488481719e8c58a1bc19a1219a146e437c95b10a`,archive SHA-256
+`78ebac66dec48ca192fa035fa78b07fb773f152f47d1fa6bd3b51d11eb7b023a`.
+It changes all four planning artifacts and adds one append-only amendment.
+Optional Inspector startup passes no MasterSource and registry construction
+leaves the existing source cache empty. Every demand-time source proof remains
+required;the sole direct cached planner admission still denies an empty or
+stale source. No background hydrator,proof reuse,deadline expansion or Core/
+primary/native-probe change is authorized. The obsolete startup master_source
+label is removed;all other custody/listener/receipt/cleanup checks remain.
+
+Exact Pi sealed staging,strict specs/plan/status/apply exited0. All four
+artifacts are done,apply ready,103 total/one complete102 remaining at that
+seal. Root then marked only bounded planning gate101 complete;implementation
+and all target acceptance remain separate. Logs: `candidate214-stage.log`,
+`candidate214-specs.json`, `candidate214-gates.log`, `candidate214-status.json`,
+`candidate214-apply.json`. The recovered active ingress backup was independently
+confirmed absent. Existing Luna owns the two-source change and focused tests;
+Sol reviews before the observer-only pin and any new Root qualification.
