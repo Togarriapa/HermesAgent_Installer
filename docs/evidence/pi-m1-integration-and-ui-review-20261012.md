@@ -2227,3 +2227,40 @@ and93 remaining of94 tasks. Evidence: `candidate207-stage.log`,
 `candidate207-apply.json`. These validate planning only; source implementation,
 Sol review and meaningful Pi contracts must precede a protected observation.
 Native/provider/Root completion and M1 acceptance stay open.
+
+### Candidate 208 finite native response receipt implementation
+
+Reviewed implementation candidate `76c719bafe62541707068f57b18d3a3dca02b8a7`,
+archive SHA-256
+`b34377a4688b4e121946060b46189387f406caae0c257f5f1bcb6b3cbc30fdd9`,
+contains the finite native serializer, exact dictionary tool extraction and
+focused contracts. A separate Sol commit changes only the observer Inspector
+pin to `74f9951c3f0355ac3a71bb98d1732662c6a2cd40489bdba7149b5155c092cfae`.
+Core, producer, client, manual importer and native installer sources remain
+unchanged. Both receipt sites preserve original SDK handling; the native
+branch keeps all nine fields, reviewed nested shapes and bounded JSON/SDK
+values. Unknown shapes, unsafe conversions and limits deny. Exact dictionary
+function calls feed the original argument parser and no-tools gates.
+
+Identified Pi sealed staging and strict specification/plan checks exited0.
+The four focused lifecycle/native-observer/client/qualification-origin suites
+passed265 tests with five explicit SDK skips in1.97s, contracts exit0. The
+existing official managed Python with OpenAI SDK2.24.0 separately ran all
+SDK-specific cases plus the dictionary/namespace callback variants: nine
+passed,53 deselected, no skips,in0.46s; SDK contracts exit0. It loaded pytest
+from the existing test environment without installing dependencies or changing
+the managed runtime. The five skipped ordinary-environment cases are covered
+by that real-SDK run. These controlled contracts include full-native-digest
+callback/terminal/consume joins through both Root registries and exact-nonce
+dictionary-call no-tools denials, ordinary lineage, bounds/privacy/cleanup.
+
+Evidence: `candidate208-stage.log`, `candidate208-specs.json`,
+`candidate208-gates.log`, `candidate208-native-sdk-gates.log`. One separately
+qualified protected observation was started in
+`candidate208-actual-adoption.log`; fixtures and SDK compatibility do not alone
+establish genuine provider/native/Root completion or M1 acceptance.
+
+During development the Luna worker used local Python once solely for a text
+substitution, contrary to the Pi-only runtime instruction. This was disclosed
+and corrected; it supplies no validation evidence. All tests, previews and
+installer execution for this candidate were confined to the identified Pi.
