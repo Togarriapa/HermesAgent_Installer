@@ -1975,6 +1975,7 @@ The Jarvis UI SHALL open Overview as its initial command-centre and home destina
 - **WHEN** an authenticated owner opens the protected site or selects Jarvis home
 - **THEN** Overview is the primary view, Chat is a dedicated selectable workspace, and the selected group/view is keyboard and touch accessible with visible focus and current-location semantics.
 - **AND** grouping never removes a requested capability, changes owner permission projection or exposes arbitrary native routes.
+- **AND** the five semantic areas may be realized as direct Overview and Chats plus separately labeled Work, Resources and System sections within one Manage disclosure; every existing destination, truthful pending state and focus/keyboard/touch/current-location obligation remains, with exact-candidate phone/tablet/wide rendered acceptance still required.
 
 ### Requirement: Persistent truthful reactive Jarvis identity
 The UI SHALL retain one visible Jarvis orb and text state across destinations, derived from actual connection, owned active turn and explicitly consented browser recognition/synthesis events. It SHALL distinguish idle, listening, thinking, speaking and error without fabricated audio, health or work.
