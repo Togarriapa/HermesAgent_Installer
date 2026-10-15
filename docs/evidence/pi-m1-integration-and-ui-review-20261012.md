@@ -2993,3 +2993,44 @@ question while independent Pi validation continued. Actual authenticated public
 Overview/models/chat/stream/stop/history and family logins remain unverified.
 Keep109/103/full M1/all219/62/18/eight groups OPEN; activation0 and the fast
 installed projection are bounded results, not completed public acceptance.
+
+### Candidate225 ledger gates and bounded UI measurement review
+
+Exact documentation/ledger source49c456f11b3dec81040038dc40387d3ddcb955bb,
+archive5caafd8d7ba2413631774c9436728a22432c38984aa9c9f88ed9b9609aa073b1,
+was pushed to the existing DEV branch and sealed on the identified Pi.
+Stage/strict-specs/plan/status/apply-instructions all exited0. All four artifacts
+are done, apply ready,109 total/eight complete/101 remaining. Only bounded
+source checkbox108 changed;109/103 and complete live acceptance remain open.
+Candidate225 was NOT activated. A fresh independent read confirmed the actual
+installed224 source and adapter generation above, and all four owned services
+active/running/Result=success. Logs are `candidate225-{stage,gates}.log` and
+`candidate225-{specs,status,apply}.json` under the existing private Pi evidence
+directory. Issue35 was updated and read back, preserving earlier checkpoints.
+
+Existing Luna's measurement-only note
+`/private/tmp/effective-ui-clipping-plan225.txt`, SHA-256
+a2c61b823072de917b1f19123ea3b846412611decce1b99ea7d8a02210ef57c7,
+was reviewed by Sol against109,223 and the four current artifacts. Correcting
+fixture compatibility and measuring effective clipped geometry fits that
+existing scope; no product change, new requirement or weakened acceptance is
+authorized by the review. The draft helper is NOT yet qualified for use:
+fixed navigation must prove viewport-fixed containing-block semantics before
+using viewport-only clipping, while composer/stage ancestor clipping requires
+a verified normal-flow axis-aligned chain. Unsupported transforms/containment/
+positioning/clip-path/mask cases must be indeterminate, never guessed passes.
+Missing/hidden/fully clipped composer or navigation must not count as clear;
+positive effective area, independent44px/center-hit and original motion checks
+remain. Raw rectangles, effective rectangles and clipping witnesses are required.
+Empty effective stage plus observer=false are both needed before asserting the
+original no-running/no-advance pause result. Disagreement or unreachable full
+offscreen stays unqualified, with persistent header checked separately.
+
+The native Profiles positive fixture must satisfy the actual one-Jarvis schema;
+search-empty and invalid profiles[] unavailable-denial remain distinct checks.
+Nested Manage/System compatibility must preserve the existing single5s wait
+for selection, visible heading/focus, current location and disclosure closure.
+Luna is correcting the measurement-only note under these bounds; original
+v24/v25 probes and pinned harnesses are intact. No rerun, screenshot evidence,
+render pass or product diagnosis follows from this source-only review.
+The manual public-browser refresh question remains pending.
