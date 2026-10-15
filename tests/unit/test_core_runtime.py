@@ -1117,7 +1117,14 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False,
         return SimpleNamespace(stdout=out, returncode=0)
 
     monkeypatch.setattr(core, "_run", fake_run)
-    monkeypatch.setattr(core, "_wait_for_listener", lambda: None)
+    def wait_for_fixture_listener(*, adapter_source=None):
+        if adapter_source is None:
+            return
+        requested = Path(adapter_source)
+        journal_source = Path(core._journal()["adapter_source"])
+        if requested != journal_source:
+            raise AssertionError("listener wait did not use the journal-owned adapter source")
+    monkeypatch.setattr(core, "_wait_for_listener", wait_for_fixture_listener)
     return calls, enabled
 
 
@@ -3824,8 +3831,21 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     core._replace_journal(migrated)
     _rebind_fixture_resources_to_current_journal()
     prior = core.JOURNAL.read_bytes()
+    prior_record = json.loads(prior)
+    prior_resources = core.RESOURCES_RECORD.read_bytes()
     prior_launcher = core.LAUNCHER.read_bytes()
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
+
+    listener_sources = []
+    fixture_wait = core._wait_for_listener
+    def assert_journal_owned_listener_source(*, adapter_source=None):
+        if adapter_source is not None:
+            requested = Path(adapter_source)
+            journal_source = Path(core._journal()["adapter_source"])
+            assert requested == journal_source
+            listener_sources.append(requested)
+        return fixture_wait(adapter_source=adapter_source)
+    monkeypatch.setattr(core, "_wait_for_listener", assert_journal_owned_listener_source)
 
     real_run = core._run
     def interrupt_after_starting_recipe(argv, check=True):
@@ -3867,8 +3887,14 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     with _bounded_cohort_exception_sites():
         core._recover_interrupted_adapter_update()
     assert core.JOURNAL.read_bytes() == prior
+    restored_record = json.loads(core.JOURNAL.read_bytes())
+    assert restored_record["adapter_source"] == str(old_source)
+    assert restored_record["adapter_generation"] == prior_record["adapter_generation"]
+    assert restored_record["core_source_generation"] == prior_record["core_source_generation"]
+    assert core.RESOURCES_RECORD.read_bytes() == prior_resources
     assert core.LAUNCHER.read_bytes() == prior_launcher
     assert core.UNIT.read_bytes() == prior_unit
+    assert listener_sources[-1] == old_source
     assert enabled["value"]
 
 
