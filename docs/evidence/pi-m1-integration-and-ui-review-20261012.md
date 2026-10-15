@@ -2687,3 +2687,30 @@ is complete from these gates; implementation108, qualification109 and full accep
 remain separate and OPEN. Runtime code, pins, services or real chat success
 are not inferred from a validated specification. The219/62/18/eight groups,
 task103 and all unobserved target obligations remain OPEN.
+
+Sol independently audited bounded checkbox106 against217's four forced-prefix
+actual enrollment/handler/client cases,369 affected-suite passes/five explicit
+SDK skips, separate nine official-SDK passes/no skips, retained denial/cleanup/
+Root-consumption cases, exact source/pin review and one protected update0 plus
+guarded rollback0. Its whole bounded scope is fulfilled;106 is marked complete.
+It requires no successful public chat/Resources/UI acceptance and closes none
+of task103/full M1/all219/62/18/eight groups.
+
+### Candidate218 isolated rendered-flow probe remained unaccepted
+
+Existing Pi-only `probe_jarvis_affected_flows_v24.py` ran once as non-root admin,
+using sandboxed Chromium, an ephemeral loopback fixture and exact218 source.
+It exited2 at fixture hydration, reporting ready=false/state=null and the
+static conversation placeholder `A clear mind, at your service.` rather than
+its seeded fixture title. No live account, microphone or provider was used.
+Log `candidate218-rendered-flows.log` SHA-256:
+`916116492df48e70755c7e1c9225fdcdf4ce08829f14cc4f9b1a673e02ce510a`.
+
+Read-only Luna source audit confirms this source still contains the connection
+state selector and marks it ready after conversations load; the static title
+alone proves no hydration. Missing selector may indicate a fixture/DOM-context
+problem; no actual client exception or exact failing request was captured.
+Neither a stale-probe cause nor a product regression is asserted. No browser
+sandbox/fixture guard was weakened, no pass/render qualification claimed, and
+all four live restored services were independently active afterward. Candidate-
+bound affected-flow and phone/tablet/wide visual acceptance remain OPEN.
