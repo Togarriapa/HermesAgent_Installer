@@ -2407,3 +2407,23 @@ Pi list/status/apply refresh on the exact210 seal exited0,nearest root
 `/opt/hermes-installer-core-7c7af0c70`,all four artifacts done and apply ready,
 one complete96 remaining of97. Existing feature issues and unmerged branches
 remain preserved; no duplicate issue,remote branch or PR was created.
+
+### Candidate 211 bounded ingress/observer diagnostic plan
+
+Sol refinement candidate `32e2a0d6de656c34eedc832a175fcf5063067b0c`, archive
+SHA-256 `b66b83313f7f6c622e3c5f74b5bc1e49928c6d1103044d62858296a6f314a6d2`,
+contains all four artifacts and an append-only amendment. It permits only a
+failure-only constant ingress-finishing stage followed by the same exception's
+bare reraise,and at most seven once-only optional-observer entry labels plus
+one exact-type-allowlisted refusal. Diagnostics carry no private values or
+authority and cannot change failures,source=None/cancellation,cleanup,gates,
+pins or original deadlines. Neither race nor slow initialization is assumed.
+
+Pi sealed staging and strict specs/plan/status/apply checks each exited0;
+all four artifacts done,apply ready,one complete99 remaining of100 tasks.
+Evidence: `candidate211-stage.log`, `candidate211-specs.json`,
+`candidate211-gates.log`, `candidate211-status.json`, `candidate211-apply.json`.
+The existing Luna worker owns the bounded two-file implementation and focused
+tests,followed by existing Sol review. Source readiness and meaningful Pi
+qualification are required before any new protected attempt. No further
+activation or runtime acceptance follows from this planning checkpoint.
