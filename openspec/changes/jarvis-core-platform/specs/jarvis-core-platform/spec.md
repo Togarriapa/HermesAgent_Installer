@@ -3041,3 +3041,24 @@ Both Root registry enrollment producers SHALL generate probe_id and session_id u
 - **THEN** the unchanged _ID/context/seal/schema/currentness/expiry and protected handler checks deny it before effects; no filter, retry, replacement token or broader grammar converts invalid input into authority.
 
 This R0055/R0201, RT-T266.3/VD-T266.5 (#35) leaf changes only four producer assignments and focused tests, followed by a separately reviewed observer-only pin. Opaque handles/nonces, native no-tools/request/response/Root completion/consume/cleanup and300s/110s remain unchanged. Candidate215 was not applied and its exact generated field/cause remains unobserved; deterministic regression and Pi effects do not close219/62/18/eight OPEN groups.
+
+### Requirement: Authoritative Resources runtime reads use an exact qualified base without compilation
+The installer SHALL obtain the current pure Resources base from fixed protected CAS bytes bound to the reviewed nineteen compiler inputs and expected base digest, while retaining every current installation, overlay, native receipt and source proof and the original request deadlines.
+
+#### Scenario: A current Resources projection or archive read needs the base
+- **WHEN** an authoritative runtime read requires the pure compiled base
+- **THEN** it verifies the fixed existing nineteen input pins and current canonical source provenance, reads only the literal expected76d01dd6547025945e04f9b3fdd521e3419bc1ba523def4a9304335099a09741 CAS ZIP through protected no-follow Root ancestry/root:root0600 single-link stable-file checks within16MiB, hashes and strict-validates the complete archive, and prepares one operation-local base for exact current overlay validation/composition. Full source witnesses and CAS identity/bytes/hash are rechecked before authoritative disclosure; no compiler or cross-request cache supplies the read.
+
+#### Scenario: Qualified base or current mutable materialization differs
+- **WHEN** a compiler input/provenance/source, base CAS identity/content/custody/bounds, overlay/reconstruction, installed member/journal, SOUL or existing native receipt proof is missing or changes
+- **THEN** the operation denies or remains explicitly pending without alternate-base selection, compilation fallback, custody repair, stale composition, receipt-only authority, longer deadline or new grants. A verified pure base never substitutes for current native load, owner policy, actual response/completion or functional acceptance.
+
+#### Scenario: A fresh or updated source prepares runtime availability
+- **WHEN** the existing Root provisioning/discovery or guarded update lane independently compiles and validates the current base
+- **THEN** it verifies the reviewed input/output pins and safely retains that base through the existing bounded immutable CAS writer before runtime consumers/readiness, passes the prepared base through its overlay work without duplicate compilation, and preserves full native checks/current composed CAS/backups/recovery. Missing/unsafe CAS or wrong factory output refuses without overwrite or partial activation; runtime requests never trigger the compiler. Later compiler-input changes require coherent reviewed pins and a regenerated expected output, not automatic acceptance.
+
+#### Scenario: Fast primitive verification is observed
+- **WHEN** witness/CAS/strict archive checks run below the request budget
+- **THEN** full installed-member projection, protected Overview/model-settings/chat and effect/denial/concurrency/update/rollback/restart/UI evidence remain separately required under original5s/2s/300s/110s bounds. Guarded update success, pure base timing or source tests cannot establish full M1 or close219/62/18/eight OPEN groups.
+
+This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) Core-only refinement preserves the held-lock/thread/compiler-guarded update cache and all native/helper/observer bytes; Sol separately reviews only the changed Core pin after Luna implementation and Root strict Pi qualification.
