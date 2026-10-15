@@ -2289,3 +2289,23 @@ probe is being reviewed to inspect only the same fifteen process/pipe
 predicates against isolated owned children. It must not import resources,
 write a frame, touch services or confer acceptance; actual208 remains distinct
 from any controlled probe.
+
+The reviewed no-frame diagnostic v3 ran once on the identified Pi, exit0.
+Source SHA-256
+`977819f5f95693fd0eb764e93a4cb3a420d45799ff250eedbb4c088e46abc0ca`;
+JSON evidence `runuser-no-frame-probe-20261015-v3.json`, SHA-256
+`1b55b52bf0859091b9c3194c320a2aa95a741c56a24fff8ae6497103abb915f6`.
+All fifteen literal predicates were true at immediate,20ms and100ms samples
+for each of three fresh children; the unchanged original guard accepted all
+nine calls. Each child produced empty stdout/stderr, exited after EOF and was
+reaped; owned groups were absent and all pipes/streams/PIDFDs closed, with no
+group kill. Source custody/digest were unchanged. No resource import, frame,
+service/configuration change or provider call occurred. This does not identify
+actual208's failed predicate or justify weakening the guard.
+
+Diagnostic v1/v2 stopped before spawning children because the pinned managed
+interpreter is108914888bytes, above their diagnostic-only64MiB read cap.
+Version3 hashes it in64KiB chunks under a256MiB cap, retaining the exact
+interpreter digest. Production code was unchanged. Fresh Pi OpenSpec
+list/status/apply checks confirm the nearest project root,all four artifacts
+done and apply ready,one complete93 remaining of94 tasks.
