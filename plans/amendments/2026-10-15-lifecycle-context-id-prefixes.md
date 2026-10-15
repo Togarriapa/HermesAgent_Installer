@@ -1,0 +1,9 @@
+# Generated lifecycle context ID prefixes
+
+Append-only bounded refinement of R0055/R0201 and RT-T266.3/VD-T266.5 (#35), preserving219 requirements/62 components/18 AC/eight OPEN groups, baseline and history/tag refs.
+
+Candidate215 edfb3203491f99890328a102757da6c3a7e00cae passed strict gates but was not applied after364 PASS/1 FAIL/5 SDK skips. A lifecycle callback case failed client claim/context validation; its exact generated field was not captured. Independently, both enrollment producers use token_urlsafe(24) for probe/session IDs while unchanged _ID requires an alphanumeric first character. '-'/'_' are valid URLsafe first characters but invalid first characters under that validator. Do not claim the exact215 failure cause.
+
+Existing Luna changes only four assignments: literal p-/s- prefixes followed by the complete original24-byte random suffix at both registry producers. No entropy reduction, filtering, rejection sampling/retry, validator/schema/deadline expansion, new ID framework or other producer/nonce/handle/Core/client/native-probe/PM/config/account change. Full custody/currentness/claim-once/receipt/no-tools/response digest/Root completion/consume/cleanup and demand-only hydration remain.
+
+Root strict Pi all4 validation precedes Luna. Deterministic real enrollment→protected claim→client context tests force each punctuation-leading suffix for both registries, assert exact retained suffix/distinct24-byte requests and unchanged nonce/cohort/deadline, and retain unprefixed malformed/wrong-peer/stale/duplicate/cleanup denials plus genuine downstream contracts. Sol reviews source/tests and separately pins only observer; Core87c3b96d and other pins remain exact. Root affected suites must pass before another actual update; no lucky rerun, repaired-cause or acceptance closure is inferred.

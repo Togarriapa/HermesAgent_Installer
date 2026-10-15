@@ -3028,3 +3028,16 @@ The installer SHALL construct the current-custody native observer listener with 
 - **THEN** the existing failure/ordinary receipt/closed-source-operation behavior and owned worker/registry/PIDFD/socket/subprocess cleanup remain; no asynchronous worker, longer deadline, fabricated grant, repeated uncertain effect or proof bypass is introduced. Demand-time full native proof and300s/110s bounds remain unchanged; listener success is not functional chat/Resources/planning or full M1 acceptance.
 
 This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) refinement preserves219/62/18/eight OPEN groups. Root Pi strict validation precedes Luna implementation and Sol separate observer-only pin review; actual effect/denial/recovery and affected-flow UI evidence remain independently required.
+
+### Requirement: Generated lifecycle startup IDs satisfy the unchanged context grammar
+Both Root registry enrollment producers SHALL generate probe_id and session_id using fixed alphanumeric-leading purpose prefixes plus the complete original24-byte URLsafe random suffix, without widening the context validator or weakening entropy, custody or deadlines.
+
+#### Scenario: A generated random suffix begins with URLsafe punctuation
+- **WHEN** either enrollment producer obtains a token_urlsafe(24) suffix beginning '-' or '_'
+- **THEN** probe_id uses literal p- and session_id uses literal s- before the full unchanged suffix, so actual protected claim/client context validation accepts their leading grammar while retaining distinct original random calls, cohort/nonce/deadline/claim-once/current-peer proof and full192-bit suffix entropy.
+
+#### Scenario: Malformed or stale context is supplied independently of generation
+- **WHEN** unprefixed punctuation-leading IDs, wrong peer, changed custody, duplicate claim or expired context is presented
+- **THEN** the unchanged _ID/context/seal/schema/currentness/expiry and protected handler checks deny it before effects; no filter, retry, replacement token or broader grammar converts invalid input into authority.
+
+This R0055/R0201, RT-T266.3/VD-T266.5 (#35) leaf changes only four producer assignments and focused tests, followed by a separately reviewed observer-only pin. Opaque handles/nonces, native no-tools/request/response/Root completion/consume/cleanup and300s/110s remain unchanged. Candidate215 was not applied and its exact generated field/cause remains unobserved; deterministic regression and Pi effects do not close219/62/18/eight OPEN groups.
