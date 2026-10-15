@@ -1,0 +1,13 @@
+# Finite native Codex response receipts
+
+Append-only bounded refinement of R0055/R0201 and RT-T266.3/VD-T266.5 (#35). Preserve original219 requirements/62 components/18 AC/eight OPEN groups, frozen baseline and existing history/tag refs.
+
+Actual206 passed strict specs/current-scope plus205 contracts, then refused at observer_receipt/AttributeError after146.935s (report emission146.753s, return4, seven phases). Automatic prior Core/ingress recovery and fresh active units were separately verified. The diagnostic identifies an attempted boundary; no raw provider payload or completed Root receipt is claimed.
+
+Pinned official7085 agent/codex_runtime.py1082 returns the exact nine-field Response-shaped SimpleNamespace. Native execution middleware observes it before later transport normalization. SDK event values are retained directly; only message/output_text/function_call nested namespaces are constructed by the reviewed assembler. Existing fixtures supplied an artificial model_dump method, while both receipt sites require it unconditionally.
+
+The four current artifacts authorize one private finite codec deliberately shared by the lifecycle and ordinary/protected receipt sites. Map only exact known native fields/shapes, bounded JSON literals/containers and type-gated installed official SDK models, retaining the original top-level SDK path. The third deliberate source impact is the same _response_tool_calls extractor: exact builtin dict items use only literal type/call_id/name/arguments field access before the unchanged strict argument validation/canonical parse, matching existing SDK/namespace semantics. This prevents raw dictionary function calls from evading lifecycle/protected no-tools checks or ordinary Root lineage/admission; no generic mapping walker, tool broker or Root schema change.
+
+Preserve complete canonical response bytes/digest and all provider/native/no-tools/nonce/request/text/Root/currentness/privacy/cleanup/recovery gates. Unknown/extra/missing/unsupported/unbounded representations refuse without receipt authority; no arbitrary vars/general object introspection, duck serializer, lossy fallback, new dependency or native PM patch.
+
+Root Pi strict validation precedes existing Luna observer/contracts implementation. Graft-free complete native trees, mixed real SDK/JSON and meaningful malformed/bounds/tool/replay/currentness/privacy/cleanup effects precede Sol exact source review and separate observer pin, then Root focused Pi qualification and one exact startup observation. No Core/client/producer/config/account/route/budget/300s/110s change or acceptance closure.

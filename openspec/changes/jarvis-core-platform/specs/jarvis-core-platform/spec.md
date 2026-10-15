@@ -2956,3 +2956,24 @@ The installer SHALL recognize an absent tools key as the pinned native empty inv
 - **THEN** existing strict refusal occurs without startup attempt/provider dispatch or widened tools. Ordinary _request_tool_names semantics remain unchanged; no falsy-value fallback is used.
 
 This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) correction preserves219/62/18/eight OPEN groups and300s/110s. Actual204 observer_input metadata does not prove account/provider completion or live acceptance.
+
+### Requirement: Native Codex receipts use only finite reviewed response serialization
+The installer SHALL serialize the pinned native Codex response through one finite reviewed codec at both existing receipt sites, preserving SDK compatibility and every genuine provider/native/Root completion boundary.
+
+#### Scenario: The consumed native response has the pinned assembler shape
+- **WHEN** the actual response is exactly the builtin nine-field SimpleNamespace from the pinned Codex assembler, with only reviewed nested message/output_text/function_call namespaces, JSON literals/containers or installed official SDK model values within fixed traversal/frame bounds
+- **THEN** the observer hashes the complete lossless canonical projection, retaining exact text/request/response digests and original response identity, and may register only the existing genuinely completed/current Root receipt. Serialization alone supplies no completion or tool authority.
+
+#### Scenario: A native response is unsupported, malformed or unbounded
+- **WHEN** a field/type/discriminator is missing, extra, foreign or inconsistent, a duck object requests serialization, tool output violates the existing no-tools policy, or cycles/nonfinite values/depth/node/string/frame limits prevent exact finite serialization
+- **THEN** no successful response receipt or terminal is created; existing lifecycle/protected refusal, ordinary observation failure behavior, private diagnostic/cleanup and protected recovery remain. The native branch never falls through to SDK fallback, drops fields, truncates content or fabricates defaults.
+
+#### Scenario: The existing SDK path is used
+- **WHEN** the actual top-level result uses the existing SDK model_dump(mode='json') path rather than exact native SimpleNamespace
+- **THEN** its original canonical bytes, receipt policy and success/failure behavior remain unchanged. Native nested SDK conversion is gated by the installed official SDK base class and uses the same finite JSON checks, without adding a dependency or accepting arbitrary serializers.
+
+#### Scenario: Native raw dictionary output contains a function call
+- **WHEN** the same existing tool-call extractor sees an exact builtin dict item with type=function_call
+- **THEN** it reads only the literal call_id/name/arguments fields and applies its unchanged validation, duplicate-key-rejecting argument parse and canonical bytes, matching SDK/namespace extraction. Lifecycle/protected no-tools traffic refuses before a successful receipt; ordinary permitted calls retain existing lineage and independent Root review/admission. No generic mapping/object inspection or new tool authority follows.
+
+This bounded R0055/R0201, RT-T266.3/VD-T266.5 (#35) correction preserves219/62/18/eight OPEN groups and300s/110s. Actual206 observer_receipt/AttributeError plus pinned source establishes the serialization mismatch; it does not establish a completed Root receipt or live acceptance.
