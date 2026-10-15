@@ -2328,3 +2328,39 @@ Evidence: `candidate209-stage.log`, `candidate209-specs.json`,
 Luna implementation and actual-function effect tests require Sol review,
 separate Core-only pin and focused Pi qualification before one newly observed
 update. This plan does not establish any runtime acceptance.
+
+### Candidate 210 exact ordered process refusals
+
+Reviewed implementation `7c7af0c704c8322959225db142df62b91a401965`, archive
+SHA-256 `1fff4aeb28481b504326b591e88ee4679cbb17ece46c7909ce164aeb5b3059ae`,
+changes only the fifteen ordered Core predicate/raise lines and focused tests,
+plus a separately reviewed Core-only Inspector pin. Core source SHA-256 is
+`87c3b96d9ca4eb594d99ee14380cbba7e4eae2110d69c66d9c74d78bffc23d14`;
+observer source/pin remains
+`74f9951c3f0355ac3a71bb98d1732662c6a2cd40489bdba7149b5155c092cfae`.
+Original predicates, short-circuit order, static errors, reads/return tuple,
+import/rollback/currentness and cleanup remain unchanged. Source review
+caught and corrected a test-fixture write-through omission before execution.
+
+Pi sealed staging and strict specs/plan checks exited0. Nineteen focused
+actual-snapshot, importer-provenance, recovery and origin/privacy contracts
+passed in14.54s,164 deselected,no skips,contracts exit0. They include the
+complete tuple,all fifteen individual refusals with distinct ordered source
+lines,multiple-failure order and unchanged short/malformed/read errors. The
+retained receipt/native-SDK sources were unchanged; their earlier qualification
+is not relabelled as a new run.
+
+Controlled Linux probe v4 changed only its two fixed candidate paths and Core
+digest from reviewed v3. Script SHA-256
+`aa16cb18731d55889be4599231e0272549ba1cefab20d918c636cecf201bb56a`;
+`runuser-no-frame-probe-20261015-v4.json` repeats the same closed boolean
+result digest `1b55b52bf0859091b9c3194c320a2aa95a741c56a24fff8ae6497103abb915f6`.
+On the current source,all fifteen predicates and original guard passed at
+three samples for each of three children;silent EOF/reap/group/FD cleanup and
+unchanged source checks passed,with no kill/import/frame/service effect.
+These are controlled checks,not actual startup acceptance.
+
+Evidence: `candidate210-stage.log`, `candidate210-specs.json`,
+`candidate210-gates.log` and the fixed v4 probe/result. One newly qualified
+protected update was started in `candidate210-actual-adoption.log`. Its
+outcome and required live acceptance remain separately pending.
