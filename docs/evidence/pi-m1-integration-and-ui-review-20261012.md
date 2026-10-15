@@ -2646,3 +2646,25 @@ five seconds. Sol is evaluating a source-bound prepared-base design that
 preserves native/CAS/installed-member/overlay/currentness proofs;no deadline
 increase,unverified authority or further actual apply is authorized by this
 measurement. Full M1 and all219/62/18/eight acceptance groups remain OPEN.
+
+### Compile-free base-reader feasibility measurement
+
+After restoration, a separate transient process on the exact217 Pi seal
+measured the proposed read-only verification primitives twice, without
+calling the compiler or entering an update-cache scope. Each call took fresh
+before/after `_root_artifact_source_witness` values for the19 reviewed input
+pins, read the fixed76d01dd6 base ZIP through the existing bounded Root0600
+snapshot reader, strictly parsed the archive, then independently reread and
+compared both source witnesses and CAS bytes/filesystem identities. Both
+passed, in0.115424s and0.107372s, under an independent eight-second alarm.
+No configuration, service, account, journal, native state or stored knowledge
+changed. The script retained only closed booleans, count and duration.
+
+`candidate217-runtime-base-read-timing.json` SHA-256:
+`d837cbd4ee369f3216095742ac3af7459d35cf32213e08f5b2f891264f53bffa`.
+This is diagnostic feasibility evidence, not an implemented runtime reader,
+a whole Overview request timing or native/public functional acceptance.
+The proposed reader still requires Sol's four-artifact refinement, Luna
+implementation, fresh-install base retention, strict custody/currentness
+failure coverage, source pins and exact Pi effect/render qualification.
+Issue35 was updated with214–217 outcomes and restoration; it remains OPEN.
