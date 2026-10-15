@@ -3034,3 +3034,16 @@ Luna is correcting the measurement-only note under these bounds; original
 v24/v25 probes and pinned harnesses are intact. No rerun, screenshot evidence,
 render pass or product diagnosis follows from this source-only review.
 The manual public-browser refresh question remains pending.
+
+Luna's preserved v2 note `/private/tmp/effective-ui-clipping-plan226-v2.txt`,
+SHA-256d80e186f1c749f5153f2df8397741b303641f491177745f736fe35d17aaa3c60,
+was subsequently reviewed by Sol and NOT approved as a drop-in measurement.
+Its literal whitespace regex is overescaped, shorthand mask-default comparisons
+are fragile, and its blanket positioned-ancestor refusal makes the actual
+relative-positioned Overview shell permanently indeterminate. No version was
+transferred, executed or used to change a failed assertion. Accepted measurement
+requirements above remain; exact Manage/System and Profiles compatibility still
+need a concrete probe diff. A future finite native IntersectionObserver
+intersectionRect sample/disconnect approach may be reviewed with the same
+visibility/positive-area/44px/center-hit/no-running/240ms-no-advance guards;
+neither this suggestion nor either draft establishes rendered acceptance.
