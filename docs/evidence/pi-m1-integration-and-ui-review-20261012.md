@@ -2733,3 +2733,49 @@ writes may change directory timestamps; they create no general bypass flag.
 Luna's initial source was held for syntax/custody/fixture/negative-effect
 corrections before any source pin or actual activation. No actual apply ran
 after217; restored production and every unobserved acceptance remain as above.
+
+### Candidate220 reviewed runtime base reader: qualification in progress
+
+Sol reviewed Luna's Core/tests stack through8994146ef462148d4d8efb9eec9435040c783874
+and independently verified the separate Core-only pinfa897094. Root integrated
+the bounded source/tests asf532375 and the pin as7458a5c30e0b915a0e443746c2522fbdb3f59c6d.
+Archive SHA-256de97095c7472b11ef0f02a2963e890bf5863d4ec5c901c82295e9f624340047e.
+Core SHA-2568aaeb069805709fecf8a1915995edeaa8e804ac3da803390fb8e04826a6748a9;
+Inspector SHA-2561f0b3671d5db4cbe93a05ae100fc54fbe8e1e71a25ede6f10122ae683eddc241.
+Observerd2baa338 and all other rows remain unchanged. Static source/pin review
+is distinct from runtime acceptance. Pi sealed staging/strict-specs/plan/status/
+apply all exited0; the implementation has not been activated.
+
+Root's first three-suite invocation omitted the required private `/opt`
+namespace. It stopped25 PASS/three explicit namespace-guard failures in137.37s,
+before those update effects; this is an operator qualification error, not a
+proved Source defect. The overlay/factory suites had not yet run. Do not claim
+that invocation as a full pass or relax the guard to accommodate it.
+
+Luna adapted the existing isolated runner; Root and Sol reviewed its fixed
+candidate/provenance/Core/three-test pins, read-only candidate/prior alias,
+Root private tmpfs namespace, isolated HOME/XDG/TMP, cleared ambient fixture
+variables,1200-second bound and owned cleanup. Namespace equality to PID1
+refuses before any mount command. Corrected runner SHA-256:
+e47e48f3b7f307ca88a36deabd517581a7ad1f26d034e265ded9117ecee5eb2e.
+The exact bytes were transferred and rehashed on Pi. One corrected three-suite
+run is active in `candidate220b-runtime-runner.log`; its private evidence is
+`/var/tmp/hermes-native-guard-220-runtime-7458a5c30-20261015T110647Z-3581976/`.
+Its result is pending; no protected apply follows an unknown result.
+
+Separately, the implemented `_load_resources_base` plus final prepared-base
+check succeeded twice against real retained CAS, with the compiler replaced
+by a forbidden-call spy in that transient process only. Each had a five-second
+alarm; timings0.172044s/0.131887s,19 input witnesses/six protected ancestors,
+nonempty bytes within16MiB. JSON `candidate220-base-reader-timing.json` SHA-256
+137fdb0df7392a7fc3a7864db52be697f3952a0e7cafa20ab15d2d57d09ddfb7.
+No service/journal/account/native state changed. This is implemented primitive
+evidence, not full installed projection/HTTP/chat or native acceptance.
+
+UI audit found the v24 fixture's fixed asset whitelist omits the current
+ecosystem JS/CSS chunks; the registry requires that JS chunk before app
+startup. The existing v25 Mission probe was discovered and preserved; an
+exclusive-create attempt refused to overwrite it. Any compatibility copy
+retains finite asset routes, sandbox/auth/method/host guards and harness pins.
+There is still no current-candidate phone/tablet/wide render pass.
+Tasks108/109,103/full M1 and all219/62/18/eight groups remain OPEN.
