@@ -2427,3 +2427,26 @@ The existing Luna worker owns the bounded two-file implementation and focused
 tests,followed by existing Sol review. Source readiness and meaningful Pi
 qualification are required before any new protected attempt. No further
 activation or runtime acceptance follows from this planning checkpoint.
+
+### Candidate 212 reviewed diagnostics and test-fixture refusal
+
+Reviewed candidate `6749f0364166f149a2e60fef7da627580fb820b5`,archive SHA-256
+`16e5ab1ce86ea3d5160b2c0682568b42e021086896fa689d5a423698a83418de`,
+contains only the approved adopter/Inspector private diagnostics and focused
+tests. Sol reviewed the original source plus two test corrections before
+qualification;an unreachable legacy-lane peer case was removed and optional
+registry-refusal/broken-sink-success coverage added. Adopter source SHA-256
+`835444fdeb56f33d548aa674437e56382d2a2eca47df6f94ca2720c0bf6356d3`;
+Inspector `6a3565cf9edc860ac1ac3a2bc6fb754257aacba94e1de7a6649ba0bd6ad16014`.
+All existing Core/observer/adapter pins remain unchanged.
+
+Pi staging and strict specs/plan exited0. The two complete affected unit
+suites produced156 passed and one failed in1.19s,contracts exit1,no skips.
+The failure was the success-order fixture expecting only two final cohort
+checks;production correctly checks all three Inspector/Gateway/Tunnel units.
+Candidate212 was not applied. Luna's test-only correction5140e8c95,reviewed by
+Sol and imported as ceb3791,adds the missing expected event to both order
+lists. Production sources and pins are byte-for-byte unchanged. A new exact
+candidate must pass focused Pi qualification before a protected observation.
+Evidence: `candidate212-stage.log`, `candidate212-specs.json`,
+`candidate212-gates.log`. No local tests,runtime,preview or installer ran.
