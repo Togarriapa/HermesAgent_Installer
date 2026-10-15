@@ -6,6 +6,7 @@ authoritative for this hardware-bound integration.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,6 +34,394 @@ class _PluginContext:
     def register_middleware(self, name, callback):
         self.middleware.setdefault(name, []).append(callback)
         return callback
+
+
+def _native_response(output_text: str, output=None):
+    if output is None:
+        output = [SimpleNamespace(type="message", role="assistant", status="completed",
+            content=[SimpleNamespace(type="output_text", text=output_text)])]
+    return SimpleNamespace(output=output, output_text=output_text, usage=None,
+        status="completed", id="resp-native-fixture", model="gpt-6-luna",
+        incomplete_details=None, error=None, service_tier=None)
+
+
+def test_native_response_codec_preserves_complete_fixed_namespace_digest():
+    import hashlib
+    import json
+    from hermes_installer.remote.core_native_observer import _native_response_bytes
+
+    response_text = "provider answer"
+    response = _native_response(response_text)
+    expected = {
+        "output": [{"type": "message", "role": "assistant", "status": "completed",
+                    "content": [{"type": "output_text", "text": response_text}]}],
+        "output_text": response_text, "usage": None, "status": "completed",
+        "id": "resp-native-fixture", "model": "gpt-6-luna",
+        "incomplete_details": None, "error": None, "service_tier": None,
+    }
+    encoded = _native_response_bytes(response)
+    assert encoded == json.dumps(expected, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode("utf-8")
+    assert hashlib.sha256(encoded).hexdigest() == hashlib.sha256(
+        json.dumps(expected, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+
+
+def test_native_response_codec_accepts_installed_official_sdk_nested_values():
+    import hashlib
+    import json
+    sdk_models = pytest.importorskip("openai.types.responses")
+    from hermes_installer.remote.core_native_observer import _native_response_bytes
+
+    usage_type = getattr(sdk_models, "ResponseUsage", None)
+    output_text_type = getattr(sdk_models, "ResponseOutputText", None)
+    if usage_type is None or output_text_type is None:
+        pytest.skip("installed official SDK exposes different Responses model names")
+    usage = usage_type.model_construct(input_tokens=1, input_tokens_details={"cached_tokens": 0},
+        output_tokens=2, output_tokens_details={"reasoning_tokens": 0}, total_tokens=3)
+    output_text = output_text_type.model_construct(type="output_text", text="sdk text",
+        annotations=[])
+    response = _native_response("sdk text", output=[SimpleNamespace(
+        type="message", role="assistant", status="completed", content=[output_text])])
+    response.usage = usage
+    expected = {
+        "output": [{"type": "message", "role": "assistant", "status": "completed",
+            "content": [output_text.model_dump(mode="json")]}],
+        "output_text": "sdk text", "usage": usage.model_dump(mode="json"),
+        "status": "completed", "id": "resp-native-fixture", "model": "gpt-6-luna",
+        "incomplete_details": None, "error": None, "service_tier": None,
+    }
+    canonical = json.dumps(expected, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode("utf-8")
+    assert _native_response_bytes(response) == canonical
+    assert hashlib.sha256(_native_response_bytes(response)).hexdigest() == hashlib.sha256(
+        canonical).hexdigest()
+
+
+def test_real_openai_response_top_level_and_mixed_function_call_items():
+    import hashlib
+    import json
+    sdk_models = pytest.importorskip("openai.types.responses")
+    response_type = getattr(sdk_models, "Response", None)
+    function_call_type = getattr(sdk_models, "ResponseFunctionToolCall", None)
+    if response_type is None or function_call_type is None:
+        pytest.skip("installed official SDK exposes different Responses model names")
+    from hermes_installer.remote.core_native_observer import (
+        _canonical, _native_response_bytes, _response_bytes, _response_tool_calls,
+    )
+
+    sdk_top = response_type.model_construct(id="resp-sdk", model="gpt-6-luna",
+        output=[], status="completed", created_at=1, object="response")
+    expected_sdk_bytes = _canonical(sdk_top.model_dump(mode="json"))
+    assert _response_bytes(sdk_top) == expected_sdk_bytes
+
+    sdk_call = function_call_type.model_construct(id="fc-sdk", call_id="call-sdk",
+        name="lookup", arguments='{"query":"sdk"}', status="completed",
+        type="function_call")
+    native_call = SimpleNamespace(type="function_call", id=None, call_id="call-ns",
+        name="lookup", status="completed", arguments='{"query":"namespace"}')
+    dict_call = {"type": "function_call", "call_id": "call-dict", "name": "lookup",
+        "arguments": '{"query":"dict"}'}
+    response = _native_response("mixed", output=[sdk_call, dict_call, native_call])
+    calls = _response_tool_calls(response)
+    assert [(call_id, name) for call_id, name, _args in calls] == [
+        ("call-sdk", "lookup"), ("call-dict", "lookup"), ("call-ns", "lookup")]
+    encoded = _native_response_bytes(response)
+    expected_native = {
+        "output": [sdk_call.model_dump(mode="json"), dict_call,
+            {"type": "function_call", "id": None, "call_id": "call-ns", "name": "lookup",
+             "status": "completed", "arguments": '{"query":"namespace"}'}],
+        "output_text": "mixed", "usage": None, "status": "completed",
+        "id": "resp-native-fixture", "model": "gpt-6-luna",
+        "incomplete_details": None, "error": None, "service_tier": None,
+    }
+    expected_native_bytes = _canonical(expected_native)
+    assert encoded == expected_native_bytes
+    assert hashlib.sha256(encoded).hexdigest() == hashlib.sha256(
+        expected_native_bytes).hexdigest()
+    assert json.loads(encoded)["output"][0]["type"] == "function_call"
+
+
+def test_real_openai_nested_conversion_failure_has_no_sdk_fallback(monkeypatch):
+    sdk_models = pytest.importorskip("openai.types.responses")
+    usage_type = getattr(sdk_models, "ResponseUsage", None)
+    if usage_type is None:
+        pytest.skip("installed official SDK exposes different Responses usage model name")
+    from hermes_installer.remote.core_native_observer import (
+        CoreNativeObservationUnavailable, _response_bytes,
+    )
+
+    usage = usage_type.model_construct(input_tokens=1, input_tokens_details={},
+        output_tokens=1, output_tokens_details={}, total_tokens=2)
+    response = _native_response("native", output=[])
+    response.usage = usage
+
+    def conversion_fails(_self, *, mode):
+        assert mode == "json"
+        raise RuntimeError("private SDK conversion failure")
+
+    monkeypatch.setattr(usage_type, "model_dump", conversion_fails)
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _response_bytes(response)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda response: setattr(response, "extra", "private"),
+    lambda response: delattr(response, "id"),
+    lambda response: setattr(response, "usage", {"nested": 1 << 80}),
+    lambda response: setattr(response, "error", {"nested": float("inf")}),
+    lambda response: setattr(response, "output_text", 1),
+    lambda response: setattr(response, "output_text", "x" * (256 * 1024 + 1)),
+    lambda response: setattr(response, "output", [SimpleNamespace(
+        type="output_text", text="x", extra="unknown")]),
+    lambda response: setattr(response, "output", [SimpleNamespace(
+        type="output_text", text=7)]),
+    lambda response: setattr(response, "output", [SimpleNamespace(
+        type="unknown_output", text="x")]),
+    lambda response: setattr(response, "output", [SimpleNamespace(
+        type="z" * 100_000, text="x")]),
+    lambda response: setattr(response, "output", [SimpleNamespace(
+        type="output_text", text="x" * (256 * 1024))]),
+    lambda response: setattr(response, "output", [None] * 8193),
+    lambda response: setattr(response, "usage", {1: "non-string key"}),
+    lambda response: setattr(response, "usage", {"rows": [None] * 8180}),
+])
+def test_native_response_codec_refuses_unreviewed_or_non_json_shapes(mutation):
+    from hermes_installer.remote.core_native_observer import (
+        CoreNativeObservationUnavailable, _native_response_bytes,
+    )
+
+    response = _native_response("safe")
+    mutation(response)
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _native_response_bytes(response)
+
+
+def test_native_response_codec_refuses_cycles_and_bounds_depth():
+    from hermes_installer.remote.core_native_observer import (
+        CoreNativeObservationUnavailable, _native_response_bytes,
+    )
+
+    cyclic = []
+    cyclic.append(cyclic)
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _native_response_bytes(_native_response("safe", output=cyclic))
+    nested = "leaf"
+    for _ in range(18):
+        nested = [nested]
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _native_response_bytes(_native_response("safe", output=nested))
+    nested_namespace = SimpleNamespace(type="message", role="assistant",
+        status="completed", content=[])
+    nested_namespace.content.append(nested_namespace)
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _native_response_bytes(_native_response("safe", output=[nested_namespace]))
+
+
+def test_native_response_codec_enforces_aggregate_utf8_budget():
+    from hermes_installer.remote.core_native_observer import (
+        CoreNativeObservationUnavailable, _native_response_bytes,
+    )
+
+    repeated = "x" * 140_000
+    response = _native_response(repeated, output=[SimpleNamespace(type="message",
+        role="assistant", status="completed", content=[SimpleNamespace(
+            type="output_text", text=repeated)])])
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _native_response_bytes(response)
+
+
+def test_native_response_codec_enforces_final_canonical_frame_bound():
+    from hermes_installer.remote.core_native_observer import (
+        CoreNativeObservationUnavailable, _native_response_bytes,
+    )
+
+    escaped = "\x01" * 50_000
+    response = _native_response(escaped, output=[])
+    assert len(escaped.encode("utf-8")) < 256 * 1024
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _native_response_bytes(response)
+
+
+def test_response_tool_call_extractor_handles_exact_native_json_dicts():
+    import json
+    from hermes_installer.remote.core_native_observer import _response_tool_calls
+
+    response = _native_response("", output=[{
+        "type": "function_call", "call_id": "call-1", "name": "lookup",
+        "arguments": '{"query":"safe"}',
+    }])
+    calls = _response_tool_calls(response)
+    assert calls == [("call-1", "lookup", json.dumps({"query": "safe"},
+        sort_keys=True, separators=(",", ":")).encode())]
+
+
+def test_response_tool_call_extractor_mixes_namespace_and_dict_items_and_rejects_duplicates():
+    from hermes_installer.remote.core_native_observer import (
+        CoreNativeObservationUnavailable, _response_tool_calls,
+    )
+
+    namespace_call = SimpleNamespace(type="function_call", call_id="call-ns",
+        name="lookup", arguments='{"query":"ns"}')
+    dict_call = {"type": "function_call", "call_id": "call-dict", "name": "lookup",
+        "arguments": '{"query":"dict"}'}
+    mixed = _response_tool_calls(_native_response("", output=[namespace_call, dict_call]))
+    assert [entry[:2] for entry in mixed] == [
+        ("call-ns", "lookup"), ("call-dict", "lookup")]
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _response_tool_calls(_native_response("", output=[{
+            **dict_call, "arguments": '{"query":"one","query":"two"}',
+        }]))
+
+
+@pytest.mark.parametrize("protected", [False, True])
+@pytest.mark.parametrize("call_kind", ["dict", "namespace", "sdk"])
+def test_native_dict_function_call_callback_preserves_or_refuses_root_lineage(
+        tmp_path: Path, monkeypatch, protected: bool, call_kind: str):
+    import hashlib
+    import json
+    import time
+    import hermes_installer.remote.core_native_observer as observer
+
+    client = CoreNativeObservationClient(socket_path=tmp_path / "unused.sock")
+    monkeypatch.setattr(observer, "_codex_account_fingerprint", lambda _resolver: "f" * 64)
+    monkeypatch.setattr(client, "planning_context_for_attempt",
+        lambda **_kwargs: object() if protected else None)
+    monkeypatch.setattr(client, "master_review_context_for_attempt", lambda **_kwargs: None)
+    attempt = ObservedProviderAttempt("x" * 32, "o" * 32, time.monotonic() + 20)
+    monkeypatch.setattr(client, "register_attempt", lambda **_kwargs: attempt)
+    registered = []
+    monkeypatch.setattr(client, "register_response", lambda **kwargs: registered.append(kwargs))
+    ctx = _PluginContext()
+    install_native_codex_process_observer(ctx, client=client)
+    request = {"model": "gpt-6-luna", "tools": [{"name": "lookup"}],
+        "input": [{"type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": "ordinary tool request"}]}]}
+    if call_kind == "dict":
+        call = {"type": "function_call", "call_id": "call-1", "name": "lookup",
+            "arguments": '{"query":"safe"}'}
+    elif call_kind == "namespace":
+        call = SimpleNamespace(type="function_call", id=None, call_id="call-1",
+            name="lookup", status="completed", arguments='{"query":"safe"}')
+    else:
+        sdk_models = pytest.importorskip("openai.types.responses")
+        function_call_type = getattr(sdk_models, "ResponseFunctionToolCall", None)
+        if function_call_type is None:
+            pytest.skip("installed official SDK exposes a different function-call model name")
+        call = function_call_type.model_construct(type="function_call", id="fc-1",
+            call_id="call-1", name="lookup", status="completed",
+            arguments='{"query":"safe"}')
+    response = _native_response("tool output", output=[call])
+    dispatched = []
+    result = ctx.middleware["llm_execution"][0](
+        provider="openai-codex", api_mode="codex_responses",
+        base_url="https://chatgpt.com/backend-api/codex", model="gpt-6-luna",
+        request=request, session_id="tool-session", turn_id="tool-turn",
+        api_request_id="tool-request",
+        next_call=lambda value: dispatched.append(value) or response)
+
+    assert len(dispatched) == 1
+    if protected:
+        assert dispatched[0]["tools"] == []
+        assert result is not response and registered == []
+    else:
+        assert result is response
+        assert dispatched[0]["tools"] == [{"name": "lookup"}]
+        assert len(registered) == 1 and registered[0]["attempt"] is attempt
+        expected_args = json.dumps({"query": "safe"}, sort_keys=True,
+            separators=(",", ":")).encode("utf-8")
+        assert registered[0]["tool_calls"] == [{"id": "call-1", "name": "lookup",
+            "arguments_sha256": hashlib.sha256(expected_args).hexdigest()}]
+
+
+def test_non_native_top_level_model_dump_contract_is_unchanged():
+    import json
+    from hermes_installer.remote.core_native_observer import _response_bytes
+
+    class ExistingTopLevelModelDump:
+        def model_dump(self, *, mode):
+            assert mode == "json"
+            return {"response": "unchanged"}
+
+    assert _response_bytes(ExistingTopLevelModelDump()) == json.dumps(
+        {"response": "unchanged"}, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def test_native_response_subclass_and_nested_serializer_duck_are_refused():
+    from hermes_installer.remote.core_native_observer import (
+        CoreNativeObservationUnavailable, _native_response_bytes,
+    )
+
+    class NativeSubclass(SimpleNamespace):
+        def model_dump(self, **_kwargs):
+            raise AssertionError("native subclasses must not reach arbitrary serializers")
+
+    subclass = NativeSubclass(**_native_response("safe").__dict__)
+    from hermes_installer.remote.core_native_observer import _response_bytes
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _response_bytes(subclass)
+
+    invoked = []
+
+    class SerializerDuck:
+        def model_dump(self, **_kwargs):
+            invoked.append(True)
+            return {"type": "output_text", "text": "safe"}
+
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _native_response_bytes(_native_response("safe", output=[SerializerDuck()]))
+    assert invoked == []
+
+
+def test_native_namespace_discriminator_comparison_never_calls_unsupported_equality():
+    from hermes_installer.remote.core_native_observer import (
+        CoreNativeObservationUnavailable, _native_response_bytes,
+    )
+
+    class EqualitySentinel:
+        def __eq__(self, _other):
+            raise AssertionError("unsupported fields must be refused before equality")
+
+    item = SimpleNamespace(type="function_call", id=None, call_id="call-1", name="lookup",
+        status=EqualitySentinel(), arguments="{}")
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _native_response_bytes(_native_response("safe", output=[item]))
+
+
+def test_native_namespace_field_checks_refuse_custom_keys_without_hashing():
+    from hermes_installer.remote.core_native_observer import (
+        CoreNativeObservationUnavailable, _native_response_bytes,
+    )
+
+    class HashSentinel:
+        calls = 0
+
+        def __hash__(self):
+            type(self).calls += 1
+            return 1
+
+        def __eq__(self, _other):
+            type(self).calls += 1
+            return False
+
+    response = _native_response("safe")
+    response.__dict__.pop("id")
+    key = HashSentinel()
+    response.__dict__[key] = "private"
+    HashSentinel.calls = 0
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _native_response_bytes(response)
+    assert HashSentinel.calls == 0
+
+    nested = SimpleNamespace(type="function_call", id=None, call_id="call-1",
+        name="lookup", status="completed", arguments="{}")
+    nested.__dict__.pop("id")
+    nested.__dict__[key] = None
+    HashSentinel.calls = 0
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _native_response_bytes(_native_response("safe", output=[nested]))
+    assert HashSentinel.calls == 0
 
 
 def test_non_codex_routes_pass_through_without_observation(tmp_path: Path):
@@ -174,9 +563,8 @@ def test_root_enrolled_planning_turn_reaches_provider_with_zero_tools(tmp_path: 
                    "content": [{"type": "input_text", "text": prompt}]}],
     }
     seen = []
-    response = SimpleNamespace(output=[], output_text='{"execution_mode":"oneshot",'
-        '"selected_source_ids":[],"plan":{}}',
-        model_dump=lambda **_kwargs: {"output": [], "output_text": "bounded"})
+    response = _native_response('{"execution_mode":"oneshot",'
+        '"selected_source_ids":[],"plan":{}}', output=[])
     result = ctx.middleware["llm_execution"][0](
         provider="openai-codex", api_mode="codex_responses",
         base_url="https://chatgpt.com/backend-api/codex", model="gpt-6-luna",
@@ -216,8 +604,7 @@ def test_observer_forwards_exact_child_output_only_for_root_admitted_capture(
         "input": [{"type": "message", "role": "user",
                    "content": [{"type": "input_text", "text": prompt}]}]}
     output = "exact provider answer"
-    response = SimpleNamespace(output_text=output, model_dump=lambda **_kwargs: {
-        "output_text": output, "output": []})
+    response = _native_response(output, output=[])
 
     result = ctx.middleware["llm_execution"][0](
         provider="openai-codex", api_mode="codex_responses",
@@ -229,6 +616,16 @@ def test_observer_forwards_exact_child_output_only_for_root_admitted_capture(
     assert result is response
     assert len(receipts) == 1
     assert receipts[0]["response_text"] == expected_text
+    import hashlib
+    import json
+    expected_receipt_tree = {
+        "output": [], "output_text": output, "usage": None, "status": "completed",
+        "id": "resp-native-fixture", "model": "gpt-6-luna",
+        "incomplete_details": None, "error": None, "service_tier": None,
+    }
+    expected_receipt_bytes = json.dumps(expected_receipt_tree, ensure_ascii=False,
+        sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    assert receipts[0]["response_sha256"] == hashlib.sha256(expected_receipt_bytes).hexdigest()
     if expected_text is not None:
         assert receipts[0]["response_text_sha256"] == __import__("hashlib").sha256(
             output.encode()).hexdigest()

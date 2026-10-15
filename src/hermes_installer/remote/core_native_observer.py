@@ -8994,10 +8994,16 @@ def _response_tool_calls(response: Any) -> list[tuple[str, str, bytes]]:
         return []
     calls: list[tuple[str, str, bytes]] = []
     for item in output:
-        if getattr(item, "type", None) != "function_call":
+        if type(item) is dict:
+            item_type = item.get("type")
+            get_field = item.get
+        else:
+            item_type = getattr(item, "type", None)
+            get_field = lambda name: getattr(item, name, None)
+        if item_type != "function_call":
             continue
-        call_id, name, arguments = (getattr(item, "call_id", None), getattr(item, "name", None),
-                                    getattr(item, "arguments", None))
+        call_id, name, arguments = (get_field("call_id"), get_field("name"),
+                                    get_field("arguments"))
         if not isinstance(call_id, str) or not isinstance(name, str) or not isinstance(arguments, str):
             raise CoreNativeObservationUnavailable("Codex function-call response is malformed")
         try:
@@ -9009,6 +9015,179 @@ def _response_tool_calls(response: Any) -> list[tuple[str, str, bytes]]:
             raise CoreNativeObservationUnavailable("Codex function-call arguments are malformed") from None
         calls.append((call_id, name, canonical))
     return calls
+
+
+def _native_response_bytes(response: Any) -> bytes:
+    """Project only the pinned native Responses namespace through a finite JSON codec."""
+    fields = ("output", "output_text", "usage", "status", "id", "model",
+              "incomplete_details", "error", "service_tier")
+    if type(response) is not SimpleNamespace:
+        raise CoreNativeObservationUnavailable("native Codex response shape is unavailable")
+    raw_fields = response.__dict__
+    if type(raw_fields) is not dict or len(raw_fields) != len(fields):
+        raise CoreNativeObservationUnavailable("native Codex response fields are unavailable")
+    if any(type(name) is not str or len(name) > 18 for name in raw_fields):
+        raise CoreNativeObservationUnavailable("native Codex response fields are unavailable")
+    if set(raw_fields) != set(fields):
+        raise CoreNativeObservationUnavailable("native Codex response fields are unavailable")
+    # Copy by fixed names. Do not serialize the namespace or inspect arbitrary objects.
+    values = {name: raw_fields[name] for name in fields}
+    if (type(values["output"]) is not list or type(values["output_text"]) is not str
+            or type(values["status"]) is not str or type(values["model"]) is not str
+            or values["id"] is not None and type(values["id"]) is not str
+            or values["service_tier"] is not None and type(values["service_tier"]) is not str):
+        raise CoreNativeObservationUnavailable("native Codex response fields are malformed")
+
+    sdk_base: type | None = None
+    def official_sdk(value: Any) -> bool:
+        nonlocal sdk_base
+        if sdk_base is None:
+            try:
+                from openai._models import BaseModel
+                sdk_base = BaseModel
+            except Exception:
+                return False
+        return isinstance(value, sdk_base)
+
+    budget = {"nodes": 0, "string_bytes": 0}
+    active: set[int] = set()
+    namespace_fields = {
+        "message": ("type", "role", "status", "content"),
+        "output_text": ("type", "text"),
+        "function_call": ("type", "id", "call_id", "name", "status", "arguments"),
+    }
+
+    def check_string(value: str) -> str:
+        if len(value) > MAX_FRAME:
+            raise ValueError
+        encoded = value.encode("utf-8", "strict")
+        budget["string_bytes"] += len(encoded)
+        if budget["string_bytes"] > MAX_FRAME:
+            raise ValueError
+        return value
+
+    def visit(value: Any, depth: int) -> Any:
+        if depth > 16:
+            raise ValueError
+        budget["nodes"] += 1
+        if budget["nodes"] > 8192:
+            raise ValueError
+        if value is None or type(value) is bool:
+            return value
+        if type(value) is int:
+            if not -(1 << 63) <= value < (1 << 63):
+                raise ValueError
+            return value
+        if type(value) is float:
+            if not math.isfinite(value):
+                raise ValueError
+            return value
+        if type(value) is str:
+            return check_string(value)
+        if type(value) in (list, dict):
+            identity = id(value)
+            if identity in active:
+                raise ValueError
+            active.add(identity)
+            try:
+                if type(value) is list:
+                    if len(value) > min(8192, 8192 - budget["nodes"]):
+                        raise ValueError
+                    return [visit(child, depth + 1) for child in value]
+                if len(value) > min(8192, (8192 - budget["nodes"]) // 2):
+                    raise ValueError
+                result = {}
+                for key, child in value.items():
+                    if type(key) is not str:
+                        raise ValueError
+                    budget["nodes"] += 1
+                    if budget["nodes"] > 8192:
+                        raise ValueError
+                    result[check_string(key)] = visit(child, depth + 1)
+                return result
+            finally:
+                active.remove(identity)
+        if type(value) is SimpleNamespace:
+            identity = id(value)
+            if identity in active:
+                raise ValueError
+            active.add(identity)
+            try:
+                source = value.__dict__
+                if type(source) is not dict or len(source) > 6:
+                    raise ValueError
+                if any(type(name) is not str or len(name) > 9 for name in source):
+                    raise ValueError
+                kind = source.get("type")
+                expected = (namespace_fields.get(kind)
+                            if type(kind) is str and len(kind) <= 13 else None)
+                if (expected is None or len(source) != len(expected)
+                        or set(source) != set(expected)
+                        or 2 * len(expected) > 8192 - budget["nodes"]):
+                    raise ValueError
+                budget["nodes"] += len(expected)
+                if budget["nodes"] > 8192:
+                    raise ValueError
+                for name in expected:
+                    check_string(name)
+                copied = {name: source[name] for name in expected}
+                if kind == "message":
+                    if (type(copied["role"]) is not str or type(copied["status"]) is not str
+                            or copied["role"] != "assistant" or copied["status"] != "completed"
+                            or type(copied["content"]) is not list):
+                        raise ValueError
+                elif kind == "output_text":
+                    if type(copied["text"]) is not str:
+                        raise ValueError
+                elif (copied["id"] is not None and type(copied["id"]) is not str) or (
+                        type(copied["call_id"]) is not str or type(copied["name"]) is not str
+                        or type(copied["arguments"]) is not str
+                        or type(copied["status"]) is not str
+                        or copied["status"] != "completed"):
+                    raise ValueError
+                return {name: visit(copied[name], depth + 1) for name in expected}
+            finally:
+                active.remove(identity)
+        if official_sdk(value):
+            identity = id(value)
+            if identity in active:
+                raise ValueError
+            active.add(identity)
+            try:
+                converted = value.model_dump(mode="json")
+                return visit(converted, depth + 1)
+            finally:
+                active.remove(identity)
+        raise ValueError
+
+    try:
+        for name in ("usage", "error", "incomplete_details"):
+            value = values[name]
+            if (value is not None and type(value) is not dict
+                    and not official_sdk(value)):
+                raise ValueError
+        # The original SDK top-level branch remains byte-for-byte on its existing path.
+        budget["nodes"] += len(fields)
+        if budget["nodes"] > 8192:
+            raise ValueError
+        for name in fields:
+            check_string(name)
+        native_tree = {name: visit(values[name], 0) for name in fields}
+        encoded = _canonical(native_tree)
+        if not 1 <= len(encoded) <= MAX_FRAME:
+            raise ValueError
+        return encoded
+    except Exception:
+        raise CoreNativeObservationUnavailable("native Codex response cannot be safely serialized") from None
+
+
+def _response_bytes(response: Any) -> bytes:
+    """Keep the existing SDK top-level path and route native namespace values finitely."""
+    if isinstance(response, SimpleNamespace):
+        if type(response) is not SimpleNamespace:
+            raise CoreNativeObservationUnavailable("native Codex response shape is unavailable")
+        return _native_response_bytes(response)
+    return _canonical(response.model_dump(mode="json"))
 
 
 def _request_tool_names(request: Mapping[str, Any]) -> tuple[str, ...]:
@@ -9208,7 +9387,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 return refused(stage)
 
             stage = "observer_receipt"
-            response_bytes = _canonical(response.model_dump(mode="json"))
+            response_bytes = _response_bytes(response)
             if not 1 <= len(response_bytes) <= MAX_FRAME:
                 return refused(stage)
             response_sha256 = hashlib.sha256(response_bytes).hexdigest()
@@ -9359,7 +9538,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 output_bytes = output_text.encode("utf-8", errors="strict")
                 if output_bytes and len(output_bytes) <= 32 * 1024:
                     response_text_sha256 = hashlib.sha256(output_bytes).hexdigest()
-            response_bytes = _canonical(response.model_dump(mode="json"))
+            response_bytes = _response_bytes(response)
             if not 1 <= len(response_bytes) <= MAX_FRAME:
                 return response
             try:

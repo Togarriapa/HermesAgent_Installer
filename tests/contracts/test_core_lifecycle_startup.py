@@ -19,6 +19,16 @@ import hermes_installer.remote.core_lifecycle_startup as lifecycle_startup
 from hermes_installer.remote.core_lifecycle_startup import register_lifecycle_startup_probe
 
 
+def _native_response(provider_text: str, *, output=None):
+    """Genuine nine-field pinned Codex namespace shape, without an SDK graft."""
+    if output is None:
+        output = [SimpleNamespace(type="message", role="assistant", status="completed",
+            content=[SimpleNamespace(type="output_text", text=provider_text)])]
+    return SimpleNamespace(output=output, output_text=provider_text, usage=None,
+        status="completed", id="resp-native-fixture", model="gpt-6-luna",
+        incomplete_details=None, error=None, service_tier=None)
+
+
 def _cohort(**overrides):
     now = time.monotonic()
     values = {
@@ -569,13 +579,11 @@ def test_real_startup_stages_report_closed_phase_and_preserve_cleanup(
                     request["input"][0]["content"][0]["text"] = "wrong private prompt"
                 elif failure_stage == "observer_input":
                     request["input"].append(dict(request["input"][0]))
-                native_response = SimpleNamespace(
-                    status="completed", error=None, incomplete_details=None,
-                    output_text=provider_text,
-                    output=([{"type": "function_call"}] if failure_stage == "observer_output"
-                            and provider_text == final_response else []),
-                    model_dump=lambda **_kwargs: {
-                        "status": "completed", "output_text": provider_text})
+                native_output = ([{"type": "function_call", "call_id": "call-1",
+                    "name": "private_tool", "arguments": "{}"}]
+                    if failure_stage == "observer_output" and provider_text == final_response
+                    else None)
+                native_response = _native_response(provider_text, output=native_output)
                 observed_requests = []
                 def next_provider(value):
                     observed_requests.append(value)
@@ -1128,39 +1136,35 @@ def test_root_completion_rejects_native_response_mismatch_and_expired_cohort(mon
             native_response_sha256="c" * 64)
 
 
-def test_lifecycle_llm_observer_consumes_exact_no_tool_terminal_once(monkeypatch, tmp_path):
+@pytest.mark.parametrize("registry_kind", ["core", "lifecycle"])
+@pytest.mark.parametrize("response_kind", ["normal", "dict_function_call"])
+def test_lifecycle_llm_observer_consumes_exact_no_tool_terminal_once(
+        monkeypatch, tmp_path, registry_kind, response_kind):
     cohort = _cohort()
-    context = observer.LifecycleStartupProbeContext(
-        probe_handle="P" * 43, probe_id="probe-1", session_id="session-1",
-        nonce="0123456789abcdef0123456789abcdef",
-        deadline_monotonic=cohort.deadline_monotonic,
-        cohort_sha256=cohort.cohort_sha256, core_generation=cohort.core_generation,
-        core_source_generation=cohort.core_source_generation,
-        generation_a1_sha256=cohort.generation_a1_sha256, js_sha256=cohort.js_sha256,
-        rs_sha256=cohort.rs_sha256, u1_sha256=cohort.u1_sha256,
-        l1_sha256=cohort.l1_sha256, primary_source_sha256=cohort.primary_source_sha256,
-        active_soul_sha256=cohort.active_soul_sha256,
-        native_inventory_sha256=cohort.native_inventory_sha256,
-        provider=cohort.provider, api_mode=cohort.api_mode, base_url=cohort.base_url,
-        model=cohort.model, account_fingerprint=cohort.account_fingerprint,
-        _seal=observer._LIFECYCLE_STARTUP_CONTEXT_SEAL,
-    )
+    if registry_kind == "core":
+        registry = _registry_for_probe(cohort, monkeypatch)
+        monkeypatch.setattr(registry, "_lifecycle_startup_peer_current",
+            lambda row, selected: row.get("current") is True and selected is cohort
+                and row.get("expiry", 0) > time.monotonic())
+        probe_handle = "P" * 43
+        registry._lifecycle_startup_probes[probe_handle] = _enrolled_row(cohort, handle=probe_handle)
+        registry_operation = registry._handle
+    else:
+        registry = _root_cli_registry_for_probe(cohort, monkeypatch)
+        probe_handle = registry.enroll_lifecycle_startup_probe(cohort=cohort)
+        registry_operation = registry._handle_lifecycle
     client = observer.CoreNativeObservationClient(socket_path=tmp_path / "unused.sock")
     monkeypatch.setattr(observer, "_codex_account_fingerprint",
                         lambda _resolver: cohort.account_fingerprint)
-    attempt_calls = []
-    terminal_calls = []
+    peer = (cohort.peer_pid, cohort.peer_uid, cohort.peer_gid)
 
-    def register_attempt(_context, **kwargs):
-        attempt_calls.append(kwargs)
-        return "A" * 43
+    def root_rpc(operation, payload):
+        return registry_operation(peer, {
+            "schema": 1, "op": operation, "nonce": "root-rpc-nonce", **dict(payload),
+        })
 
-    def register_terminal(_context, **kwargs):
-        terminal_calls.append(kwargs)
-        return "C" * 43
-
-    client.register_lifecycle_startup_attempt = register_attempt
-    client.register_lifecycle_startup_response = register_terminal
+    client._rpc = root_rpc
+    context = client.claim_lifecycle_startup_probe(probe_handle)
     context_manager = observer.lifecycle_startup_probe_scope(
         context, identity="Selected Jarvis identity", expected_instructions=
         "Fixed native Hermes system prompt\nSelected Jarvis identity")
@@ -1184,10 +1188,10 @@ def test_lifecycle_llm_observer_consumes_exact_no_tool_terminal_once(monkeypatch
         "tools": [], "tool_choice": "none",
     }
     provider_text = observer._LIFECYCLE_STARTUP_RESPONSE_PREFIX + context.nonce
-    response = SimpleNamespace(
-        status="completed", error=None, incomplete_details=None, output_text=provider_text,
-        output=[], model_dump=lambda **_kwargs: {"status": "completed", "output_text": provider_text},
-    )
+    response = _native_response(provider_text, output=(
+        [{"type": "function_call", "call_id": "call-startup",
+          "name": "lookup", "arguments": "{}"}]
+        if response_kind == "dict_function_call" else None))
     seen = []
     with context_manager:
         observed = callback(
@@ -1196,11 +1200,36 @@ def test_lifecycle_llm_observer_consumes_exact_no_tool_terminal_once(monkeypatch
             turn_id="turn-1", api_request_id="api-1",
             next_call=lambda value: seen.append(value) or response,
         )
-        assert observed is response
         assert len(seen) == 1 and seen[0]["tool_choice"] == "none" and seen[0]["tools"] == []
-        assert len(attempt_calls) == len(terminal_calls) == 1
+        if response_kind == "dict_function_call":
+            assert observed is not response
+            with pytest.raises(observer.CoreNativeObservationUnavailable,
+                               match="missing or ambiguous"):
+                observer.take_lifecycle_startup_terminal(context)
+            row = registry._lifecycle_startup_probes[probe_handle]
+            assert row.get("provider_terminal") is None
+            with pytest.raises(observer.CoreNativeObservationUnavailable):
+                registry.consume_lifecycle_startup_completion(
+                    probe_handle=probe_handle, completion_handle="C" * 43,
+                    native_response_sha256="a" * 64)
+            return
+        assert observed is response
         terminal = observer.take_lifecycle_startup_terminal(context)
-        assert terminal["completion_handle"] == "C" * 43
+        row = registry._lifecycle_startup_probes[probe_handle]
+        expected_response = {
+            "output": [{"type": "message", "role": "assistant", "status": "completed",
+                "content": [{"type": "output_text", "text": provider_text}]}],
+            "output_text": provider_text, "usage": None, "status": "completed",
+            "id": "resp-native-fixture", "model": "gpt-6-luna",
+            "incomplete_details": None, "error": None, "service_tier": None,
+        }
+        assert row["provider_terminal"]["response_sha256"] == hashlib.sha256(
+            observer._canonical(expected_response)).hexdigest()
+        proof = registry.consume_lifecycle_startup_completion(
+            probe_handle=probe_handle, completion_handle=terminal["completion_handle"],
+            native_response_sha256=terminal["response_text_sha256"])
+        assert type(proof) is observer.CoreVerifiedLifecycleStartupCompletion
+        assert proof.is_root_verified() and row["consumed"] is True
 
         altered = dict(request, tools=[{"name": "terminal"}])
         denied_seen = []
@@ -1211,4 +1240,3 @@ def test_lifecycle_llm_observer_consumes_exact_no_tool_terminal_once(monkeypatch
             next_call=lambda value: denied_seen.append(value) or response,
         )
         assert denied.status == "completed" and denied_seen == []
-        assert len(attempt_calls) == len(terminal_calls) == 1
