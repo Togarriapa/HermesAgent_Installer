@@ -2309,3 +2309,22 @@ Version3 hashes it in64KiB chunks under a256MiB cap, retaining the exact
 interpreter digest. Production code was unchanged. Fresh Pi OpenSpec
 list/status/apply checks confirm the nearest project root,all four artifacts
 done and apply ready,one complete93 remaining of94 tasks.
+
+### Candidate 209 source-distinct refusal refinement
+
+Sol planning candidate `0550a1d6db2c7fed6b70320ecfd8ee2a5bd1924c`, archive
+SHA-256 `b9a70e613223950b1c8e9ec25921d801594c68eb15ae93410825b940d7855600`,
+contains all four artifacts and an append-only amendment. It permits only
+splitting the existing fifteen ordered conditions into equivalent literal
+condition/raise pairs, each retaining the same static error on a distinct
+source line. Existing source-bound origin lines can then distinguish refusal
+without a new payload, schema, helper, wait/retry or relaxed condition.
+Actual208's cause remains unknown.
+
+Identified Pi staging and strict specs/plan/status/apply checks each exited0;
+all four artifacts done,apply ready,one complete96 remaining of97 tasks.
+Evidence: `candidate209-stage.log`, `candidate209-specs.json`,
+`candidate209-gates.log`, `candidate209-status.json`, `candidate209-apply.json`.
+Luna implementation and actual-function effect tests require Sol review,
+separate Core-only pin and focused Pi qualification before one newly observed
+update. This plan does not establish any runtime acceptance.
